@@ -6,7 +6,7 @@ export type View = 'images' | 'make' | 'records' | 'library' | 'admin' | 'settin
 // Legacy cutflow filters remain readable so links copied from the previous UI
 // still land in the task list; the editing workflow now lives in task details.
 export type RecordsFilter = 'all' | 'attention' | 'active' | 'partial' | 'done' | 'failed' | 'cancelled' | 'cutflow-ready' | 'cutflow-editing' | 'cutflow-finished'
-export type AdminSection = 'overview' | 'accounts' | 'providers' | 'security'
+export type AdminSection = 'overview' | 'quality' | 'accounts' | 'providers' | 'security'
 export type InPageTaskToast = {
   id: string
   taskId: string

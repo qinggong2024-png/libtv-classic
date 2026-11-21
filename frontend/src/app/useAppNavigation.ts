@@ -19,7 +19,7 @@ function readAppLocationFromSearch(search: string): { view: View; detailId: stri
     ? 'records'
     : requestedView === 'images' || requestedView === 'records' || requestedView === 'library' || requestedView === 'admin' || requestedView === 'settings' ? requestedView : 'make'
   const requestedAdminSection = params.get('section')
-  const adminSection: AdminSection = requestedAdminSection === 'accounts' || requestedAdminSection === 'providers' || requestedAdminSection === 'security'
+  const adminSection: AdminSection = requestedAdminSection === 'quality' || requestedAdminSection === 'accounts' || requestedAdminSection === 'providers' || requestedAdminSection === 'security'
     ? requestedAdminSection
     : 'overview'
   const recordsFilter = view === 'records' && requestedFilter && RECORD_FILTERS.includes(requestedFilter) && !editingFilter ? requestedFilter : 'all'

@@ -195,7 +195,13 @@ export function OperationsPanel({ adminId, onShowTasks, onShowBilling }: {
     </section>
     {health ? <section className="ops-band ops-issues" aria-label="待处理问题">
       <div className="detail-heading"><div><span className="section-kicker">异常处理</span><h3>需要关注的事项</h3></div><span>全平台只读明细 · 不改变原账号权限</span></div>
-      <p className="ops-issue-guidance">点击“查看全平台明细”可按品牌、账号、任务名查询完整异常列表。任务中心仍只显示本账号任务。
+      <div className="ops-decision-guide">
+        <strong>管理员先看这里：不需要逐条理解技术代码</strong>
+        <p><b>先核实 {health.cloudUnknownAttempts} 条云端状态不确定的记录：</b>可能已接单或扣费，先查供应商回执，千万不要直接重新生成。</p>
+        <p><b>{health.reservationsAwaitingReview} 条是费用核对记录：</b>其中 {health.reservationOutcomes.succeeded} 条视频已经生成成功；并不代表这些视频全部失败。请按账务结果核对。</p>
+        <p><b>{blockedCount} 条是历史受限记录：</b>不在当前可执行队列，只有还需要继续生成时才检查账号预算。</p>
+      </div>
+      <p className="ops-issue-guidance">选择分类查看各账号的记录，点击某条可以看到简单解释和建议操作。需要技术排查时再展开详细信息。
         {onShowTasks ? <button type="button" className="text-button" onClick={onShowTasks}>我的任务中心</button> : null}
         {onShowBilling ? <button type="button" className="text-button" onClick={onShowBilling}>账号与费用管理</button> : null}
       </p>

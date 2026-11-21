@@ -1,9 +1,11 @@
+import asyncio
 import uuid
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse
 from libtv_agent.adapters.kling_official_api import KlingOfficialApiAdapter
 from libtv_agent.adapters.kling_official_cli import KlingCliError
 from libtv_agent.adapters.kling_provider import create_kling_adapter
@@ -22,6 +24,7 @@ from libtv_agent.domain.models import (
 )
 from libtv_agent.domain.schemas import ReconcileRequest
 from libtv_agent.runner.supervisor import RunnerSupervisor
+from libtv_agent.services.admin_video_review import get_admin_video_artifact, list_admin_videos
 from libtv_agent.services.bach_config import (
     bach_admin_config_signature,
     bach_admin_config_status,
@@ -30,7 +33,7 @@ from libtv_agent.services.bach_config import (
 )
 from libtv_agent.services.confirmation import confirm_task
 from libtv_agent.services.credentials import credential_status, update_admin_credentials
-from libtv_agent.services.deep_video_media import RECREATE_MODEL_PATTERN
+from libtv_agent.services.deep_video_media import RECREATE_MODEL_PATTERN, media_command
 from libtv_agent.services.idempotency import (
     IdempotencyConflictError,
     IdempotencyInProgressError,
@@ -918,6 +921,89 @@ async def get_operations(actor: Actor, session: Session, request: Request) -> di
     snapshot = await operations_snapshot(session, request.app.state.settings)
     await session.commit()
     return snapshot
+
+
+def _require_management_admin(actor: Actor) -> None:
+    if not management_admin(actor):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "platform administrator required")
+
+
+@router.get("/videos")
+async def admin_recent_videos(
+    actor: Actor,
+    session: Session,
+    days: int = Query(default=7, ge=1, le=90),
+    limit: int = Query(default=24, ge=1, le=60),
+    offset: int = Query(default=0, ge=0, le=10000),
+    search: str = Query(default="", max_length=80),
+    brand_id: uuid.UUID | None = None,
+) -> dict[str, Any]:
+    _require_management_admin(actor)
+    if days not in {1, 7, 30, 90}:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, 'unsupported review window')
+    return await list_admin_videos(
+        session, days=days, limit=limit, offset=offset,
+        search=search, brand_id=brand_id,
+    )
+
+
+@router.get("/videos/{artifact_id}/play")
+async def admin_video_play(
+    artifact_id: uuid.UUID, actor: Actor, session: Session, request: Request
+) -> FileResponse:
+    _require_management_admin(actor)
+    artifact = await get_admin_video_artifact(session, artifact_id)
+    try:
+        local = await request.app.state.object_store.localize(
+            artifact.object_key,
+            request.app.state.settings.artifact_root / "cache" / "downloads"
+            / f"{artifact.id}.mp4",
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status.HTTP_410_GONE, "saved video copy unavailable") from exc
+    return FileResponse(
+        local, media_type="video/mp4",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.get("/videos/{artifact_id}/thumbnail")
+async def admin_video_thumbnail(
+    artifact_id: uuid.UUID, actor: Actor, session: Session, request: Request
+) -> FileResponse:
+    _require_management_admin(actor)
+    artifact = await get_admin_video_artifact(session, artifact_id)
+    cache = request.app.state.settings.artifact_root / "cache"
+    thumbnail = cache / "video-thumbnails" / f"{artifact.id}.jpg"
+    if not await asyncio.to_thread(thumbnail.is_file):
+        try:
+            local = await request.app.state.object_store.localize(
+                artifact.object_key, cache / "downloads" / f"{artifact.id}.mp4"
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status.HTTP_410_GONE, "saved video copy unavailable") from exc
+        try:
+            data = await media_command(
+                "ffmpeg", "-v", "error", "-i", str(local), "-frames:v", "1",
+                "-vf", "scale='min(360,iw)':'min(480,ih)':force_original_aspect_ratio=decrease",
+                "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
+            )
+            if not data:
+                raise ValueError("empty thumbnail")
+        except (ValueError, TimeoutError) as exc:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                                "thumbnail unavailable") from exc
+        await asyncio.to_thread(thumbnail.parent.mkdir, parents=True, exist_ok=True)
+        temporary = thumbnail.with_name(f"{artifact.id}-{uuid.uuid4()}.tmp")
+        try:
+            await asyncio.to_thread(temporary.write_bytes, data)
+            await asyncio.to_thread(temporary.replace, thumbnail)
+        finally:
+            await asyncio.to_thread(temporary.unlink, missing_ok=True)
+    return FileResponse(
+        thumbnail, media_type="image/jpeg",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.get("/operations/issues")

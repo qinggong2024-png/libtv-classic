@@ -794,6 +794,31 @@ export interface Reconciliation {
   updatedAt: string
 }
 
+export interface AdminVideoRecord {
+  artifactId: string
+  attemptId: string
+  taskId: string
+  title: string
+  username: string
+  brandId: string | null
+  brandName: string | null
+  createdAt: string | null
+  durationSeconds: number | null
+  width: number | null
+  height: number | null
+  variant: string
+  provider: string
+  validationStatus: string
+  finalApprovalStatus: string
+}
+export interface AdminVideoPage {
+  total: number
+  limit: number
+  offset: number
+  days: number
+  items: AdminVideoRecord[]
+}
+
 export type OperationsIssueCategory = 'cloudUnknown' | 'reservationReview' | 'blockedPrepared'
 
 export interface OperationsIssueRecord {

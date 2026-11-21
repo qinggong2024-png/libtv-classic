@@ -19,6 +19,49 @@ const descriptions: Record<OperationsIssueCategory, { title: string; summary: st
   },
 }
 
+function issueAdvice(category: OperationsIssueCategory, item: OperationsIssueRecord): {
+  title: string
+  meaning: string
+  nextStep: string
+  urgency: 'now' | 'later' | 'none'
+} {
+  if (category === 'cloudUnknown' || item.attemptStatus === 'UNKNOWN_AFTER_SUBMIT') {
+    return {
+      title: '生成结果还没有确认',
+      meaning: '系统暂时不知道供应商是否已接单、生成或扣费。',
+      nextStep: '需要管理员或技术人员根据云端任务号核对供应商记录；核实前不要再次付费生成。',
+      urgency: 'now',
+    }
+  }
+  if (category === 'reservationReview') {
+    if (item.attemptStatus === 'SUCCEEDED') return {
+      title: '视频已生成，费用记录还需要核对',
+      meaning: '视频结果是成功的；“费用待核对”不等于视频生成失败。',
+      nextStep: '不需要重新生成。安排财务或技术人员核对真实扣费记录即可。',
+      urgency: 'later',
+    }
+    if (item.attemptStatus === 'FAILED_TERMINAL') return {
+      title: '生成失败，是否扣费仍未核实',
+      meaning: '当前生成记录已失败，但不能单凭失败状态确认费用是否退回。',
+      nextStep: '先核对供应商账单与失败原因，再决定是否需要处理。',
+      urgency: 'now',
+    }
+    return {
+      title: '费用记录暂时没结清',
+      meaning: '这是账务核对项，不一定代表当前视频有问题。',
+      nextStep: '安排账号与费用管理员核对，不要仅凭这个提示再次生成。',
+      urgency: 'later',
+    }
+  }
+  const budget = item.phaseReasonCode === 'USD_DAILY_BUDGET_EXCEEDED'
+  return {
+    title: budget ? '这条任务当时遇到了预算限制' : '这条任务当时遇到了生成额度限制',
+    meaning: '这是旧任务的受限记录，不是现在正在排队的任务。',
+    nextStep: '如果已经不需要生成，可以不操作；如果仍需要视频，先检查账号预算或额度，再人工决定如何处理。',
+    urgency: 'none',
+  }
+}
+
 const dateText = (value: string | null) => {
   if (!value) return '未记录'
   const date = new Date(value)
@@ -28,7 +71,9 @@ const dateText = (value: string | null) => {
 const display = (value: string | number | null | undefined) => value == null || value === '' ? '未记录' : String(value)
 
 function IssueDetail({ item }: { item: OperationsIssueRecord }) {
-  return <dl className="ops-issue-detail-grid">
+  return <details className="ops-technical-details">
+    <summary>查看技术信息（仅排查时需要）</summary>
+    <dl className="ops-issue-detail-grid">
     <div><dt>任务 ID</dt><dd title={item.taskId}>{item.taskId}</dd></div>
     <div><dt>生成记录 ID</dt><dd title={item.attemptId}>{item.attemptId}</dd></div>
     <div><dt>片段</dt><dd>{display(item.variantType)}</dd></div>
@@ -46,7 +91,8 @@ function IssueDetail({ item }: { item: OperationsIssueRecord }) {
     <div><dt>费用记录 ID</dt><dd>{display(item.reservationId)}</dd></div>
     <div><dt>预估 / 实际生成额度</dt><dd>{display(item.estimatedPoints)} / {display(item.actualPoints)}</dd></div>
     <div><dt>费用记录创建</dt><dd>{dateText(item.reservationCreatedAt)}</dd></div>
-  </dl>
+    </dl>
+  </details>
 }
 
 export function OperationsIssuesBrowser({
@@ -107,10 +153,15 @@ export function OperationsIssuesBrowser({
       {!loading && page?.items.map((item) => <article className="ops-issue-entry" key={item.reservationId ?? item.attemptId}>
         <button type="button" className="ops-issue-entry-main" aria-expanded={expanded === (item.reservationId ?? item.attemptId)} onClick={() => setExpanded((old) => old === (item.reservationId ?? item.attemptId) ? null : item.reservationId ?? item.attemptId)}>
           <span className="ops-issue-entry-title"><strong>{item.title}</strong><small>{item.brandName || '未归属品牌'} · {item.username} · {dateText(category === 'reservationReview' ? item.reservationCreatedAt : item.updatedAt)}</small></span>
-          <span className="ops-issue-entry-status">{category === 'reservationReview' ? item.attemptStatus : item.phaseReasonCode || item.attemptStatus}</span>
+          <span className="ops-issue-entry-status">{issueAdvice(category, item).urgency === 'now' ? '需要人工核实' : issueAdvice(category, item).urgency === 'later' ? '安排账务核对' : '历史记录 · 按需处理'}</span>
           <ChevronDown size={16} className={expanded === (item.reservationId ?? item.attemptId) ? 'is-open' : ''} />
         </button>
-        {expanded === (item.reservationId ?? item.attemptId) ? <IssueDetail item={item} /> : null}
+        {expanded === (item.reservationId ?? item.attemptId) ? <div className="ops-human-advice">
+          <strong>{issueAdvice(category, item).title}</strong>
+          <p>{issueAdvice(category, item).meaning}</p>
+          <p><b>建议怎么做：</b>{issueAdvice(category, item).nextStep}</p>
+          <IssueDetail item={item} />
+        </div> : null}
       </article>)}
     </div>
     {page ? <footer className="ops-issue-pager">

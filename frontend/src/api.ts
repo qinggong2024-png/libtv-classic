@@ -1,4 +1,4 @@
-import type { AdminCredentialsStatus, AdminUser, AuthUser, BachConfig, BachConfigPatch, BatchConfirmationResponse, FeedbackReason, FeedbackValue, FixedVideoTaskOptions, ImageGenerationBatch, ImageGenerationClientManifest, KlingConfig, KlingConfigPatch, KlingElement, KlingElementCreate, KlingElementList, KlingStatus, LibTVAccountStatus, LibTVAccountSwitch, LibTVLoginStart, MotionActionSummary, MotionActionWrite, OperationsIssueCategory, OperationsIssuePage, OperationsSnapshot, PromptAssistantResponse, PromptPreset, PromptPresetWrite, Reconciliation, RuntimeConfigSnapshot, SiteStyleProfileSummary, SiteStyleProfileWrite, SystemStatus, Task, UploadResult, VariantKind, VideoLearningPreference, VideoTemplateSummary, WaveSpeedConfig, WaveSpeedConfigPatch } from './types'
+import type { AdminCredentialsStatus, AdminUser, AuthUser, BachConfig, BachConfigPatch, BatchConfirmationResponse, FeedbackReason, FeedbackValue, FixedVideoTaskOptions, ImageGenerationBatch, ImageGenerationClientManifest, KlingConfig, KlingConfigPatch, KlingElement, KlingElementCreate, KlingElementList, KlingStatus, LibTVAccountStatus, LibTVAccountSwitch, LibTVLoginStart, MotionActionSummary, MotionActionWrite, AdminVideoPage, OperationsIssueCategory, OperationsIssuePage, OperationsSnapshot, PromptAssistantResponse, PromptPreset, PromptPresetWrite, Reconciliation, RuntimeConfigSnapshot, SiteStyleProfileSummary, SiteStyleProfileWrite, SystemStatus, Task, UploadResult, VariantKind, VideoLearningPreference, VideoTemplateSummary, WaveSpeedConfig, WaveSpeedConfigPatch } from './types'
 import { createUuid } from './uuid'
 import { userFacingError, validationMessage } from './errorPresentation'
 import type { AccountBrand, AccountEventReport, AccountPolicy, AccountUsageReport, GenerationBudget, GlobalUsagePricing } from './types'
@@ -623,6 +623,28 @@ export async function getReconciliations(adminId: string | null): Promise<Reconc
 
 export async function reconcileAttempt(adminId: string, attemptId: string): Promise<void> {
   await request(`/api/v1/admin/reconciliations/${attemptId}/classify`, { method: 'POST', headers: { 'Idempotency-Key': key() }, body: JSON.stringify({ action: 'RECONCILE' }) }, { actorId: adminId })
+}
+
+export function getAdminVideos(
+  adminId: string,
+  days: 1 | 7 | 30 | 90,
+  offset = 0,
+  search = '',
+  brandId = '',
+): Promise<AdminVideoPage> {
+  const params = new URLSearchParams({ days: String(days), offset: String(offset), limit: '24' })
+  if (search.trim()) params.set('search', search.trim())
+  if (brandId) params.set('brand_id', brandId)
+  return request(`/api/v1/admin/videos?${params.toString()}`, {}, { actorId: adminId })
+}
+
+export function adminVideoThumbnailUrl(artifactId: string): string {
+  return `/api/v1/admin/videos/${encodeURIComponent(artifactId)}/thumbnail`
+}
+
+export async function fetchAdminVideoObjectUrl(adminId: string, artifactId: string): Promise<string> {
+  const path = `/api/v1/admin/videos/${encodeURIComponent(artifactId)}/play`
+  return URL.createObjectURL(await requestBlob(path, { actorId: adminId, timeoutMs: DOWNLOAD_TIMEOUT_MS }))
 }
 
 export function getOperations(adminId: string): Promise<OperationsSnapshot> {
