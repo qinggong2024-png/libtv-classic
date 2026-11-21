@@ -126,20 +126,17 @@ def _native_shots_if_safe(prompt: str, duration: int | None) -> str:
 
 
 def api_ootd_prompt(request: VideoGenerationRequest) -> str:
-    """Best-effort Kling 3.0 Omni image binding; never block submission.
+    """Compile Kling 3.0 Omni image aliases while preserving Sol's source text.
 
-    The unchanged source prompt is used if any rewrite or reference mapping
-    fails. This adapter does not create images or alter the ordered contents IDs.
+    Unknown image IDs fail before a paid submission; other optional formatting
+    failures fall back to the source prompt. The wire image order is not changed.
     """
     original = request.prompt
     try:
-        if request.director_native_profile in _OOTD_PROFILES:
-            if _ootd_role_header(request) != request.prompt:
-                prompt = _ootd_role_header(request)
-            else:
-                prompt = original
-        else:
-            prompt = original
+        prompt = (
+            _ootd_role_header(request)
+            if request.director_native_profile in _OOTD_PROFILES else original
+        )
 
         image_count = len(kling_ordered_image_slots(request))
 
