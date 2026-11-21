@@ -47,6 +47,12 @@ def _director_effort(settings: Settings) -> str:
 
 PROFILE = (DYNAMIC_OOTD_PROFILE if dynamic_ootd_enabled() and cross_scene_enabled()
            else CROSS_SCENE_PROFILE)
+from libtv_agent.services.ootd_reference_guided import (
+    REFERENCE_GUIDED_REPAIR,
+    reference_guided_system_prompt,
+    reference_guided_violation,
+)
+
 REFERENCE_PROFILE = "allwe-ootd-sol-simple-v1"
 UNBOXING_PROFILE = "allwe-unboxing-sol-simple-v1"
 HISTORY_PROFILES = ("allwe-ootd-sol-simple-v1", "allwe-ootd-sol-motion-v2.1",
@@ -328,7 +334,11 @@ async def plan_simple_ootd(
         if index == 1:
             image_role = "the ONLY starting frame"
         elif index <= len(storyboard_images):
-            image_role = "additional ordered storyboard shot reference; not another starting frame"
+            image_role = (
+                "required ordered later-shot visual reference; preserve its location and framing"
+                if video_type == "ootd" and director_mode == "reference_guided" else
+                "additional ordered storyboard shot reference; not another starting frame"
+            )
         elif len(storyboard_images) == 1 and len(product_images) == 1:
             # Keep the single-frame success baseline's exact input text.
             image_role = "product design reference, not a starting frame"
@@ -342,7 +352,7 @@ async def plan_simple_ootd(
                 "text": f"Image {index}: {image_role}",
             },
             {"type": "input_image", "image_url": image.image_url,
-             "detail": "high" if index == 1 or index > len(storyboard_images) else "low"},
+             "detail": "high" if (video_type == "ootd" and director_mode == "reference_guided") or index == 1 or index > len(storyboard_images) else "low"},
         ])
     if product_images and not analyze_product_images:
         first_product_slot = len(storyboard_images) + 1
@@ -375,6 +385,8 @@ async def plan_simple_ootd(
             )
         if product_images and not analyze_product_images:
             system_prompt += " Product images are passed only to Kling; do not guess their unseen pixels."
+    if video_type == "ootd" and director_mode == "reference_guided" and len(storyboard_images) > 1:
+        system_prompt = reference_guided_system_prompt(system_prompt)
     if video_type == "ootd" and director_mode == "cross_scene_v2":
         if cross_scene_enabled() and dynamic_ootd_enabled():
             system_prompt = dynamic_ootd_prompt(
@@ -523,6 +535,56 @@ async def plan_simple_ootd(
             review_result=review_result,
             rewrite_result=rewrite_result,
         )
+        if video_type == "ootd" and director_mode == "reference_guided" and len(storyboard_images) > 1:
+            issue = reference_guided_violation(
+                prompt, storyboard_count=len(storyboard_images),
+                creative_brief=creative_brief,
+            )
+            if issue:
+                prompt_attempts += 1
+                repair_content = list(message_content)
+                repair_content.insert(1, {
+                    "type": "input_text",
+                    "text": REFERENCE_GUIDED_REPAIR + prompt[:1750],
+                })
+                try:
+                    repaired = await _timed_sol_response(
+                        client.responses.create(
+                            model=settings.openai_model,
+                            reasoning={"effort": _director_effort(settings)},
+                            max_output_tokens=2200,
+                            input=[
+                                {"role": "system", "content": [
+                                    {"type": "input_text", "text": system_prompt},
+                                ]},
+                                {"role": "user", "content": repair_content},
+                            ],
+                        ),
+                        timeout_seconds=settings.analysis_timeout_for_image_count(sol_image_count),
+                        stage="reference_repair", variant=index + 1,
+                    )
+                    candidate = (getattr(repaired, "output_text", "") or "").strip()
+                except Exception as exc:
+                    raise CreativePlannerError(
+                        "Reference-guided prompt repair failed; no Kling task submitted",
+                        code="OOTD_REFERENCE_GUIDED_REPAIR_FAILED",
+                        request_attempts=prompt_attempts,
+                    ) from exc
+                if (
+                    not 80 <= len(candidate) <= 3072
+                    or (duration_seconds >= 8 and "切镜" not in candidate
+                        and "CUT TO" not in candidate.upper())
+                    or reference_guided_violation(
+                        candidate, storyboard_count=len(storyboard_images),
+                        creative_brief=creative_brief,
+                    )
+                ):
+                    raise CreativePlannerError(
+                        "Reference-guided prompt discarded a storyboard; no Kling task submitted",
+                        code="OOTD_REFERENCE_GUIDED_INVALID",
+                        request_attempts=prompt_attempts,
+                    )
+                prompt = candidate
         previous.append(prompt)
         results.append(CompiledCreativeVariant(
             prompt=prompt,
