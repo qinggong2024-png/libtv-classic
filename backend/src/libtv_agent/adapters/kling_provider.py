@@ -1,0 +1,41 @@
+from __future__ import annotations
+
+from libtv_agent.adapters.bach_provider import BachApiAdapter
+from libtv_agent.adapters.kling_official_api import KlingOfficialApiAdapter
+from libtv_agent.adapters.kling_official_cli import KlingOfficialCliAdapter
+from libtv_agent.adapters.video_provider import VideoProviderAdapter
+from libtv_agent.adapters.wavespeed import WaveSpeedAdapter
+from libtv_agent.adapters.wavespeed_video import WaveSpeedVideoAdapter
+from libtv_agent.config import Settings
+
+
+def create_kling_adapter(
+    settings: Settings,
+    *,
+    wavespeed_client: WaveSpeedAdapter | None = None,
+) -> VideoProviderAdapter:
+    """Create the configured adapter permitted to receive new production work."""
+    if settings.kling_provider_backend == "wavespeed":
+        return WaveSpeedVideoAdapter(settings, client=wavespeed_client)
+    if settings.kling_provider_backend == "bach":
+        return BachApiAdapter(settings)
+    if settings.kling_provider_backend == "cli":
+        return KlingOfficialCliAdapter(settings)
+    return KlingOfficialApiAdapter(settings)
+
+
+def create_kling_adapter_for_provider(
+    settings: Settings,
+    provider: str,
+) -> VideoProviderAdapter:
+    normalized = provider.strip().lower()
+    if normalized in {"kling", settings.kling_api_provider_name.strip().lower()}:
+        return KlingOfficialApiAdapter(settings)
+    if normalized == settings.kling_cli_provider_name.strip().lower():
+        # Historical attempts keep their concrete provider name after a switch.
+        return KlingOfficialCliAdapter(settings)
+    if normalized == settings.wavespeed_video_provider_name.strip().lower():
+        return WaveSpeedVideoAdapter(settings)
+    if normalized == settings.bach_provider_name.strip().lower():
+        return BachApiAdapter(settings)
+    raise ValueError(f"unsupported Kling provider: {provider}")

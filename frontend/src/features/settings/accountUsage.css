@@ -1,0 +1,46 @@
+.account-usage-section { min-width: 0; }
+.usage-totals { display: flex; flex-wrap: wrap; gap: 20px 32px; margin: 20px 0; padding: 16px 0; border-block: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.usage-totals > div { min-width: 120px; }
+.usage-totals dt { color: var(--text-secondary); font-size: 12px; }
+.usage-totals dd { margin: 6px 0 0; color: var(--text); font-size: 18px; font-weight: 600; }
+.usage-totals > div:first-child dd { color: var(--primary); font-size: 22px; }
+.usage-overview-heading, .usage-detail-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 24px; }
+.usage-overview-heading h3, .usage-detail-heading h3 { margin: 0; font-size: 16px; }
+.usage-detail-heading h3 { scroll-margin-top: 100px; }
+.usage-detail-heading label { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 13px; }
+.usage-detail-heading select { min-height: 44px; padding: 8px 10px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 7px; font: inherit; }
+.usage-account-table small { display: block; color: var(--text-secondary); font-size: 12px; font-weight: 400; line-height: 1.7; }
+.usage-record-link { min-height: 44px; padding: 4px 0; border: 0; background: transparent; color: var(--primary); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.usage-record-link:hover { text-decoration: underline; }
+.usage-record-link:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.usage-account-table tbody tr:hover { background: var(--surface-soft); }
+.usage-filters input[readonly] { color: var(--text-secondary); background: var(--surface-soft); }
+.account-usage-section .usage-table-scroll { max-width: 100%; }
+.usage-pagination label, .usage-pagination > div { display: flex; align-items: center; gap: 8px; }
+.usage-pagination select { min-height: 40px; padding: 6px 10px; background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+.usage-pagination .icon-button { width: 44px; height: 44px; flex: 0 0 44px; }
+.usage-view-switch { display: flex; gap: 20px; border-bottom: 1px solid var(--line); }
+.usage-view-switch button { min-height: 44px; padding: 0; border: 0; border-bottom: 2px solid transparent; color: var(--text-secondary); background: transparent; font: inherit; font-size: 13px; cursor: pointer; }
+.usage-view-switch button[aria-pressed="true"] { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+.usage-breakdown-row { background: var(--surface-soft); }
+.usage-breakdown { display: flex; flex-wrap: wrap; gap: 12px 40px; margin: 0; }
+.usage-breakdown dt { font-size: 12px; color: var(--text-secondary); }
+.usage-breakdown dd { margin: 0; min-height: 44px; display: flex; align-items: center; }
+.event-detail { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 16px; min-width: 220px; max-width: 360px; font-size: 12px; white-space: normal; }
+.event-detail dt { color: var(--text-secondary); }
+.event-detail dd { margin: 0; overflow-wrap: anywhere; }
+.account-events-section summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: 5px; color: var(--primary); }
+.account-events-section details[open] > summary > svg { transform: rotate(90deg); }
+.account-events-section .usage-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.account-empty { padding: 24px 0; color: var(--text-secondary); }
+@media (max-width: 600px) {
+  .account-usage-section .usage-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .usage-filters .usage-period-filter { grid-column: 1 / -1; }
+  .usage-totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .usage-totals > div { min-width: 0; overflow-wrap: anywhere; }
+  .usage-totals > div:first-child { grid-column: 1 / -1; }
+  .account-events-section .usage-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .usage-pagination { gap: 8px; font-size: 12px; }
+  .usage-pagination > span { order: 3; flex-basis: 100%; }
+  .usage-account-table th:first-child { position: sticky; left: 0; z-index: 1; background: var(--page); }
+}

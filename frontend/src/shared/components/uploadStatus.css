@@ -1,0 +1,16 @@
+.upload-validation-status {
+  display: block;
+  padding: 5px 4px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #60718c;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.upload-validation-status--validated { color: #087c69; }
+.upload-validation-status--failed { color: #b42318; }
+.upload-validation-status--uploading { color: #2458df; }
+.upload-panel--has-items .materials-grid:has(.upload-validation-status) {
+  max-height: 238px;
+}

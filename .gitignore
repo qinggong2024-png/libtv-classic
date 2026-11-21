@@ -1,0 +1,68 @@
+# Secrets and environment-local configuration
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.pfx
+
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+*.tsbuildinfo
+
+frontend/node_modules/
+frontend/dist/
+frontend/dist-stage/
+frontend/.dist-stage-*/
+# Historical UI verification builds and rollback snapshots (retained locally).
+/frontend/.verify-*/
+/frontend/dist-*/
+/frontend/dist.*/
+/frontend/backup-video-preview-*/
+frontend/.vite/
+
+# Developer-only scratch and assistant-local state; not source or deployment assets.
+/.workbuddy/
+/tmp/
+/tmp-*.json
+
+# Local LibTV authentication/project binding state
+.libtv/
+
+# Real inputs, captured Replay payloads, and runtime persistence
+uploads/
+outputs/
+real-data/
+replay/
+backend/replay/
+infra/data/
+var/
+*.db
+*.sqlite
+*.sqlite3
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.log
+.DS_Store
+Thumbs.db
+
+# Local Playwright MCP capture artefacts (page snapshots / console logs). Scratch
+# material gathered while inspecting the running UI — never a source of truth.
+.playwright-mcp/
+
+# Delivered contract/acceptance packages. These are handed to the client as a whole;
+# the .zip and the exploded directory are two copies of the same thing and neither is
+# referenced by the code, so they stay out of the repository.
+AI_VIDEO_PROD_*

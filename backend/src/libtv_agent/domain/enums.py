@@ -1,0 +1,226 @@
+from enum import StrEnum
+
+
+class UserRole(StrEnum):
+    USER = "USER"
+    TRUSTED_USER = "TRUSTED_USER"
+    OPERATOR = "OPERATOR"
+    ADMIN = "ADMIN"
+    AUDITOR = "AUDITOR"
+
+
+class ParentTaskPhase(StrEnum):
+    DRAFT = "DRAFT"
+    ANALYZING = "ANALYZING"
+    AWAITING_CONFIRMATION = "AWAITING_CONFIRMATION"
+    PREPARING = "PREPARING"
+    WAITING_FOR_SEAL = "WAITING_FOR_SEAL"
+    QUEUED = "QUEUED"
+    GENERATING = "GENERATING"
+    DOWNLOADING = "DOWNLOADING"
+    VALIDATING = "VALIDATING"
+    AWAITING_FINAL_APPROVAL = "AWAITING_FINAL_APPROVAL"
+    PARTIALLY_DELIVERABLE = "PARTIALLY_DELIVERABLE"
+    DELIVERABLE = "DELIVERABLE"
+    ACTION_REQUIRED = "ACTION_REQUIRED"
+    CANCELLED = "CANCELLED"
+
+
+# Kept for compatibility with the original skeleton API.
+ParentTaskStatus = ParentTaskPhase
+
+
+# Phases a task may be cancelled from.
+#
+# This lives beside the enum so the read model (services.tasks._build_task_read, which
+# decides whether the UI offers a cancel button) and the write path
+# (api.tasks.cancel_task, which decides whether the request is honoured) cannot drift
+# apart again. They previously disagreed: the read model also advertised PREPARING,
+# WAITING_FOR_SEAL and QUEUED, so the UI rendered an enabled button that always came
+# back 409. Cancelling after confirmation would additionally have to release the points
+# already reserved for each attempt, which is a deliberate behaviour change rather than
+# a whitelist edit.
+CANCELLABLE_PHASES: frozenset[ParentTaskPhase] = frozenset(
+    {
+        ParentTaskPhase.DRAFT,
+        ParentTaskPhase.ANALYZING,
+        ParentTaskPhase.AWAITING_CONFIRMATION,
+    }
+)
+
+
+class ConsistencyLevel(StrEnum):
+    PASS = "PASS"
+    WARNING = "WARNING"
+    QUALITY_REVIEW = "QUALITY_REVIEW"
+    SYSTEM_BLOCK = "SYSTEM_BLOCK"
+
+
+class VariantKind(StrEnum):
+    STABLE = "STABLE"
+    DYNAMIC = "DYNAMIC"
+
+
+class FeedbackValue(StrEnum):
+    LIKE = "LIKE"
+    DISLIKE = "DISLIKE"
+
+
+class FeedbackReason(StrEnum):
+    GARMENT_ACCURATE = "GARMENT_ACCURATE"
+    PRODUCT_CLEAR = "PRODUCT_CLEAR"
+    NATURAL_MOTION = "NATURAL_MOTION"
+    COMFORTABLE_CAMERA = "COMFORTABLE_CAMERA"
+    GOOD_PACING = "GOOD_PACING"
+    STRONG_APPEAL = "STRONG_APPEAL"
+    GARMENT_DISTORTED = "GARMENT_DISTORTED"
+    COLOR_INACCURATE = "COLOR_INACCURATE"
+    LOGO_TEXT_INCORRECT = "LOGO_TEXT_INCORRECT"
+    FACE_HAND_ARTIFACT = "FACE_HAND_ARTIFACT"
+    STIFF_MOTION = "STIFF_MOTION"
+    CAMERA_TOO_FAST = "CAMERA_TOO_FAST"
+    CHAOTIC_EDITING = "CHAOTIC_EDITING"
+    PRODUCT_UNCLEAR = "PRODUCT_UNCLEAR"
+
+
+class AttemptStatus(StrEnum):
+    DRAFT = "DRAFT"
+    MATERIALIZING = "MATERIALIZING"
+    PREPARED = "PREPARED"
+    DISPATCH_PENDING = "DISPATCH_PENDING"
+    LAUNCHING = "LAUNCHING"
+    RUNNING = "RUNNING"
+    RECONCILING = "RECONCILING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED_BEFORE_SUBMIT = "FAILED_BEFORE_SUBMIT"
+    FAILED_TERMINAL = "FAILED_TERMINAL"
+    UNKNOWN_AFTER_SUBMIT = "UNKNOWN_AFTER_SUBMIT"
+    NEEDS_MANUAL_REVIEW = "NEEDS_MANUAL_REVIEW"
+    CANCELLED_BEFORE_SUBMIT = "CANCELLED_BEFORE_SUBMIT"
+
+
+class GenerationStatus(StrEnum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    PARTIAL = "PARTIAL"
+    FAILED = "FAILED"
+    UNKNOWN = "UNKNOWN"
+
+
+class DownloadStatus(StrEnum):
+    NOT_READY = "NOT_READY"
+    QUEUED = "QUEUED"
+    DOWNLOADING = "DOWNLOADING"
+    READY = "READY"
+    FAILED = "FAILED"
+
+
+class ValidationStatus(StrEnum):
+    NOT_READY = "NOT_READY"
+    TECHNICAL_CHECKING = "TECHNICAL_CHECKING"
+    AI_CHECKING = "AI_CHECKING"
+    PASSED = "PASSED"
+    WARNING = "WARNING"
+    FAILED = "FAILED"
+    MANUAL_REVIEW = "MANUAL_REVIEW"
+
+
+class QualityDecisionStatus(StrEnum):
+    PENDING = "PENDING"
+    QUALIFIED = "QUALIFIED"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class HardGateVerification(StrEnum):
+    MACHINE_VERIFIED = "MACHINE_VERIFIED"
+    HUMAN_REQUIRED = "HUMAN_REQUIRED"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+class CanvasMutationState(StrEnum):
+    OPEN = "OPEN"
+    DRAINING = "DRAINING"
+    SEALED = "SEALED"
+    QUARANTINED = "QUARANTINED"
+
+
+class CanvasExecutionState(StrEnum):
+    IDLE = "IDLE"
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    PARTIAL = "PARTIAL"
+    COMPLETED = "COMPLETED"
+
+
+class SagaStatus(StrEnum):
+    PENDING = "PENDING"
+    EXECUTING = "EXECUTING"
+    VERIFIED = "VERIFIED"
+    WRITE_UNCERTAIN = "WRITE_UNCERTAIN"
+    MANUAL_REVIEW = "MANUAL_REVIEW"
+    ABANDONED = "ABANDONED"
+
+
+class OperationStatus(StrEnum):
+    PENDING = "PENDING"
+    EXECUTING = "EXECUTING"
+    RETRYABLE = "RETRYABLE"
+    VERIFIED = "VERIFIED"
+    WRITE_UNCERTAIN = "WRITE_UNCERTAIN"
+    MANUAL_REVIEW = "MANUAL_REVIEW"
+    ABANDONED = "ABANDONED"
+
+
+class CommandStatus(StrEnum):
+    READY = "READY"
+    CLAIMED = "CLAIMED"
+    LAUNCH_STARTED = "LAUNCH_STARTED"
+    PROCESS_STARTED = "PROCESS_STARTED"
+    TERMINAL = "TERMINAL"
+    UNCERTAIN = "UNCERTAIN"
+    CANCELLED = "CANCELLED"
+
+
+class ChargeStatus(StrEnum):
+    NOT_CHARGED = "NOT_CHARGED"
+    CHARGED = "CHARGED"
+    UNKNOWN = "UNKNOWN"
+
+
+class ReservationStatus(StrEnum):
+    ESTIMATED = "ESTIMATED"
+    RESERVED = "RESERVED"
+    SETTLED = "SETTLED"
+    RELEASED = "RELEASED"
+    UNCERTAIN = "UNCERTAIN"
+
+
+class BillingSource(StrEnum):
+    TASK_BILLING = "TASK_BILLING"
+    PRICE_SNAPSHOT = "PRICE_SNAPSHOT"
+    ISOLATED_BALANCE_DELTA = "ISOLATED_BALANCE_DELTA"
+    MANUAL = "MANUAL"
+
+
+class LedgerEntryType(StrEnum):
+    RESERVE = "RESERVE"
+    CONSUME = "CONSUME"
+    RELEASE = "RELEASE"
+    ADJUST = "ADJUST"
+    UNCERTAIN = "UNCERTAIN"
+
+
+class RunnerHostStatus(StrEnum):
+    ONLINE = "ONLINE"
+    WARNING = "WARNING"
+    PAUSED = "PAUSED"
+    OFFLINE = "OFFLINE"
+
+
+class OutboxStatus(StrEnum):
+    PENDING = "PENDING"
+    PUBLISHED = "PUBLISHED"
+    FAILED = "FAILED"

@@ -1,0 +1,26 @@
+.account-workspace { min-width: 0; }
+.account-tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--line); }
+.account-tabs button { display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 2px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-secondary); font: inherit; font-size: 14px; cursor: pointer; }
+.account-tabs button[aria-selected="true"] { border-bottom-color: var(--primary); color: var(--primary); font-weight: 650; }
+.account-tabs button:hover { color: var(--primary); }
+.account-tabs button:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.account-workspace .settings-section { margin-top: 0; padding: 24px 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+.account-toolbar-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: end; gap: 8px; }
+.account-list-filters { grid-template-columns: minmax(160px, 2fr) repeat(2, minmax(140px, 1fr)); margin: 20px 0 12px; }
+.account-workspace .account-row { border-width: 0 0 1px; border-radius: 0; background: transparent; padding: 16px 0; }
+.account-workspace .account-row.is-inactive { background: var(--surface-soft); }
+.account-workspace .account-identity { overflow-wrap: anywhere; }
+.account-workspace .foundation-drawer .account-create-form { display: grid; grid-template-columns: 1fr; padding-top: 0; }
+.account-workspace .foundation-drawer .account-create-form > button { margin: 8px 0 0; }
+.account-workspace .foundation-drawer .brand-create-form { display: grid; padding-top: 0; }
+.account-pricing { border-top: 1px solid var(--line); padding-top: 20px; }
+@media (max-width: 700px) {
+  .account-tabs { gap: 0; justify-content: space-between; }
+  .account-tabs button { gap: 5px; font-size: 13px; }
+  .account-workspace .settings-section-heading { flex-wrap: wrap; gap: 12px; }
+  .account-toolbar-actions { justify-content: start; }
+  .account-list-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .account-list-filters > label:first-child { grid-column: 1 / -1; }
+  .account-workspace .account-actions { display: flex; flex-wrap: wrap; }
+  .account-workspace .account-actions button { flex: 1 1 auto; }
+}

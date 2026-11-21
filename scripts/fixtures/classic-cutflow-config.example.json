@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "enabled": false,
+  "transport": "lan",
+  "nasStatusEnabled": true,
+  "nasScanSeconds": 60,
+  "baseUrl": "http://CUT-BRIDGE-HOST:3001",
+  "handoffRoot": "\\\\NAS-HOST\\shared-cutflow",
+  "autoSubmitAfter": null
+}

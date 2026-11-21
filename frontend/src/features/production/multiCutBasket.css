@@ -1,0 +1,26 @@
+/* Selection persists across routes; only task surfaces own a visible basket. */
+.cut-basket-compact { position: fixed; z-index: 20; left: calc(50% + 120px); bottom: 16px; display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 32px); min-height: 48px; padding: 6px 12px; border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: 0 6px 24px rgba(15, 23, 42, .14); transform: translateX(-50%); font-size: 13px; }
+.cut-basket-compact > svg { flex-shrink: 0; color: var(--primary); }
+.cut-basket-compact > span { white-space: nowrap; }
+.cut-basket-compact .text-button { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; white-space: nowrap; }
+.cut-basket { max-height: min(50dvh, 360px); overflow-y: auto; }
+.cut-basket__actions .cut-basket__minimize { display: inline-flex; align-items: center; gap: 4px; }
+.cut-basket__frame:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.cut-basket__remove { width: 24px; height: 24px; }
+body:has(.cut-basket-compact) .task-center-view, body:has(.cut-basket-compact) .workspace-view { padding-bottom: 96px; }
+@media (hover: none) {
+  .cut-basket__play, .cut-basket__remove { opacity: 1; }
+}
+@media (max-width: 1200px) {
+  .cut-basket-compact { left: calc(50% + 100px); }
+}
+@media (max-width: 900px) {
+  .cut-basket-compact { left: 50%; bottom: calc(76px + env(safe-area-inset-bottom)); }
+  .cut-basket { left: 50%; bottom: calc(76px + env(safe-area-inset-bottom)); width: calc(100vw - 28px); }
+  body:has(.cut-basket) .task-center-view, body:has(.cut-basket) .workspace-view { padding-bottom: calc(50dvh + 100px); }
+}
+@media (max-width: 560px) {
+  .cut-basket-compact { bottom: calc(64px + env(safe-area-inset-bottom)); gap: 8px; }
+  .cut-basket__actions .cut-basket__minimize { grid-column: 1 / -1; justify-self: end; width: auto; }
+  .cut-basket { bottom: calc(64px + env(safe-area-inset-bottom)); max-height: min(50dvh, 360px); }
+}

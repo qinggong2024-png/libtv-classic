@@ -1,0 +1,73 @@
+/* Approved classic admin styling; all rules stay inside the management view. */
+.admin-view .page-title { align-items: center; padding: 0 0 20px; border: 0; min-height: 88px; }
+.admin-view .page-title>div:first-child>span { display: none; }
+.admin-view .page-title h1 { font-size: 28px; letter-spacing: -.02em; }
+.admin-view .page-title p { margin-top: 7px; font-size: 13px; }
+.admin-view .system-health { min-width: 0; padding: 0; border: 0; background: transparent; box-shadow: none; }
+.admin-view .system-health strong { font-size: 13px; font-weight: 600; }
+.admin-view .system-health small { font-size: 12px; }
+.admin-view .system-health>span { box-shadow: none; width: 7px; height: 7px; }
+.admin-view .subnav-tabs { display: flex; gap: 28px; padding: 0; border-bottom: 1px solid var(--line); margin: 0 0 20px; }
+.admin-view .subnav-tabs button { display: flex; grid-template-columns: none; align-items: center; gap: 8px; min-height: 48px; padding: 0 0 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; box-shadow: none; transform: none; }
+.admin-view .subnav-tabs button>span:first-child, .admin-view .subnav-tabs button.is-active>span:first-child { width: auto; height: auto; border-radius: 0; background: transparent; color: inherit; box-shadow: none; }
+.admin-view .subnav-tabs button strong { color: inherit; font-weight: 500; font-size: 14px; }
+.admin-view .subnav-tabs button small,.admin-view .subnav-tabs button>svg { display: none; }
+.admin-view .subnav-tabs button.is-active { border-bottom-color: var(--primary); color: var(--primary); background: transparent; box-shadow: none; }
+.admin-view .subnav-tabs button.is-active strong { font-weight: 600; }
+.admin-view .subnav-tabs button:hover { color: var(--primary); box-shadow: none; transform: none; }
+.admin-view .account-tabs { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); margin-bottom: 16px; }
+.admin-view .account-tabs button { min-height: 36px; padding: 0 14px; border: 0; border-radius: 5px; font-size: 13px; }
+.admin-view .account-tabs button[aria-selected=true] { background: var(--surface); color: var(--primary); font-weight: 600; }
+.admin-view .account-tabs button svg { width: 15px; height: 15px; }
+.admin-view .settings-section { padding: 20px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: none; margin-top: 16px; }
+.admin-view .account-workspace .settings-section { margin-top: 0; }
+.admin-view .settings-section-heading { padding-bottom: 16px; gap: 16px; align-items: center; }
+.admin-view .settings-section-heading h2 { font-size: 17px; }
+.admin-view .settings-section-heading p { font-size: 12px; }
+.admin-view .settings-section-heading .secondary-button { min-height: 38px; border-radius: 8px; font-size: 13px; }
+.admin-view .admin-usage-toolbar { margin-top: 16px; gap: 12px; }
+.admin-view .admin-usage :is(input,select) { min-height: 40px; border-radius: 8px; background: var(--surface); }
+.admin-view .admin-usage-periods { padding: 3px; border-radius: 8px; }
+.admin-view .admin-usage-periods button { min-height: 32px; padding: 5px 12px; font-weight: 500; }
+.admin-view .admin-usage-periods button[aria-pressed=true] { font-weight: 600; }
+.admin-view .admin-usage-search input { width: 192px; padding-left: 34px; }
+.admin-view .admin-usage-search svg { top: 12px; left: 11px; }
+.admin-view .admin-usage-brand select { width: 145px; }
+.admin-view .admin-usage-range { margin-top: 12px; font-size: 12px; }
+.admin-view .admin-usage-money-row { margin-top: 16px; padding: 18px 20px; background: var(--surface-soft); border-radius: 8px; gap: 24px; }
+.admin-view .admin-usage-totals { gap: 20px 48px; }
+.admin-view .admin-usage-totals>div:first-child dd { font-size: 28px; font-weight: 600; }
+.admin-view .admin-usage-totals dd { font-size: 22px; font-weight: 600; }
+.admin-view .admin-usage-totals dt { font-size: 12px; min-height: 20px; }
+.admin-view .admin-usage-explainer { font-size: 12px; line-height: 1.7; margin: 10px 0 16px; }
+.admin-view .admin-usage-warning { margin-bottom: 20px; padding: 10px 12px; border-radius: 8px; font-size: 12px; }
+.admin-view .admin-usage-warning strong { font-weight: 600; margin-right: 8px; }
+.admin-view .usage-overview-heading { margin: 0 0 12px; }
+.admin-view .usage-overview-heading h3 { font-size: 15px; }
+.admin-view .usage-table-scroll { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); overflow: auto; }
+.admin-view .admin-usage-table { min-width: 800px; }
+.admin-view .admin-usage-table :is(th,td) { padding: 12px 10px; font-size: 13px; }
+.admin-view .admin-usage-table thead th { font-size: 12px; background: var(--surface-soft); }
+.admin-view .admin-usage-table tbody tr:last-child>* { border-bottom: 0; }
+.admin-view .admin-usage-table td:last-child { padding-right: 10px; }
+.admin-view .admin-usage-table .usage-record-link { color: var(--text); font-weight: 600; }
+.admin-view .admin-usage-table .usage-record-link:hover { color: var(--primary); }
+.admin-view .admin-usage-table .icon-button { width: 32px; height: 36px; min-height: 36px; border: 0; background: transparent; color: var(--muted); }
+.admin-view .admin-usage-table .icon-button:hover { color: var(--primary); background: var(--primary-soft); }
+.admin-view .usage-account-table small { font-size: 11px; color: var(--muted); }
+.admin-view .usage-account-table small.admin-usage-caution { color: var(--warning); }
+.admin-view .admin-usage-footer { margin: 12px 0 0; font-size: 11px; }
+.admin-view .admin-usage-definitions { margin-top: 12px; font-size: 12px; }
+.admin-view .account-pricing { border: 0; padding: 12px 0 0; }
+.admin-view .account-pricing>.secondary-button { min-height: 36px; font-size: 12px; background: transparent; border-color: var(--line); box-shadow: none; }
+.admin-view .foundation-drawer { background: var(--surface); }
+.admin-view .foundation-drawer__header { background: var(--surface-soft); }
+.admin-view .foundation-drawer__header h2 { font-size: 20px; }
+.admin-view .admin-summary-grid>div { border-radius: 10px; box-shadow: none; }
+.admin-view .subnav-tabs button:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+
+@media(max-width:1280px) { .admin-view .admin-usage-toolbar { flex-wrap: wrap; }
+.admin-view .admin-usage-search { margin-left: auto; }
+.admin-view .admin-usage-money-row { padding-inline: 16px; }
+.admin-view .admin-usage-totals { gap: 20px 36px; }
+ }
