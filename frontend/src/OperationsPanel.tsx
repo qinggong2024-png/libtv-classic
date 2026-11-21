@@ -2,7 +2,8 @@ import { errorMessage } from './errorPresentation'
 import { Activity, AlertTriangle, CircleDollarSign, Gauge, Layers3, LoaderCircle, Pause, Play, RefreshCw, Server, Timer, WalletCards, Workflow, CheckCircle2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { getOperations, setOperationalPause } from './api'
-import type { OperationsSnapshot } from './types'
+import type { OperationsIssueCategory, OperationsSnapshot } from './types'
+import { OperationsIssuesBrowser } from './features/admin/OperationsIssuesBrowser'
 
 const runnerStatusLabels: Record<string, string> = {
   ONLINE: '在线',
@@ -64,16 +65,6 @@ function formatDuration(seconds: number | null): string {
 
 type PauseScope = 'GLOBAL' | 'PAID_SUBMISSIONS'
 
-function AffectedTaskLinks({ items }: { items: Array<{ taskId: string; title: string }> }) {
-  if (!items.length) return null
-  return <div className="ops-issue-samples">
-    <small>关联任务示例（最多 5 条）</small>
-    <div>{items.map((item) => <a key={item.taskId} href={`?task=${encodeURIComponent(item.taskId)}`} title={item.taskId}>
-      {item.title || item.taskId.slice(0, 8)} <span>查看任务</span>
-    </a>)}</div>
-  </div>
-}
-
 export function OperationsPanel({ adminId, onShowTasks, onShowBilling }: {
   adminId: string | null
   onShowTasks?: () => void
@@ -84,6 +75,7 @@ export function OperationsPanel({ adminId, onShowTasks, onShowBilling }: {
   const [notice, setNotice] = useState('')
   const [pendingScope, setPendingScope] = useState<PauseScope | null>(null)
   const [confirmScope, setConfirmScope] = useState<PauseScope | null>(null)
+  const [activeIssue, setActiveIssue] = useState<OperationsIssueCategory | null>(null)
   const refresh = useCallback(async () => {
     if (!adminId) return
     try { setSnapshot(await getOperations(adminId)); setError('') }
@@ -202,22 +194,26 @@ export function OperationsPanel({ adminId, onShowTasks, onShowBilling }: {
       </div>
     </section>
     {health ? <section className="ops-band ops-issues" aria-label="待处理问题">
-      <div className="detail-heading"><div><span className="section-kicker">异常处理</span><h3>需要关注的事项</h3></div><span>分类统计 · 历史记录单独展示</span></div>
+      <div className="detail-heading"><div><span className="section-kicker">异常处理</span><h3>需要关注的事项</h3></div><span>全平台只读明细 · 不改变原账号权限</span></div>
+      <p className="ops-issue-guidance">点击“查看全平台明细”可按品牌、账号、任务名查询完整异常列表。任务中心仍只显示本账号任务。
+        {onShowTasks ? <button type="button" className="text-button" onClick={onShowTasks}>我的任务中心</button> : null}
+        {onShowBilling ? <button type="button" className="text-button" onClick={onShowBilling}>账号与费用管理</button> : null}
+      </p>
       <div className="ops-issue-row is-danger">
         <AlertTriangle size={19} /><span><strong>云端生成状态待核实 <b>{health.cloudUnknownAttempts} 条</b></strong><small>优先查询供应商回执、扣费与生成结果。不可直接重复提交付费任务。</small></span>
-        {onShowTasks ? <button type="button" className="text-button" onClick={onShowTasks}>查看需处理任务</button> : null}
+        <button type="button" className="text-button" aria-expanded={activeIssue === 'cloudUnknown'} onClick={() => setActiveIssue(old => old === 'cloudUnknown' ? null : 'cloudUnknown')}>查看全平台明细</button>
       </div>
-      <AffectedTaskLinks items={health.issueSamples?.cloudUnknown ?? []} />
+      {activeIssue === 'cloudUnknown' ? <OperationsIssuesBrowser adminId={adminId} category="cloudUnknown" onClose={() => setActiveIssue(null)} /> : null}
       <div className="ops-issue-row">
         <WalletCards size={19} /><span><strong>费用预留待核对 <b>{health.reservationsAwaitingReview} 条</b></strong><small>关联生成结果：成功 {health.reservationOutcomes.succeeded} · 失败 {health.reservationOutcomes.failed} · 云端待核实 {health.reservationOutcomes.cloudUnknown}{health.reservationOutcomes.other ? ` · 其他 ${health.reservationOutcomes.other}` : ''}；不代表这些费用已经结清。</small></span>
-        {onShowBilling ? <button type="button" className="text-button" onClick={onShowBilling}>账号与费用</button> : null}
+        <button type="button" className="text-button" aria-expanded={activeIssue === 'reservationReview'} onClick={() => setActiveIssue(old => old === 'reservationReview' ? null : 'reservationReview')}>查看全平台明细</button>
       </div>
-      <AffectedTaskLinks items={health.issueSamples?.reservationReview ?? []} />
+      {activeIssue === 'reservationReview' ? <OperationsIssuesBrowser adminId={adminId} category="reservationReview" onClose={() => setActiveIssue(null)} /> : null}
       <div className="ops-issue-row">
         <CircleDollarSign size={19} /><span><strong>历史生成受限 <b>{blockedCount} 条</b></strong><small>美元预算 {queue?.blockedBudgetUsd ?? 0} · 旧额度限制 {queue?.blockedLegacyLimit ?? 0} · 其他待处理 {queue?.blockedOther ?? 0}；不会自动恢复付费生成。</small></span>
-        {onShowTasks ? <button type="button" className="text-button" onClick={onShowTasks}>查看需处理任务</button> : null}
+        <button type="button" className="text-button" aria-expanded={activeIssue === 'blockedPrepared'} onClick={() => setActiveIssue(old => old === 'blockedPrepared' ? null : 'blockedPrepared')}>查看全平台明细</button>
       </div>
-      <AffectedTaskLinks items={health.issueSamples?.blockedPrepared ?? []} />
+      {activeIssue === 'blockedPrepared' ? <OperationsIssuesBrowser adminId={adminId} category="blockedPrepared" onClose={() => setActiveIssue(null)} /> : null}
     </section> : null}
     <section className="ops-band ops-pipeline" aria-labelledby="ops-pipeline-title">
       <div className="detail-heading"><div><span className="section-kicker">效率监控</span><h3 id="ops-pipeline-title">近 {pipeline.windowDays} 天制作耗时</h3></div><span>每 15 秒更新</span></div>

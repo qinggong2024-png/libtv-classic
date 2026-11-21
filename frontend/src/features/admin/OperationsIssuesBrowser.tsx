@@ -1,0 +1,125 @@
+import { ChevronDown, ChevronLeft, ChevronRight, LoaderCircle, Search, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { getOperationsIssues } from '../../api'
+import { errorMessage } from '../../errorPresentation'
+import type { OperationsIssueCategory, OperationsIssuePage, OperationsIssueRecord } from '../../types'
+
+const descriptions: Record<OperationsIssueCategory, { title: string; summary: string }> = {
+  cloudUnknown: {
+    title: '云端生成待核实',
+    summary: '逐条核对供应商任务 ID、回执和扣费，未确认之前不要重新付费提交。',
+  },
+  reservationReview: {
+    title: '费用预留待核对',
+    summary: '这里只显示历史财务预留状态，不代表实际已扣费或退款；按记录核对。',
+  },
+  blockedPrepared: {
+    title: '历史生成受限',
+    summary: '已排除可执行队列，需检查账号预算或历史限制，不会自动重新生成。',
+  },
+}
+
+const dateText = (value: string | null) => {
+  if (!value) return '未记录'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
+}
+
+const display = (value: string | number | null | undefined) => value == null || value === '' ? '未记录' : String(value)
+
+function IssueDetail({ item }: { item: OperationsIssueRecord }) {
+  return <dl className="ops-issue-detail-grid">
+    <div><dt>任务 ID</dt><dd title={item.taskId}>{item.taskId}</dd></div>
+    <div><dt>生成记录 ID</dt><dd title={item.attemptId}>{item.attemptId}</dd></div>
+    <div><dt>片段</dt><dd>{display(item.variantType)}</dd></div>
+    <div><dt>任务状态 / 原因</dt><dd>{item.taskPhase} / {display(item.phaseReasonCode)}</dd></div>
+    <div><dt>生成服务 / 状态</dt><dd>{item.provider} / {display(item.providerStatus)}</dd></div>
+    <div><dt>云端任务 ID</dt><dd>{display(item.providerTaskId)}</dd></div>
+    <div><dt>最近错误代码</dt><dd>{display(item.lastErrorCode)}</dd></div>
+    <div><dt>生成异常</dt><dd>{display(item.errorMessage)}</dd></div>
+    <div><dt>最后核实时间</dt><dd>{dateText(item.reconciledAt)}</dd></div>
+    <div><dt>核实异常</dt><dd>{display(item.reconcileError)}</dd></div>
+    <div><dt>提交时间</dt><dd>{dateText(item.submittedAt)}</dd></div>
+    <div><dt>原始任务创建</dt><dd>{dateText(item.taskCreatedAt)}</dd></div>
+    <div><dt>生成费用判定</dt><dd>{display(item.chargeStatus)}</dd></div>
+    <div><dt>费用预留状态</dt><dd>{display(item.reservationStatus)}</dd></div>
+    <div><dt>费用记录 ID</dt><dd>{display(item.reservationId)}</dd></div>
+    <div><dt>预估 / 实际生成额度</dt><dd>{display(item.estimatedPoints)} / {display(item.actualPoints)}</dd></div>
+    <div><dt>费用记录创建</dt><dd>{dateText(item.reservationCreatedAt)}</dd></div>
+  </dl>
+}
+
+export function OperationsIssuesBrowser({
+  adminId, category, onClose,
+}: {
+  adminId: string
+  category: OperationsIssueCategory
+  onClose: () => void
+}) {
+  const [page, setPage] = useState<OperationsIssuePage | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [offset, setOffset] = useState(0)
+  const [searchInput, setSearchInput] = useState('')
+  const [search, setSearch] = useState('')
+  const [expanded, setExpanded] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+    void getOperationsIssues(adminId, category, offset, 20, search).then((result) => {
+      if (active) setPage(result)
+    }).catch((cause) => {
+      if (active) setError(errorMessage(cause, '获取异常记录失败，请检查管理员权限。'))
+    }).finally(() => {
+      if (active) setLoading(false)
+    })
+    return () => { active = false }
+  }, [adminId, category, offset, search])
+
+  return <section className="ops-issue-browser" aria-label={descriptions[category].title}>
+    <div className="ops-issue-browser-head">
+      <div><strong>{descriptions[category].title} · 全平台只读明细</strong><p>{descriptions[category].summary}</p></div>
+      <button type="button" className="icon-button" title="关闭明细" aria-label="关闭明细" onClick={onClose}><X size={17} /></button>
+    </div>
+    <form className="ops-issue-search" onSubmit={(event) => {
+      event.preventDefault()
+      setExpanded(null)
+      setOffset(0)
+      if (search === searchInput.trim() && offset === 0) return
+      setLoading(true)
+      setError('')
+      setSearch(searchInput)
+    }}>
+      <label htmlFor="ops-issue-query">品牌、账号或任务名</label>
+      <input id="ops-issue-query" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} maxLength={80} placeholder="搜索全部账号的异常记录" />
+      <button type="submit" className="secondary-button"><Search size={15} />搜索</button>
+      {search ? <button type="button" className="text-button" onClick={() => {
+        setLoading(true)
+        setError('')
+        setSearchInput('')
+        setSearch('')
+        setOffset(0)
+      }}>清空</button> : null}
+    </form>
+    {error ? <p className="service-alert" role="alert">{error}</p> : null}
+    <div className="ops-issue-list" aria-live="polite">
+      {loading ? <p className="ops-muted"><LoaderCircle size={15} className="spin" /> 正在加载异常记录…</p> : page && page.items.length === 0 ? <p className="ops-muted">没有符合条件的异常记录。</p> : null}
+      {!loading && page?.items.map((item) => <article className="ops-issue-entry" key={item.reservationId ?? item.attemptId}>
+        <button type="button" className="ops-issue-entry-main" aria-expanded={expanded === (item.reservationId ?? item.attemptId)} onClick={() => setExpanded((old) => old === (item.reservationId ?? item.attemptId) ? null : item.reservationId ?? item.attemptId)}>
+          <span className="ops-issue-entry-title"><strong>{item.title}</strong><small>{item.brandName || '未归属品牌'} · {item.username} · {dateText(category === 'reservationReview' ? item.reservationCreatedAt : item.updatedAt)}</small></span>
+          <span className="ops-issue-entry-status">{category === 'reservationReview' ? item.attemptStatus : item.phaseReasonCode || item.attemptStatus}</span>
+          <ChevronDown size={16} className={expanded === (item.reservationId ?? item.attemptId) ? 'is-open' : ''} />
+        </button>
+        {expanded === (item.reservationId ?? item.attemptId) ? <IssueDetail item={item} /> : null}
+      </article>)}
+    </div>
+    {page ? <footer className="ops-issue-pager">
+      <span>共 {page.total} 条记录{search ? ' · 搜索结果' : ''} · 第 {page.total ? Math.floor(page.offset / page.limit) + 1 : 0} 页</span>
+      <div>
+        <button type="button" className="secondary-button" disabled={loading || offset === 0} onClick={() => { setLoading(true); setError(''); setExpanded(null); setOffset(Math.max(0, offset - 20)) }}><ChevronLeft size={15} />上一页</button>
+        <button type="button" className="secondary-button" disabled={loading || offset + 20 >= page.total} onClick={() => { setLoading(true); setError(''); setExpanded(null); setOffset(offset + 20) }}>下一页<ChevronRight size={15} /></button>
+      </div>
+    </footer> : null}
+    <p className="ops-issue-readonly">管理员只读诊断入口。不会修改任务、费用、账号权限或发起新的付费生成。</p>
+  </section>
+}

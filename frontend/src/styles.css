@@ -1520,12 +1520,39 @@ main { min-height: 100dvh; }
 .ops-issue-row strong b { font-variant-numeric: tabular-nums; }
 .ops-issue-row small { color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
 .ops-issue-row .text-button { white-space: nowrap; font-size: 12px; }
-.ops-issue-samples { margin: -3px 0 11px 36px; padding: 9px 12px; border-left: 2px solid var(--line); }
-.ops-issue-samples > small { display: block; margin-bottom: 7px; color: var(--muted); font-size: 11px; }
-.ops-issue-samples > div { display: flex; flex-wrap: wrap; gap: 6px; }
-.ops-issue-samples a { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 6px 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: var(--surface); font-size: 12px; text-decoration: none; }
-.ops-issue-samples a:hover { border-color: var(--primary); }
-.ops-issue-samples a span { color: var(--primary); white-space: nowrap; }
+.ops-issue-guidance { margin: 6px 0 11px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.ops-issue-guidance .text-button { padding: 2px 8px; font-size: 12px; }
+.ops-issue-browser { margin: 0 0 14px 36px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
+.ops-issue-browser-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ops-issue-browser-head strong { font-size: 14px; }
+.ops-issue-browser-head p { margin: 5px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.ops-issue-search { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 14px 0 12px; }
+.ops-issue-search label { color: var(--text-secondary); font-size: 12px; }
+.ops-issue-search input { min-width: 185px; flex: 1; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 12px; }
+.ops-issue-search button { min-height: 34px; font-size: 12px; }
+.ops-issue-list { display: grid; gap: 7px; }
+.ops-issue-entry { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+.ops-issue-entry-main { width: 100%; display: flex; align-items: center; gap: 12px; min-height: 66px; padding: 10px 13px; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.ops-issue-entry-main:hover { background: var(--surface-soft); }
+.ops-issue-entry-main > svg { flex: none; color: var(--muted); transition: transform 160ms ease; }
+.ops-issue-entry-main > svg.is-open { transform: rotate(180deg); }
+.ops-issue-entry-title { min-width: 0; display: grid; flex: 1; gap: 5px; }
+.ops-issue-entry-title strong { overflow-wrap: anywhere; font-size: 13px; font-weight: 650; }
+.ops-issue-entry-title small { color: var(--muted); font-size: 11px; }
+.ops-issue-entry-status { flex: 0 1 185px; color: var(--text-secondary); font-size: 11px; overflow-wrap: anywhere; text-align: right; }
+.ops-issue-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; margin: 0; padding: 8px 13px 12px; border-top: 1px solid var(--line); }
+.ops-issue-detail-grid > div { display: grid; gap: 3px; min-width: 0; padding: 8px 8px 8px 0; }
+.ops-issue-detail-grid dt { color: var(--muted); font-size: 11px; }
+.ops-issue-detail-grid dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--text); font-size: 12px; }
+.ops-issue-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; color: var(--muted); font-size: 12px; }
+.ops-issue-pager > div { display: flex; gap: 8px; }
+.ops-issue-pager button { min-height: 34px; font-size: 12px; }
+.ops-issue-readonly { margin: 12px 0 0; color: var(--muted); font-size: 11px; }
+@media (max-width: 800px) {
+  .ops-issue-browser { margin-left: 0; padding: 11px; }
+  .ops-issue-detail-grid { grid-template-columns: 1fr; }
+  .ops-issue-entry-status { display: none; }
+}
 @media (max-width: 1000px) {
   .ops-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ops-issue-row { grid-template-columns: 24px minmax(0, 1fr); }

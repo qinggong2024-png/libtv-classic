@@ -3,7 +3,7 @@ from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 from libtv_agent.adapters.kling_official_api import KlingOfficialApiAdapter
 from libtv_agent.adapters.kling_official_cli import KlingCliError
 from libtv_agent.adapters.kling_provider import create_kling_adapter
@@ -50,6 +50,8 @@ from libtv_agent.services.kling_config import (
 from libtv_agent.services.libtv_login import LibTVLoginStartError
 from libtv_agent.services.model_registry import ModelRegistryError, refresh_model_registry
 from libtv_agent.services.observability import operations_snapshot
+from libtv_agent.services.operations_issues import IssueCategory, list_operations_issues
+from libtv_agent.services.page_access import management_admin
 from libtv_agent.services.runtime_control import (
     get_runtime_config,
     rollback_runtime_config,
@@ -916,6 +918,23 @@ async def get_operations(actor: Actor, session: Session, request: Request) -> di
     snapshot = await operations_snapshot(session, request.app.state.settings)
     await session.commit()
     return snapshot
+
+
+@router.get("/operations/issues")
+async def get_operations_issue_records(
+    actor: Actor,
+    session: Session,
+    category: IssueCategory,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=10000),
+    search: str = Query(default="", max_length=80),
+) -> dict[str, Any]:
+    # Never reuse /tasks/{id}: that owner-only endpoint has write-capable companions.
+    if not management_admin(actor):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "platform administrator required")
+    return await list_operations_issues(
+        session, category=category, limit=limit, offset=offset, search=search
+    )
 
 
 @router.get("/runtime-config")

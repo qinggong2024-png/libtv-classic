@@ -1,4 +1,4 @@
-import type { AdminCredentialsStatus, AdminUser, AuthUser, BachConfig, BachConfigPatch, BatchConfirmationResponse, FeedbackReason, FeedbackValue, FixedVideoTaskOptions, ImageGenerationBatch, ImageGenerationClientManifest, KlingConfig, KlingConfigPatch, KlingElement, KlingElementCreate, KlingElementList, KlingStatus, LibTVAccountStatus, LibTVAccountSwitch, LibTVLoginStart, MotionActionSummary, MotionActionWrite, OperationsSnapshot, PromptAssistantResponse, PromptPreset, PromptPresetWrite, Reconciliation, RuntimeConfigSnapshot, SiteStyleProfileSummary, SiteStyleProfileWrite, SystemStatus, Task, UploadResult, VariantKind, VideoLearningPreference, VideoTemplateSummary, WaveSpeedConfig, WaveSpeedConfigPatch } from './types'
+import type { AdminCredentialsStatus, AdminUser, AuthUser, BachConfig, BachConfigPatch, BatchConfirmationResponse, FeedbackReason, FeedbackValue, FixedVideoTaskOptions, ImageGenerationBatch, ImageGenerationClientManifest, KlingConfig, KlingConfigPatch, KlingElement, KlingElementCreate, KlingElementList, KlingStatus, LibTVAccountStatus, LibTVAccountSwitch, LibTVLoginStart, MotionActionSummary, MotionActionWrite, OperationsIssueCategory, OperationsIssuePage, OperationsSnapshot, PromptAssistantResponse, PromptPreset, PromptPresetWrite, Reconciliation, RuntimeConfigSnapshot, SiteStyleProfileSummary, SiteStyleProfileWrite, SystemStatus, Task, UploadResult, VariantKind, VideoLearningPreference, VideoTemplateSummary, WaveSpeedConfig, WaveSpeedConfigPatch } from './types'
 import { createUuid } from './uuid'
 import { userFacingError, validationMessage } from './errorPresentation'
 import type { AccountBrand, AccountEventReport, AccountPolicy, AccountUsageReport, GenerationBudget, GlobalUsagePricing } from './types'
@@ -627,6 +627,20 @@ export async function reconcileAttempt(adminId: string, attemptId: string): Prom
 
 export function getOperations(adminId: string): Promise<OperationsSnapshot> {
   return request('/api/v1/admin/operations', {}, { actorId: adminId })
+}
+
+export function getOperationsIssues(
+  adminId: string,
+  category: OperationsIssueCategory,
+  offset = 0,
+  limit = 20,
+  search = '',
+): Promise<OperationsIssuePage> {
+  const params = new URLSearchParams({
+    category, offset: String(offset), limit: String(limit),
+  })
+  if (search.trim()) params.set('search', search.trim())
+  return request(`/api/v1/admin/operations/issues?${params.toString()}`, {}, { actorId: adminId })
 }
 
 export function getAdminUsers(adminId: string): Promise<AdminUser[]> {

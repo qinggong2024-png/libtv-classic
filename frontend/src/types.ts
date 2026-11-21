@@ -794,6 +794,45 @@ export interface Reconciliation {
   updatedAt: string
 }
 
+export type OperationsIssueCategory = 'cloudUnknown' | 'reservationReview' | 'blockedPrepared'
+
+export interface OperationsIssueRecord {
+  taskId: string
+  title: string
+  username: string
+  brandName: string | null
+  taskPhase: string
+  phaseReasonCode: string | null
+  taskCreatedAt: string | null
+  variantType: string | null
+  attemptId: string
+  attemptStatus: string
+  provider: string
+  providerTaskId: string | null
+  providerStatus: string | null
+  lastErrorCode: string | null
+  errorMessage: string | null
+  chargeStatus: string | null
+  submittedAt: string | null
+  updatedAt: string | null
+  reconciledAt: string | null
+  reconcileError: string | null
+  reservationId: string | null
+  reservationStatus: string | null
+  reservationChargeStatus: string | null
+  estimatedPoints: number | null
+  actualPoints: number | null
+  reservationCreatedAt: string | null
+}
+
+export interface OperationsIssuePage {
+  category: OperationsIssueCategory
+  total: number
+  limit: number
+  offset: number
+  items: OperationsIssueRecord[]
+}
+
 export interface OperationsSnapshot {
   runtime: {
     version: number
