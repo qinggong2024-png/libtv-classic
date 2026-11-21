@@ -8,7 +8,7 @@ import { createMultiCutflowTask, listCutflowHandoffs, listMultiCutflowTasks, ret
 import type { MultiCutflowTask } from '../../api'
 import type { Task } from '../../types'
 import { multiCutflowPresentation } from '../../domain/cutflowPresentation'
-import { autoCutflowCandidate, autoCutflowPollDelay, type AutoCutflowCandidate } from '../../domain/autoCutflowWaiting'
+import { autoCutflowCandidate, autoCutflowPollDelay, partialAutoCutflowKey, type AutoCutflowCandidate } from '../../domain/autoCutflowWaiting'
 import {
   cutflowBrandConflict,
   cutflowSourceCanJoinBasket,
@@ -258,7 +258,8 @@ export function useMultiCutBasket({ tasks, canWrite, enabled, storageKey = STORA
         setMessage('已重新提交剪辑，历史记录保持不变。')
       } else {
         await createMultiCutflowTask([sourceId],
-          `${previous || existingVersion ? 'cutflow-revision' : 'cutflow-job'}-${createAttemptKey()}`,
+          partialAutoCutflowKey(source.task, [sourceId])
+            ?? `${previous || existingVersion ? 'cutflow-revision' : 'cutflow-job'}-${createAttemptKey()}`,
           true, true)
         setMessage(previous || existingVersion ? '已创建新剪辑版本，旧成片仍保留。' : '已送入剪辑。')
       }
@@ -289,7 +290,8 @@ export function useMultiCutBasket({ tasks, canWrite, enabled, storageKey = STORA
         } else {
           await createMultiCutflowTask(
             selection,
-            `${hasPreviousCut ? 'cutflow-revision' : 'cutflow-job'}-${createAttemptKey()}`,
+            partialAutoCutflowKey(only.task, selection)
+              ?? `${hasPreviousCut ? 'cutflow-revision' : 'cutflow-job'}-${createAttemptKey()}`,
             true,
             true,
           )
@@ -300,7 +302,12 @@ export function useMultiCutBasket({ tasks, canWrite, enabled, storageKey = STORA
       } else {
         // 每次尝试一个新键：请求在飞时按钮已禁用，失败后重试不会复活一个混合篮子。
         const submittedCount = selection.length
-        await createMultiCutflowTask(selection, `cutflow-multi-${createAttemptKey()}`, true)
+        const sameParent = entries.length > 0
+          && entries.every(entry => entry.task.id === entries[0].task.id)
+        const stableKey = sameParent
+          ? partialAutoCutflowKey(entries[0].task, selection)
+          : null
+        await createMultiCutflowTask(selection, stableKey ?? `cutflow-multi-${createAttemptKey()}`, true)
         setMessage(`已送交 ${submittedCount} 条原片一起剪辑，可在「任务」里跟进剪辑进度。`)
       }
       setSelection([])

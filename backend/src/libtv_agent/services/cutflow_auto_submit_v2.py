@@ -7,14 +7,9 @@ handoffs nor human review decisions are altered here.
 from __future__ import annotations
 
 from fastapi import HTTPException
+from libtv_agent.services.cutflow_auto_eligibility import eligible_auto_variants
 from libtv_agent.config import Settings
-from libtv_agent.domain.enums import (
-    DownloadStatus,
-    GenerationStatus,
-    ParentTaskPhase,
-    UserRole,
-    ValidationStatus,
-)
+from libtv_agent.domain.enums import ParentTaskPhase, UserRole
 from libtv_agent.domain.models import (
     CutflowHandoff,
     GenerationVariant,
@@ -70,43 +65,15 @@ async def enqueue_completed_v2(database, settings: Settings, _object_store) -> i
             )).all()
             if not 1 <= len(variants) <= 8:
                 continue
-            # A failed/cancelled source that cannot satisfy the whole CUT bundle
-            # must not hold unused editing budget indefinitely. Unknown or
-            # running provider states are intentionally not treated as final.
-            terminal = all(
-                variant.generation_status in (
-                    GenerationStatus.SUCCEEDED, GenerationStatus.PARTIAL,
-                    GenerationStatus.FAILED,
-                ) for variant in variants
-            )
-            blocked = any(
-                variant.generation_status == GenerationStatus.FAILED
-                or variant.validation_status == ValidationStatus.FAILED
-                for variant in variants
-            )
-            if (parent.phase == ParentTaskPhase.CANCELLED or (
-                parent.phase in (
-                    ParentTaskPhase.ACTION_REQUIRED,
-                    ParentTaskPhase.PARTIALLY_DELIVERABLE,
-                    ParentTaskPhase.DELIVERABLE,
-                ) and terminal and blocked
-            )):
+            # A terminal failure can exclude that original without losing its
+            # usable siblings. Unknown and in-progress results still block.
+            selected = eligible_auto_variants(variants, parent.phase)
+            if parent.phase == ParentTaskPhase.CANCELLED or selected == []:
                 if await release_unused_auto_cutflow(session, parent):
                     await session.commit()
                     return 1
                 continue
-            # Do not turn a partially finished source task into a premature
-            # one-clip edit when another clip is still generating or failed.
-            if any(
-                variant.generation_status not in (
-                    GenerationStatus.SUCCEEDED, GenerationStatus.PARTIAL
-                )
-                or variant.validation_status not in (
-                    ValidationStatus.PASSED, ValidationStatus.WARNING
-                )
-                or variant.download_status != DownloadStatus.READY
-                for variant in variants
-            ):
+            if selected is None:
                 continue
 
             variant_ids = {variant.id for variant in variants}
@@ -138,13 +105,13 @@ async def enqueue_completed_v2(database, settings: Settings, _object_store) -> i
                 async with session.begin_nested():
                     task = await create_multi_task(
                         session, parent.user_id,
-                        [variant.id for variant in variants],
+                        [variant.id for variant in selected],
                         f"auto-unified-v2:{parent.id}", True,
-                        allow_single_source=len(variants) == 1,
+                        allow_single_source=len(selected) == 1,
                     )
                     await bind_prepaid_cutflow(
                         session, parent=parent, cutflow_task=task,
-                        units=len(variants),
+                        units=len(selected),
                     )
             except (MultiCutflowError, HTTPException):
                 # Invalid inputs, exhausted/unknown USD budget, or no real

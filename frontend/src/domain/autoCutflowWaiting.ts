@@ -25,6 +25,26 @@ export function autoCutflowCandidate(task: Task): AutoCutflowCandidate | null {
   return { taskId: task.id, readyAt: Number.isFinite(readyAt) ? readyAt : null }
 }
 
+/** A manual salvage must share the auto worker's stable key and clip order. */
+export function partialAutoCutflowKey(task: Task, sourceIds: string[]): string | null {
+  if (task.settings?.autoSubmitToCutflow !== true
+    || !['PARTIALLY_DELIVERABLE', 'ACTION_REQUIRED', 'DELIVERABLE'].includes(task.phase)
+    || !task.variants.length || !sourceIds.length) return null
+  const ready = task.variants.filter(variant => Boolean(variant.downloadArtifactId)
+    && ['SUCCEEDED', 'PARTIAL'].includes(variant.generationStatus)
+    && variant.downloadStatus === 'READY'
+    && ['PASSED', 'WARNING'].includes(variant.validationStatus))
+  const excluded = task.variants.filter(variant => !ready.includes(variant))
+  if (!excluded.length || excluded.some(variant => !(
+    variant.generationStatus === 'FAILED'
+    || (['SUCCEEDED', 'PARTIAL'].includes(variant.generationStatus)
+      && (variant.validationStatus === 'FAILED' || variant.downloadStatus === 'FAILED'))
+  ))) return null
+  if (sourceIds.length !== ready.length
+    || sourceIds.some((id, index) => id !== ready[index].id)) return null
+  return `auto-unified-v2:${task.id}`
+}
+
 export function autoCutflowWaitDelayed(task: Task, now: number): boolean {
   const candidate = autoCutflowCandidate(task)
   return candidate?.readyAt != null && now - candidate.readyAt >= AUTO_CUTFLOW_WAIT_MS

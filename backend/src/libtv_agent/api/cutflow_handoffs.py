@@ -5,12 +5,16 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from libtv_agent.api.dependencies import Actor, Session, require_review_write
-from libtv_agent.domain.models import CutflowHandoff, CutflowOutputView, MultiCutflowTask
+from libtv_agent.domain.models import (
+    CutflowHandoff, CutflowOutputView, GenerationVariant, MultiCutflowTask, ParentTask,
+)
 from libtv_agent.domain.schemas import ApiModel
 from libtv_agent.services import cutflow_observation
 from libtv_agent.services.account_access import reserve_usd
 from libtv_agent.services.brand_identity import profile_brand_reference
 from libtv_agent.services.cutflow_auto_status import auto_dispatch_status
+from libtv_agent.services.cutflow_auto_eligibility import eligible_auto_variants
+from libtv_agent.services.cutflow_budget import bind_prepaid_cutflow
 from libtv_agent.services.cutflow_downloads import download_filename
 from libtv_agent.services.cutflow_handoff import (
     CutflowHandoffError,
@@ -204,6 +208,29 @@ async def create_multi_handoff(
             "code": "CUTFLOW_MULTI_SOURCE_NOT_READY",
             "message": "统一剪辑通道尚未完成 CUT 端接入和现场联调，未创建任务",
         })
+    # A manual takeover of a partially completed auto-edit must use the same
+    # parent identity, selection and prepaid hold as the auto worker. This
+    # prevents two paid edits from racing for the one surviving source.
+    prepaid_parent = None
+    if payload.idempotency_key.startswith("auto-unified-v2:"):
+        try:
+            parent_id = uuid.UUID(payload.idempotency_key.removeprefix("auto-unified-v2:"))
+        except ValueError:
+            raise HTTPException(409, detail={"code": "INVALID_AUTO_EDIT_IDENTITY"}) from None
+        prepaid_parent = await session.scalar(select(ParentTask).where(
+            ParentTask.id == parent_id, ParentTask.user_id == actor.id,
+        ))
+        if prepaid_parent is None or (prepaid_parent.settings_json or {}).get(
+            "autoSubmitToCutflow"
+        ) is not True:
+            raise HTTPException(409, detail={"code": "INVALID_AUTO_EDIT_IDENTITY"})
+        candidates = (await session.scalars(select(GenerationVariant).where(
+            GenerationVariant.parent_task_id == prepaid_parent.id,
+        ).order_by(GenerationVariant.variant_index, GenerationVariant.id))).all()
+        selected = eligible_auto_variants(candidates, prepaid_parent.phase)
+        if not selected or [item.id for item in selected] != payload.source_ids:
+            raise HTTPException(409, detail={"code": "AUTO_EDIT_SOURCES_CHANGED",
+                                             "message": "可用原片状态已变化，请刷新后重新送剪"})
     try:
         task = await create_multi_task(
             session,
@@ -218,10 +245,16 @@ async def create_multi_handoff(
         await session.rollback()
         raise HTTPException(409, detail={"code": exc.code, "message": str(exc)}) from exc
     # 每条原片计一次剪辑费；同一任务重复提交时 reserve_usd 按 (kind, operation_id) 幂等返回。
-    await reserve_usd(
-        session, user_id=actor.id, kind="CUTFLOW",
-        operation_id=task.id, units=len(payload.source_ids),
-    )
+    if prepaid_parent is not None:
+        await bind_prepaid_cutflow(
+            session, parent=prepaid_parent, cutflow_task=task,
+            units=len(payload.source_ids),
+        )
+    else:
+        await reserve_usd(
+            session, user_id=actor.id, kind="CUTFLOW",
+            operation_id=task.id, units=len(payload.source_ids),
+        )
     await session.commit()
     return _read_multi(task)
 

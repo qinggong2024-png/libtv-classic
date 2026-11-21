@@ -8,12 +8,7 @@ import uuid
 from datetime import UTC, datetime
 
 from libtv_agent.config import Settings
-from libtv_agent.domain.enums import (
-    DownloadStatus,
-    GenerationStatus,
-    UserRole,
-    ValidationStatus,
-)
+from libtv_agent.domain.enums import UserRole
 from libtv_agent.domain.models import (
     AccountUsage,
     GenerationVariant,
@@ -22,6 +17,7 @@ from libtv_agent.domain.models import (
     User,
 )
 from libtv_agent.services import cutflow_observation
+from libtv_agent.services.cutflow_auto_eligibility import eligible_auto_variants
 from libtv_agent.services.cutflow_multi import MultiCutflowError, snapshot_sources
 from libtv_agent.services.page_access import page_permissions
 from libtv_agent.services.points import business_date
@@ -62,13 +58,12 @@ async def auto_dispatch_status(
     variants = (await session.scalars(select(GenerationVariant).where(
         GenerationVariant.parent_task_id == task.id,
     ).order_by(GenerationVariant.variant_index, GenerationVariant.id))).all()
-    if not 1 <= len(variants) <= 8 or any(
-        variant.generation_status not in {GenerationStatus.SUCCEEDED, GenerationStatus.PARTIAL}
-        or variant.download_status != DownloadStatus.READY
-        or variant.validation_status not in {ValidationStatus.PASSED, ValidationStatus.WARNING}
-        for variant in variants
-    ):
+    selected = eligible_auto_variants(variants, task.phase)
+    if selected is None:
         return {**base, "state": "WAITING_ORIGINALS"}
+    if not selected:
+        return {**base, "state": "BLOCKED", "reasonCode": "NO_USABLE_ORIGINALS",
+                "message": "本次生成已结束，但没有通过校验的可用原片。请处理失败片段。"}
 
     user = await session.get(User, actor_id)
     if (user is None or not user.is_active or user.role == UserRole.AUDITOR
@@ -78,8 +73,8 @@ async def auto_dispatch_status(
                 "message": "当前账号无自动送剪权限或预算额度，请联系管理员核对。"}
 
     try:
-        await snapshot_sources(session, actor_id, [v.id for v in variants],
-                               allow_single_source=len(variants) == 1)
+        await snapshot_sources(session, actor_id, [v.id for v in selected],
+                               allow_single_source=len(selected) == 1)
     except MultiCutflowError as exc:
         return {**base, "state": "BLOCKED", "reasonCode": exc.code, "message": str(exc)}
 
@@ -99,7 +94,7 @@ async def auto_dispatch_status(
                 AccountUsage.operation_id == prepaid_id,
                 AccountUsage.status == "RESERVED",
             ))
-            prepaid_reserved = prepaid is not None and prepaid.units == len(variants)
+            prepaid_reserved = prepaid is not None and prepaid.units >= len(selected)
 
     # Older tasks, released reservations and malformed keys still require
     # normal budget eligibility checks; no budget bypass is permitted.
@@ -117,7 +112,7 @@ async def auto_dispatch_status(
         if rate is None or unknown:
             return {**base, "state": "BLOCKED", "reasonCode": "USD_PRICE_REQUIRED",
                     "message": "当前剪辑单价或历史费用待核实，自动送剪暂不能创建任务。"}
-        required = int(rate) * len(variants)
+        required = int(rate) * len(selected)
         remaining = int(user.daily_budget_microusd) - int(used or 0)
         if required > remaining:
             return {**base, "state": "BLOCKED",

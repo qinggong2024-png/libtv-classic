@@ -25,7 +25,7 @@ import { type PromptRevisionMode, AnalysisProgress, HistoricalPrompt, PlanPanel,
 import { GenerationCostBadge } from '../../shared/components/GenerationCostBadge'
 import { selectedVideoSeconds } from '../../generationBudget'
 import { cutflowDispatchPresentation } from './cutflowDispatchPresentation'
-import { autoCutflowCandidate, autoCutflowWaitDelayed } from '../../domain/autoCutflowWaiting'
+import { autoCutflowCandidate, autoCutflowWaitDelayed, partialAutoCutflowKey } from '../../domain/autoCutflowWaiting'
 import { taskTimingStoppedAt } from '../../domain/taskTimingPresentation'
 import { TaskDetailDisclosure } from './TaskDetailDisclosure'
 import './taskDetailLayout.css'
@@ -129,7 +129,7 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
   const latestEditFailed = latestEditBatch
     ? latestEditBatch.status === 'FAILED'
     : legacyHandoffs.some(handoff => handoff.status === 'FAILED')
-  const cutflowDispatch = cutflowDispatchPresentation(
+  const dispatchSnapshot = cutflowDispatchPresentation(
     task.settings, hasCutflowRecord, cutflowInProgress, deliveredOutputCount > 0,
     latestEditFailed, !multiCutReady || cutflowBasket.multiTasksLoaded,
     multiCutReady && Boolean(cutflowBasket.multiTaskError),
@@ -137,6 +137,22 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
     activeEditBatch ?? latestEditBatch ?? null,
     verifiedAutoStatus,
   )
+  const partialReadyIds = task.variants.filter(variant => Boolean(variant.downloadArtifactId)
+    && ['SUCCEEDED', 'PARTIAL'].includes(variant.generationStatus)
+    && variant.downloadStatus === 'READY'
+    && ['PASSED', 'WARNING'].includes(variant.validationStatus)).map(variant => variant.id)
+  const partialSalvage = !hasCutflowRecord
+    && Boolean(partialAutoCutflowKey(task, partialReadyIds))
+  const cutflowDispatch = partialSalvage ? {
+    ...dispatchSnapshot,
+    headline: '部分原片可用，可继续剪辑',
+    detail: `已有 ${partialReadyIds.length}/${task.variants.length} 条原片可用，失败片段不会进入本次剪辑。系统会自动尝试送剪，也可以手动送剪。`,
+    stageLabel: '可继续送剪',
+    action: 'select' as const,
+    actionLabel: '选择成功原片送剪',
+    tone: 'attention' as const,
+    waiting: false,
+  } : dispatchSnapshot
   const allowManualCut = cutflowDispatch.action === 'select' || deliveredOutputCount > 0 || latestEditFailed
   const hasMultipleResults = task.variants.length > 1
   const readyOriginals = task.variants.filter(variant => variant.downloadArtifactId)
@@ -312,10 +328,10 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
         <span className="task-adaptive-cut__icon" aria-hidden="true">{(cutflowInProgress && cutflowDispatch.tone !== 'attention') || cutflowDispatch.waiting ? <LoaderCircle className="spin" size={20} /> : cutflowDispatch.action === 'select' ? <Scissors size={20} /> : cutflowDispatch.tone === 'attention' ? <AlertTriangle size={20} /> : <Scissors size={20} />}</span>
         <div className="task-adaptive-cut__body">
           <h2>{cutflowDispatch.headline}</h2>
-          <p>{activeEditBatch ? (activeEditBatch.errorMessage || `${multiCutflowPresentation(activeEditBatch).label}，系统会自动更新进度。`) : latestEditFailed && latestEditBatch?.errorMessage ? latestEditBatch.errorMessage : cutflowDispatch.action === 'select' && task.variants.filter(variant => variant.downloadArtifactId).length === 1 && multiCutReady && !cutflowBasket.selection.length ? '原片已就绪，点击下方按钮即可直接送剪。' : cutflowDispatch.detail}</p>
+          <p>{activeEditBatch ? (activeEditBatch.errorMessage || `${multiCutflowPresentation(activeEditBatch).label}，系统会自动更新进度。`) : latestEditFailed && latestEditBatch?.errorMessage ? latestEditBatch.errorMessage : partialSalvage ? cutflowDispatch.detail : cutflowDispatch.action === 'select' && task.variants.filter(variant => variant.downloadArtifactId).length === 1 && multiCutReady && !cutflowBasket.selection.length ? '原片已就绪，点击下方按钮即可直接送剪。' : cutflowDispatch.detail}</p>
           <small>原片已就绪 {task.variants.filter(variant => variant.downloadArtifactId).length}/{task.variants.length} · {cutflowDispatch.modeLabel}</small>
         </div>
-        {cutflowDispatch.actionLabel && cutflowDispatch.action !== 'select'
+        {cutflowDispatch.actionLabel && (cutflowDispatch.action !== 'select' || partialSalvage)
           ? <button type="button" className="secondary-button" onClick={cutflowNextAction}>{cutflowDispatch.actionLabel}</button>
           : null}
       </section> : null}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Task } from '../types'
 import type { MultiCutflowTask } from '../api'
-import { AUTO_CUTFLOW_WAIT_MS, autoCutflowCandidate, autoCutflowPollDelay, autoCutflowWaitDelayed } from './autoCutflowWaiting'
+import { AUTO_CUTFLOW_WAIT_MS, autoCutflowCandidate, autoCutflowPollDelay, autoCutflowWaitDelayed, partialAutoCutflowKey } from './autoCutflowWaiting'
 import { taskCenterState } from './taskCenterState'
 
 const readyAt = Date.parse('2026-11-13T06:23:36Z')
@@ -14,6 +14,21 @@ const candidates = [autoCutflowCandidate(task)!]
 const batch = (status: string) => ({ id: 'cut-1', status, sources: [{ taskId: task.id }], outputs: [], updatedAt: task.updatedAt } as unknown as MultiCutflowTask)
 
 describe('automatic CUT admission waiting', () => {
+  it('uses a shared idempotency key for a terminal one-of-two partial recovery', () => {
+    const failure = {
+      id: 'v2', downloadArtifactId: null, generationStatus: 'FAILED',
+      downloadStatus: 'NOT_READY', validationStatus: 'FAILED',
+    }
+    const partial = { ...task, phase: 'PARTIALLY_DELIVERABLE', variants: [...task.variants, failure] } as Task
+    expect(partialAutoCutflowKey(partial, ['v1'])).toBe('auto-unified-v2:task-1')
+    expect(partialAutoCutflowKey(partial, ['v2'])).toBeNull()
+    expect(partialAutoCutflowKey(partial, ['v1', 'v2'])).toBeNull()
+    expect(partialAutoCutflowKey({ ...partial, variants: [
+      task.variants[0], { ...failure, generationStatus: 'UNKNOWN' },
+    ] } as Task, ['v1'])).toBeNull()
+    expect(partialAutoCutflowKey({ ...partial, settings: { autoSubmitToCutflow: false } } as Task, ['v1'])).toBeNull()
+    expect(partialAutoCutflowKey(task, ['v1'])).toBeNull()
+  })
   it('starts the timeout at persisted readiness, not task creation or page opening', () => {
     expect(autoCutflowWaitDelayed(task, readyAt + 179_999)).toBe(false)
     expect(autoCutflowWaitDelayed(task, readyAt + AUTO_CUTFLOW_WAIT_MS)).toBe(true)
