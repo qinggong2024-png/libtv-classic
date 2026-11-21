@@ -40,6 +40,14 @@ afterEach(async () => {
   vi.unstubAllGlobals()
 })
 describe('independent task polling clocks', () => {
+  it('loads a historical task opened directly from operations even if it is not on the first page', async () => {
+    vi.mocked(getTaskPage).mockResolvedValue({ items: [task('selected')], nextCursor: 'older' })
+    vi.mocked(getTask).mockResolvedValue(task('historical', 'ACTION_REQUIRED'))
+    view = await mount(<Harness detailId="historical" />)
+    await advance(0)
+    expect(getTask).toHaveBeenCalledWith('historical')
+    expect(state.tasks.find((item) => item.id === 'historical')?.phase).toBe('ACTION_REQUIRED')
+  })
   it('keeps the 30s list fallback and other-task notifications through 4s detail updates', async () => {
     view = await mount(<Harness detailId="selected" />)
     await advance(0)

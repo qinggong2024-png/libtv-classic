@@ -240,7 +240,7 @@ function App() {
         canDeleteSubjects={isManagementAdmin(actor)}
         canEditCatalog={isManagementAdmin(actor)}
       /></Suspense> : null}
-      {view === 'admin' && canOperate ? <Suspense fallback={<PageLoading />}><AdminCenterView system={system} actor={actor} section={adminSection} onSectionChange={(section) => navigate('admin', null, false, section)} onKlingChanged={refresh} /></Suspense> : null}
+      {view === 'admin' && canOperate ? <Suspense fallback={<PageLoading />}><AdminCenterView system={system} actor={actor} section={adminSection} onSectionChange={(section) => navigate('admin', null, false, section)} onShowTasks={() => navigateRecords('attention', '')} onKlingChanged={refresh} /></Suspense> : null}
       {view === 'settings' ? <Suspense fallback={<PageLoading />}><SettingsView
         system={system}
         actorId={actor?.userId}

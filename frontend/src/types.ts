@@ -807,13 +807,48 @@ export interface OperationsSnapshot {
       autoConfirmLevels: string[]
     }
   }
-  queues: { prepared: number; generation: number; running: number; unknown: number }
+  sampledAt?: string
+  queues: {
+    prepared: number
+    actionablePrepared?: number
+    actionableTotal?: number
+    blockedPrepared?: number
+    generation: number
+    running: number
+    unknown: number
+  }
+  productionHealth?: {
+    queue: {
+      actionableTotal: number
+      actionablePrepared: number
+      dispatchPending: number
+      readyCommands: number
+      blockedBudgetUsd: number
+      blockedLegacyLimit: number
+      blockedOther: number
+      oldestActionableWaitSeconds: number | null
+      launched30m: number
+    }
+    cloudUnknownAttempts: number
+    reservationsAwaitingReview: number
+    issueSamples: Record<'blockedPrepared' | 'cloudUnknown' | 'reservationReview', Array<{
+      taskId: string
+      title: string
+    }>>
+    reservationOutcomes: {
+      succeeded: number
+      failed: number
+      cloudUnknown: number
+      other: number
+    }
+  }
   metrics: {
     duplicateGenerationTotal: number
     crossTaskConnectionTotal: number
     unknownAfterSubmitRate: number
     generationSlotUtilization: number
     runnerActiveCommandHosts: number
+    runnerOnlineHosts?: number
     runnerOrphanProcesses: number
     // Counts of generations (reservations), not point amounts. The names keep the
     // historical `points*` wording for API compatibility; the backend switched the

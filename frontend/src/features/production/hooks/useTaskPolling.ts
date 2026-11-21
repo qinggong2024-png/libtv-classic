@@ -127,6 +127,21 @@ export function useTaskPolling(detailId: string | null) {
   const selected = tasks.find((task) => task.id === detailId)
   const pollDetail = Boolean(actorId && selected && ACTIVE_PHASES.has(selected.phase))
 
+  // A task opened from the operations dashboard may be older than the
+  // paginated list. Fetch it by ID before rendering its detail page.
+  useEffect(() => {
+    if (!actorId || !detailId || selected) return
+    let active = true
+    void getTask(detailId).then((task) => {
+      if (!active) return
+      setTasks((current) => current.some((item) => item.id === task.id)
+        ? current : [task, ...current])
+    }).catch(() => {
+      // Existing permissions and task API remain authoritative.
+    })
+    return () => { active = false }
+  }, [actorId, detailId, selected])
+
   useEffect(() => {
     if (!actorId) return
     let active = true

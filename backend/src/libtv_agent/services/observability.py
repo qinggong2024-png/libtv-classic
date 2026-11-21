@@ -619,7 +619,8 @@ async def _recent_orphan_process_count(session: AsyncSession, settings: Settings
 
 
 async def operations_snapshot(session: AsyncSession, settings: Settings) -> dict[str, Any]:
-    window_started_at = datetime.now(UTC) - timedelta(days=7)
+    sampled_at = datetime.now(UTC)
+    window_started_at = sampled_at - timedelta(days=7)
     runtime = await get_runtime_config(session, settings)
     config = runtime.config_json if runtime else {}
 
@@ -652,11 +653,68 @@ async def operations_snapshot(session: AsyncSession, settings: Settings) -> dict
     running = int(attempt_counts[3] or 0)
     unknown = int(attempt_counts[4] or 0)
     charged_unknown = int(attempt_counts[5] or 0)
+    # PREPARED is a persisted attempt state, not necessarily runnable work.
+    # Keep historic budget/limit failures outside the executable queue.
+    executable_parent_phases = (ParentTaskPhase.QUEUED, ParentTaskPhase.GENERATING)
+    prepared_rows = list(
+        await session.execute(
+            select(
+                ParentTask.phase,
+                ParentTask.phase_reason_code,
+                func.count(GenerationAttempt.id),
+                func.min(GenerationAttempt.updated_at),
+            )
+            .join(GenerationVariant, GenerationVariant.id == GenerationAttempt.variant_id)
+            .join(ParentTask, ParentTask.id == GenerationVariant.parent_task_id)
+            .where(GenerationAttempt.status == AttemptStatus.PREPARED)
+            .group_by(ParentTask.phase, ParentTask.phase_reason_code)
+        )
+    )
+    actionable_prepared = sum(
+        count for phase, _, count, _ in prepared_rows if phase in executable_parent_phases
+    )
+    blocked_budget = sum(
+        count for phase, reason, count, _ in prepared_rows
+        if phase == ParentTaskPhase.ACTION_REQUIRED and reason == "USD_DAILY_BUDGET_EXCEEDED"
+    )
+    blocked_legacy_limit = sum(
+        count for phase, reason, count, _ in prepared_rows
+        if phase == ParentTaskPhase.ACTION_REQUIRED and reason == "POINTS_LIMIT_EXCEEDED"
+    )
+    blocked_other = max(0, prepared - actionable_prepared - blocked_budget - blocked_legacy_limit)
+    oldest_prepared = [
+        updated_at for phase, _, _, updated_at in prepared_rows
+        if phase in executable_parent_phases and updated_at is not None
+    ]
     command_ready = int(
         await session.scalar(
             select(func.count())
             .select_from(GenerationCommand)
             .where(GenerationCommand.status == CommandStatus.READY)
+        )
+        or 0
+    )
+    oldest_ready_command = await session.scalar(
+        select(func.min(GenerationCommand.created_at)).where(
+            GenerationCommand.status == CommandStatus.READY
+        )
+    )
+    oldest_dispatch_pending = await session.scalar(
+        select(func.min(GenerationAttempt.updated_at)).where(
+            GenerationAttempt.status == AttemptStatus.DISPATCH_PENDING
+        )
+    )
+    executable_wait_times = [
+        elapsed for started_at in (*oldest_prepared, oldest_ready_command, oldest_dispatch_pending)
+        if started_at is not None
+        if (elapsed := _elapsed_seconds(started_at, sampled_at)) is not None
+    ]
+    actionable_queue = actionable_prepared + command_ready + dispatch_pending
+    launched_30m = int(
+        await session.scalar(
+            select(func.count()).select_from(GenerationAttempt).where(
+                GenerationAttempt.submitted_at >= sampled_at - timedelta(minutes=30)
+            )
         )
         or 0
     )
@@ -679,6 +737,30 @@ async def operations_snapshot(session: AsyncSession, settings: Settings) -> dict
         )
     }
     reservations.update({status.value: int(total or 0) for status, total in reservation_rows})
+    uncertain_result_rows = list(
+        await session.execute(
+            select(GenerationAttempt.status, func.count(PointsReservation.id))
+            .select_from(PointsReservation)
+            .outerjoin(GenerationAttempt, GenerationAttempt.id == PointsReservation.attempt_id)
+            .where(PointsReservation.status == ReservationStatus.UNCERTAIN)
+            .group_by(GenerationAttempt.status)
+        )
+    )
+    reservation_outcomes = {"succeeded": 0, "failed": 0, "cloudUnknown": 0, "other": 0}
+    for attempt_status, count in uncertain_result_rows:
+        if attempt_status == AttemptStatus.SUCCEEDED:
+            outcome = "succeeded"
+        elif attempt_status in (
+            AttemptStatus.FAILED_BEFORE_SUBMIT,
+            AttemptStatus.FAILED_TERMINAL,
+            AttemptStatus.CANCELLED_BEFORE_SUBMIT,
+        ):
+            outcome = "failed"
+        elif attempt_status == AttemptStatus.UNKNOWN_AFTER_SUBMIT:
+            outcome = "cloudUnknown"
+        else:
+            outcome = "other"
+        reservation_outcomes[outcome] += count
     duplicate_generation_total, cross_task_connection_total = await _integrity_metrics(session)
     pipeline_performance = await _pipeline_performance(session)
     business_baseline = await _business_baseline(session)
@@ -687,9 +769,9 @@ async def operations_snapshot(session: AsyncSession, settings: Settings) -> dict
     pipeline_backlog = pipeline_performance["backlog"]
     if config.get("globalPaused", True):
         current_constraint = "GLOBAL_PAUSED"
-    elif running >= global_slots:
+    elif actionable_queue and running >= global_slots:
         current_constraint = "GENERATION_CAPACITY"
-    elif command_ready:
+    elif command_ready or dispatch_pending:
         current_constraint = "RUNNER_DISPATCH"
     elif pipeline_backlog["confirmation"]:
         current_constraint = "CONFIRMATION"
@@ -735,6 +817,18 @@ async def operations_snapshot(session: AsyncSession, settings: Settings) -> dict
             select(func.count(func.distinct(GenerationAttempt.runner_host_id))).where(
                 GenerationAttempt.runner_host_id.is_not(None),
                 GenerationAttempt.status.in_([AttemptStatus.LAUNCHING, AttemptStatus.RUNNING]),
+            )
+        )
+        or 0
+    )
+    # Distinguish a recent service heartbeat from a host assigned to a generation.
+    heartbeat_freshness = max(120, settings.runner_poll_seconds * 5)
+    heartbeat_cutoff = sampled_at - timedelta(seconds=heartbeat_freshness)
+    online_runner_hosts = int(
+        await session.scalar(
+            select(func.count()).select_from(RunnerHost).where(
+                RunnerHost.status == "ONLINE",
+                RunnerHost.last_heartbeat_at >= heartbeat_cutoff,
             )
         )
         or 0
@@ -791,7 +885,7 @@ async def operations_snapshot(session: AsyncSession, settings: Settings) -> dict
             }
         )
     queue = config.get("preparedQueue", {})
-    if command_ready + prepared < int(queue.get("lowWatermark", 0)):
+    if actionable_queue < int(queue.get("lowWatermark", 0)):
         alerts.append(
             {
                 "severity": "INFO",
@@ -823,9 +917,51 @@ async def operations_snapshot(session: AsyncSession, settings: Settings) -> dict
                 "action": "RECONCILE_BEFORE_RETRY",
             }
         )
+    # Small read-only samples let administrators open an actual affected task,
+    # rather than a generic task list that may include unrelated records.
+    issue_samples: dict[str, list[dict[str, str]]] = {}
+    issue_filters = {
+        "blockedPrepared": (
+            GenerationAttempt.status == AttemptStatus.PREPARED,
+            ParentTask.phase == ParentTaskPhase.ACTION_REQUIRED,
+        ),
+        "cloudUnknown": (GenerationAttempt.status == AttemptStatus.UNKNOWN_AFTER_SUBMIT,),
+    }
+    for category, conditions in issue_filters.items():
+        rows = list(
+            await session.execute(
+                select(ParentTask.id, ParentTask.title)
+                .join(GenerationVariant, GenerationVariant.parent_task_id == ParentTask.id)
+                .join(GenerationAttempt, GenerationAttempt.variant_id == GenerationVariant.id)
+                .where(*conditions)
+                .distinct()
+                .order_by(ParentTask.created_at.desc())
+                .limit(5)
+            )
+        )
+        issue_samples[category] = [
+            {"taskId": str(task_id), "title": title} for task_id, title in rows
+        ]
+    reservation_samples = list(
+        await session.execute(
+            select(ParentTask.id, ParentTask.title)
+            .join(GenerationVariant, GenerationVariant.parent_task_id == ParentTask.id)
+            .join(GenerationAttempt, GenerationAttempt.variant_id == GenerationVariant.id)
+            .join(PointsReservation, PointsReservation.attempt_id == GenerationAttempt.id)
+            .where(PointsReservation.status == ReservationStatus.UNCERTAIN)
+            .distinct()
+            .order_by(ParentTask.created_at.desc())
+            .limit(5)
+        )
+    )
+    issue_samples["reservationReview"] = [
+        {"taskId": str(task_id), "title": title}
+        for task_id, title in reservation_samples
+    ]
     runners = list(await session.scalars(select(RunnerHost).order_by(RunnerHost.hostname)))
     canvases = list(await session.scalars(select(CanvasProject).order_by(CanvasProject.created_at)))
     return {
+        "sampledAt": sampled_at.isoformat(),
         "runtime": {
             "version": runtime.version if runtime else None,
             "config": config,
@@ -833,6 +969,9 @@ async def operations_snapshot(session: AsyncSession, settings: Settings) -> dict
         "runtimeRevisions": runtime_revisions,
         "queues": {
             "prepared": prepared,
+            "actionablePrepared": actionable_prepared,
+            "actionableTotal": actionable_queue,
+            "blockedPrepared": prepared - actionable_prepared,
             "generation": command_ready + dispatch_pending,
             "running": running,
             "unknown": unknown,
@@ -844,6 +983,7 @@ async def operations_snapshot(session: AsyncSession, settings: Settings) -> dict
             "unknownAfterSubmitWindowDays": 7,
             "generationSlotUtilization": utilization,
             "runnerActiveCommandHosts": active_runner_hosts,
+            "runnerOnlineHosts": online_runner_hosts,
             "runnerOrphanProcesses": orphan_process_count,
             "pointsReserved": reservations[ReservationStatus.RESERVED.value],
             "pointsConsumed": reservations[ReservationStatus.SETTLED.value],
@@ -851,6 +991,25 @@ async def operations_snapshot(session: AsyncSession, settings: Settings) -> dict
             "deliveryFailureCount": delivery_failures,
             "imageQuotaRejectionCount": image_quota_rejections,
             "videoQuotaRejectionCount": video_quota_rejections,
+        },
+        "productionHealth": {
+            "queue": {
+                "actionableTotal": actionable_queue,
+                "actionablePrepared": actionable_prepared,
+                "dispatchPending": dispatch_pending,
+                "readyCommands": command_ready,
+                "blockedBudgetUsd": blocked_budget,
+                "blockedLegacyLimit": blocked_legacy_limit,
+                "blockedOther": blocked_other,
+                "oldestActionableWaitSeconds": (
+                    max(executable_wait_times) if executable_wait_times else None
+                ),
+                "launched30m": launched_30m,
+            },
+            "cloudUnknownAttempts": unknown,
+            "reservationsAwaitingReview": reservations[ReservationStatus.UNCERTAIN.value],
+            "reservationOutcomes": reservation_outcomes,
+            "issueSamples": issue_samples,
         },
         "metricEvidence": {
             "duplicateGenerationTotal": {
@@ -875,6 +1034,17 @@ async def operations_snapshot(session: AsyncSession, settings: Settings) -> dict
             "pointsReserved": {"unit": "generation_reservations", "source": "points_reservation"},
             "pointsConsumed": {"unit": "generation_reservations", "source": "points_reservation"},
             "pointsUncertain": {"unit": "generation_reservations", "source": "points_reservation"},
+            "runnerOnlineHosts": {
+                "source": "runner_host.status and last_heartbeat_at",
+                "freshnessSeconds": heartbeat_freshness,
+            },
+            "productionHealth": {
+                "source": (
+                    "generation_attempt joined to parent_task; "
+                    "generation_command; points_reservation"
+                ),
+                "units": "attempts/commands/reservations (separate counts)",
+            },
             "deliveryFailureCount": {
                 "source": "download_artifact.status=FAILED",
                 "windowDays": 7,

@@ -1494,6 +1494,46 @@ main { min-height: 100dvh; }
 .ops-metrics { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 14px; border: 1px solid var(--line); border-radius: 6px; }
 .ops-metrics > div { min-height: 72px; display: flex; align-items: center; gap: 9px; padding: 12px; border-right: 1px solid var(--line); }.ops-metrics > div:last-child { border-right: 0; }
 .ops-metrics span { display: grid; gap: 3px; }.ops-metrics small, .ops-row small, .ops-muted { color: var(--muted); font-size: 12px; }.ops-metrics strong { font-size: 17px; }
+.ops-overview { margin-top: 18px; }
+.ops-overview > .detail-heading { margin-bottom: 12px; }
+.ops-overview-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.ops-stat-card { min-width: 0; min-height: 116px; display: flex; align-items: flex-start; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); }
+.ops-stat-card > svg { flex: none; margin-top: 3px; color: var(--primary); }
+.ops-stat-card > span { min-width: 0; display: grid; gap: 5px; }
+.ops-stat-card small { color: var(--text-secondary); font-size: 12px; }
+.ops-stat-card strong { color: var(--text); font-size: 24px; font-weight: 750; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.ops-stat-card em { color: var(--muted); font-size: 11px; font-style: normal; line-height: 1.45; }
+.ops-stat-card.is-attention > svg { color: var(--warning); }
+.ops-stat-card.is-danger > svg { color: var(--danger); }
+.ops-data-warning { padding: 10px 12px; color: var(--warning); background: var(--warning-soft); border-radius: 10px; font-size: 12px; }
+.ops-queue-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 12px; padding: 13px 16px; border: 1px solid var(--line); border-radius: 12px; }
+.ops-queue-facts > span { display: grid; gap: 4px; }
+.ops-queue-facts small { color: var(--muted); font-size: 12px; }
+.ops-queue-facts strong { font-size: 13px; font-weight: 650; }
+.ops-issues { margin-top: 10px; }
+.ops-issues .detail-heading { margin-bottom: 9px; }
+.ops-issue-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 13px 2px; border-top: 1px solid var(--line); }
+.ops-issue-row > svg { align-self: start; margin-top: 3px; color: var(--text-secondary); }
+.ops-issue-row.is-danger > svg { color: var(--danger); }
+.ops-issue-row > span { display: grid; gap: 5px; }
+.ops-issue-row strong { font-size: 13px; }
+.ops-issue-row strong b { font-variant-numeric: tabular-nums; }
+.ops-issue-row small { color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
+.ops-issue-row .text-button { white-space: nowrap; font-size: 12px; }
+.ops-issue-samples { margin: -3px 0 11px 36px; padding: 9px 12px; border-left: 2px solid var(--line); }
+.ops-issue-samples > small { display: block; margin-bottom: 7px; color: var(--muted); font-size: 11px; }
+.ops-issue-samples > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.ops-issue-samples a { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 6px 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: var(--surface); font-size: 12px; text-decoration: none; }
+.ops-issue-samples a:hover { border-color: var(--primary); }
+.ops-issue-samples a span { color: var(--primary); white-space: nowrap; }
+@media (max-width: 1000px) {
+  .ops-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ops-issue-row { grid-template-columns: 24px minmax(0, 1fr); }
+  .ops-issue-row .text-button { grid-column: 2; justify-self: start; }
+}
+@media (max-width: 650px) {
+  .ops-overview-grid, .ops-queue-facts { grid-template-columns: 1fr; }
+}
 .ops-band { padding: 14px 0; border-bottom: 1px solid var(--line); }.detail-heading { display: flex; align-items: center; justify-content: space-between; }.detail-heading h3 { margin: 2px 0 0; font-size: 15px; }.detail-heading > span { color: var(--muted); font-size: 12px; }
 .ops-capacity { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }.ops-capacity span { display: flex; justify-content: space-between; gap: 7px; padding: 9px 0; border-bottom: 2px solid var(--line); font-size: 12px; }
 .ops-pipeline-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; padding: 12px 0 10px; }

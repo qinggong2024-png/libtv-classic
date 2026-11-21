@@ -1,5 +1,5 @@
 import { errorMessage } from './errorPresentation'
-import { Activity, AlertTriangle, CircleDollarSign, Gauge, Layers3, LoaderCircle, Pause, Play, RefreshCw, Server, Timer, WalletCards, Workflow } from 'lucide-react'
+import { Activity, AlertTriangle, CircleDollarSign, Gauge, Layers3, LoaderCircle, Pause, Play, RefreshCw, Server, Timer, WalletCards, Workflow, CheckCircle2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { getOperations, setOperationalPause } from './api'
 import type { OperationsSnapshot } from './types'
@@ -18,7 +18,10 @@ const alertCodeLabels: Record<string, string> = {
   KLING_API_VERIFICATION_FAILED: '暂时连不上可灵',
   KLING_API_RATE_LIMITED: '可灵现在比较繁忙',
   UNKNOWN_THRESHOLD_EXCEEDED: '状态不明的任务较多，请先检查',
-  PREPARED_QUEUE_BELOW_LOW_WATERMARK: '待生成的任务较少',
+  PREPARED_QUEUE_BELOW_LOW_WATERMARK: '可执行队列任务较少',
+  PAID_STATE_UNCERTAIN: '付费结果尚未确认',
+  DATA_INTEGRITY_ASSET_CONTAMINATION: '素材关联完整性异常',
+  PILOT_BLOCKED_RUNTIME_DRIFT: '运行配置与当前版本不一致',
 }
 
 const alertActionLabels: Record<string, string> = {
@@ -27,6 +30,7 @@ const alertActionLabels: Record<string, string> = {
   REFRESH_KLING_API_STATUS: '请重新检查可灵连接',
   PAUSE_NEW_PAID_SUBMISSIONS: '请暂停新的付费任务',
   OBSERVE_MATERIALIZATION_CAPACITY: '请检查素材准备是否正常',
+  RECONCILE_BEFORE_RETRY: '请先核对供应商回执和扣费记录，禁止盲目重试',
 }
 
 const stageLabels: Record<string, string> = {
@@ -60,7 +64,21 @@ function formatDuration(seconds: number | null): string {
 
 type PauseScope = 'GLOBAL' | 'PAID_SUBMISSIONS'
 
-export function OperationsPanel({ adminId }: { adminId: string | null }) {
+function AffectedTaskLinks({ items }: { items: Array<{ taskId: string; title: string }> }) {
+  if (!items.length) return null
+  return <div className="ops-issue-samples">
+    <small>关联任务示例（最多 5 条）</small>
+    <div>{items.map((item) => <a key={item.taskId} href={`?task=${encodeURIComponent(item.taskId)}`} title={item.taskId}>
+      {item.title || item.taskId.slice(0, 8)} <span>查看任务</span>
+    </a>)}</div>
+  </div>
+}
+
+export function OperationsPanel({ adminId, onShowTasks, onShowBilling }: {
+  adminId: string | null
+  onShowTasks?: () => void
+  onShowBilling?: () => void
+}) {
   const [snapshot, setSnapshot] = useState<OperationsSnapshot | null>(null)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -101,6 +119,12 @@ export function OperationsPanel({ adminId }: { adminId: string | null }) {
   if (!snapshot) return <section className="ops-empty">{error ? <AlertTriangle size={22} /> : <LoaderCircle className="spin" size={22} />}<strong>{error || '正在加载运行状态'}</strong></section>
   const config = snapshot.runtime.config
   const pipeline = snapshot.pipelinePerformance
+  const health = snapshot.productionHealth
+  const queue = health?.queue
+  const blockedCount = queue
+    ? queue.blockedBudgetUsd + queue.blockedLegacyLimit + queue.blockedOther
+    : null
+  const sampledAt = snapshot.sampledAt ? new Date(snapshot.sampledAt) : null
   const busy = pendingScope !== null
   const paidConfirmationBlockedByGlobal = !config.paidSubmissionsPaused && config.globalPaused
   return <section className="operations-console">
@@ -157,12 +181,44 @@ export function OperationsPanel({ adminId }: { adminId: string | null }) {
     </div> : null}
     {error && <div className="service-alert" role="alert"><AlertTriangle size={18} /><span>{error}</span></div>}
     {notice && <div className="service-alert service-alert--success" role="status"><Play size={18} /><span>{notice}</span></div>}
-    <div className="ops-metrics">
-      <div><Gauge size={18} /><span><small>同时生成名额使用情况</small><strong>{Math.round(snapshot.metrics.generationSlotUtilization * 100)}%</strong></span></div>
-      <div><Layers3 size={18} /><span><small>待生成 / 生成中</small><strong>{snapshot.queues.prepared} / {snapshot.queues.running}</strong></span></div>
-      <div><Server size={18} /><span><small>在线生成电脑</small><strong>{snapshot.metrics.runnerActiveCommandHosts}</strong></span></div>
-      <div><WalletCards size={18} /><span><small>已预留 / 状态不明条数</small><strong>{snapshot.metrics.pointsReserved} / {snapshot.metrics.pointsUncertain}</strong></span></div>
-    </div>
+    <section className="ops-overview" aria-label="生产运行概况">
+      <div className="detail-heading">
+        <div><span className="section-kicker">运行概况</span><h3>生产健康度</h3></div>
+        <span>{sampledAt && !Number.isNaN(sampledAt.getTime()) ? `采样于 ${sampledAt.toLocaleTimeString('zh-CN', { hour12: false })}` : '每 15 秒更新'}</span>
+      </div>
+      {!health ? <p className="ops-data-warning" role="status">当前服务尚未提供生产分类指标，暂不展示容易误导的历史队列总量。请检查后端版本并刷新。</p> : null}
+      <div className="ops-overview-grid">
+        <div className="ops-stat-card"><Gauge size={19} /><span><small>正在生成 / 并发上限</small><strong>{snapshot.queues.running} / {config.generationConcurrency.global}</strong><em>{Math.round(snapshot.metrics.generationSlotUtilization * 100)}% 使用率</em></span></div>
+        <div className="ops-stat-card"><Layers3 size={19} /><span><small>可执行排队</small><strong>{queue?.actionableTotal ?? '—'}</strong><em>可被调度的新生成任务</em></span></div>
+        <div className="ops-stat-card"><Server size={19} /><span><small>在线后台节点</small><strong>{snapshot.metrics.runnerOnlineHosts ?? '—'}</strong><em>最近 2 分钟内有心跳</em></span></div>
+        <div className="ops-stat-card"><CheckCircle2 size={19} /><span><small>24 小时完成原片</small><strong>{pipeline.throughput.completedVideos24h}</strong><em>{pipeline.throughput.completedTasks24h} 个任务</em></span></div>
+        <div className="ops-stat-card is-attention"><WalletCards size={19} /><span><small>预算 / 额度受限</small><strong>{blockedCount ?? '—'}</strong><em>已从可执行队列分离</em></span></div>
+        <div className="ops-stat-card is-danger"><AlertTriangle size={19} /><span><small>云端提交状态待核实</small><strong>{health?.cloudUnknownAttempts ?? '—'}</strong><em>需核对回执，禁止盲目重试</em></span></div>
+      </div>
+      <div className="ops-queue-facts" aria-label="排队效率">
+        <span><small>最久可执行排队</small><strong>{queue?.oldestActionableWaitSeconds == null ? queue ? '无可执行积压' : '—' : formatDuration(queue.oldestActionableWaitSeconds)}</strong></span>
+        <span><small>近 30 分钟提交供应商</small><strong>{queue?.launched30m ?? '—'} 条</strong></span>
+        <span><small>执行中的电脑</small><strong>{snapshot.metrics.runnerActiveCommandHosts} 台</strong></span>
+      </div>
+    </section>
+    {health ? <section className="ops-band ops-issues" aria-label="待处理问题">
+      <div className="detail-heading"><div><span className="section-kicker">异常处理</span><h3>需要关注的事项</h3></div><span>分类统计 · 历史记录单独展示</span></div>
+      <div className="ops-issue-row is-danger">
+        <AlertTriangle size={19} /><span><strong>云端生成状态待核实 <b>{health.cloudUnknownAttempts} 条</b></strong><small>优先查询供应商回执、扣费与生成结果。不可直接重复提交付费任务。</small></span>
+        {onShowTasks ? <button type="button" className="text-button" onClick={onShowTasks}>查看需处理任务</button> : null}
+      </div>
+      <AffectedTaskLinks items={health.issueSamples?.cloudUnknown ?? []} />
+      <div className="ops-issue-row">
+        <WalletCards size={19} /><span><strong>费用预留待核对 <b>{health.reservationsAwaitingReview} 条</b></strong><small>关联生成结果：成功 {health.reservationOutcomes.succeeded} · 失败 {health.reservationOutcomes.failed} · 云端待核实 {health.reservationOutcomes.cloudUnknown}{health.reservationOutcomes.other ? ` · 其他 ${health.reservationOutcomes.other}` : ''}；不代表这些费用已经结清。</small></span>
+        {onShowBilling ? <button type="button" className="text-button" onClick={onShowBilling}>账号与费用</button> : null}
+      </div>
+      <AffectedTaskLinks items={health.issueSamples?.reservationReview ?? []} />
+      <div className="ops-issue-row">
+        <CircleDollarSign size={19} /><span><strong>历史生成受限 <b>{blockedCount} 条</b></strong><small>美元预算 {queue?.blockedBudgetUsd ?? 0} · 旧额度限制 {queue?.blockedLegacyLimit ?? 0} · 其他待处理 {queue?.blockedOther ?? 0}；不会自动恢复付费生成。</small></span>
+        {onShowTasks ? <button type="button" className="text-button" onClick={onShowTasks}>查看需处理任务</button> : null}
+      </div>
+      <AffectedTaskLinks items={health.issueSamples?.blockedPrepared ?? []} />
+    </section> : null}
     <section className="ops-band ops-pipeline" aria-labelledby="ops-pipeline-title">
       <div className="detail-heading"><div><span className="section-kicker">效率监控</span><h3 id="ops-pipeline-title">近 {pipeline.windowDays} 天制作耗时</h3></div><span>每 15 秒更新</span></div>
       <div className="ops-pipeline-summary">
@@ -179,7 +235,11 @@ export function OperationsPanel({ adminId }: { adminId: string | null }) {
     </section>
     <div className="ops-band"><div className="detail-heading"><div><span className="section-kicker">生成容量</span><h3>同时生成和排队的数量</h3></div><span>设置更新次数：{snapshot.runtime.version}</span></div><div className="ops-capacity"><span>同一任务 <strong>{config.generationConcurrency.sameProject}</strong></span><span>单个用户 <strong>{config.generationConcurrency.perUser}</strong></span><span>全站同时生成 <strong>{config.generationConcurrency.global}</strong></span><span>排队数量下限 / 上限 <strong>{config.preparedQueue.lowWatermark} / {config.preparedQueue.highWatermark}</strong></span></div></div>
     <div className="ops-columns">
-      <section className="ops-band"><div className="detail-heading"><div><span className="section-kicker">工作节点</span><h3>后台生成电脑</h3></div><span>{snapshot.runners.length}</span></div>{snapshot.runners.length ? snapshot.runners.map((runner) => <div className="ops-row" key={runner.id}><span><strong>{runner.hostname}</strong><small>{runnerStatusLabels[runner.status] ?? '状态待确认'}</small></span><span>磁盘剩余 {runner.freeDiskPercent.toFixed(1)}%</span></div>) : <p className="ops-muted">暂时没有生成电脑在线，请联系管理员启动后台生成程序。</p>}</section>
+      <section className="ops-band"><div className="detail-heading"><div><span className="section-kicker">工作节点</span><h3>后台生成电脑</h3></div><span>{snapshot.runners.length}</span></div>{snapshot.runners.length ? snapshot.runners.map((runner) => {
+        const heartbeatAt = new Date(runner.lastHeartbeatAt).getTime()
+        const stale = sampledAt && (Number.isNaN(heartbeatAt) || sampledAt.getTime() - heartbeatAt > 120000)
+        return <div className="ops-row" key={runner.id}><span><strong>{runner.hostname}</strong><small>{stale ? '心跳超时' : runnerStatusLabels[runner.status] ?? '状态待确认'}</small></span><span>磁盘剩余 {runner.freeDiskPercent.toFixed(1)}%</span></div>
+      }) : <p className="ops-muted">暂时没有注册的后台生成节点，请检查后台生成程序。</p>}</section>
       <section className="ops-band"><div className="detail-heading"><div><span className="section-kicker">告警</span><h3>安全告警</h3></div><span>{snapshot.alerts.length}</span></div>{snapshot.alerts.length ? snapshot.alerts.map((alert) => <div className="ops-row ops-row--alert" key={alert.code}><AlertTriangle size={16} /><span><strong>{alertCodeLabels[alert.code] ?? '有一项运行情况需要检查'}</strong><small>{alertActionLabels[alert.action] ?? '请联系管理员检查任务记录和服务连接。'}</small></span></div>) : <p className="ops-muted">当前没有安全告警</p>}</section>
     </div>
   </section>

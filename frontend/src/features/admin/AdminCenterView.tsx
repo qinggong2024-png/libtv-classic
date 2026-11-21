@@ -24,12 +24,14 @@ export function AdminCenterView({
   section,
   onSectionChange,
   onKlingChanged,
+  onShowTasks,
 }: {
   system: SystemStatus | null
   actor: AuthUser | null
   section: AdminSection
   onSectionChange: (section: AdminSection) => void
   onKlingChanged: () => Promise<void>
+  onShowTasks?: () => void
 }) {
   const isAdmin = isManagementAdmin(actor)
   const activeVideo = system?.videoGeneration ?? system?.kling
@@ -71,7 +73,7 @@ export function AdminCenterView({
           <div><span className={`summary-icon ${activeVideo?.available && activeVideo.authenticated ? 'summary-icon--green' : 'summary-icon--amber'}`}><Activity size={19} /></span><span><small>{activeProvider.displayLabel}</small><strong>{providerStateLabel}</strong></span></div>
           <div><span className="summary-icon summary-icon--green"><Clapperboard size={19} /></span><span><small>生成模型</small><strong>{activeVideo?.model || activeVideo?.models[0] || '待配置'}</strong></span></div>
         </section>
-        <section className="settings-section admin-operations-card"><OperationsPanel adminId={actor?.userId ?? null} /></section>
+        <section className="settings-section admin-operations-card"><OperationsPanel adminId={actor?.userId ?? null} onShowTasks={onShowTasks} onShowBilling={() => onSectionChange('accounts')} /></section>
       </> : null}
       {currentSection === 'accounts' ? <UserManagement actor={actor!} platform sharedAuthentication={system?.sharedAuthentication ?? false} /> : null}
       {currentSection === 'providers' ? isAdmin ? <>
