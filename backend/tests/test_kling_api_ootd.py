@@ -86,8 +86,9 @@ async def test_explicit_frame_and_mixed_reference_roles_follow_wire_order(
     "allwe-ootd-sol-dynamic-display-v1",
 ])
 async def test_new_director_profiles_use_lossless_native_shot_compilation(
-    tmp_path: Path, profile: str,
+    tmp_path: Path, profile: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("ALLWE_KLING_NATIVE_SHOTS_PILOT", "1")
     req = _request(
         tmp_path,
         "镜头一0-3秒：人物整理衣角。镜头二3-10秒：近景自然展示印花。",
@@ -97,6 +98,20 @@ async def test_new_director_profiles_use_lossless_native_shot_compilation(
     text = payload["contents"][0]["text"]
     assert text.startswith("shot 1, 3,")
     assert "shot 2, 7," in text
+
+
+@pytest.mark.asyncio
+async def test_native_shot_pilot_is_off_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ALLWE_KLING_NATIVE_SHOTS_PILOT", raising=False)
+    prompt = "镜头一0-3秒：人物整理衣角。镜头二3-10秒：近景自然展示印花。"
+    req = _request(
+        tmp_path, prompt, profile="allwe-ootd-sol-dynamic-display-v1",
+    )
+    payload = await _adapter(tmp_path).build_request_payload(req)
+    assert payload["contents"][0]["text"] == prompt
+
 
 
 @pytest.mark.parametrize("seconds", [5, 10, 15])
