@@ -115,7 +115,7 @@ async def test_image_aliases_also_normalize_for_other_v3_profiles(tmp_path: Path
 
 @pytest.mark.asyncio
 async def test_normalization_overflow_falls_back_to_original_prompt(tmp_path: Path) -> None:
-    prompt = "a" * 3060 + " 图一"  # The alias fits before rewriting.
+    prompt = "a" * 3066 + " 图一"  # The alias fits before rewriting.
     payload = await _adapter(tmp_path).build_request_payload(
         _request(tmp_path, prompt, profile="other-director")
     )
