@@ -131,6 +131,35 @@ async def test_reference_guided_refuses_to_pass_unrepaired_draft():
     assert len(responses.calls) == 2
 
 
+# The mode is a site-wide OOTD contract; it must not be PW-specific.
+# These identifiers cover the brand/site profiles currently found in Classic.
+@pytest.mark.asyncio
+@pytest.mark.parametrize("site_profile_id", [
+    "pagewings", "geeksoutfit", "nerdywave", "tokyotiger",
+    "guidingcross", "teachersgram", "ironpandafit", "goodnurselife",
+])
+async def test_reference_guided_contract_applies_to_all_site_profiles(site_profile_id):
+    responses = MockResponses([BAD_SKIP, GOOD_PROMPT])
+    result = await plan_simple_ootd(
+        settings=Settings(app_env="test", _env_file=None),
+        storyboard_images=_storyboards(),
+        product_images=[],
+        creative_brief="自然地展示正背面",
+        brand_tone=f"Site creative profile: {site_profile_id}",
+        duration_seconds=10,
+        director_mode="reference_guided",
+        client=SimpleNamespace(responses=responses),
+    )
+    assert result[0].prompt == GOOD_PROMPT
+    assert result[0].request_attempts == 2
+    assert len(responses.calls) == 2
+    system, user = responses.calls[0]["input"]
+    assert "REQUIRED ordered visual anchors" in system["content"][0]["text"]
+    assert "required ordered later-shot visual reference" in user["content"][3]["text"]
+    assert [part["detail"] for part in user["content"]
+            if part["type"] == "input_image"] == ["high", "high"]
+
+
 @pytest.mark.asyncio
 async def test_cross_scene_v2_has_not_changed_its_image_detail_and_flow():
     responses = MockResponses([BAD_SKIP])
