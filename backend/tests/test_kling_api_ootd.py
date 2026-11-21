@@ -39,6 +39,66 @@ def _request(tmp_path: Path, prompt: str, *, count: int = 1, products: int = 1,
     )
 
 
+
+@pytest.mark.asyncio
+async def test_explicit_frame_and_mixed_reference_roles_follow_wire_order(
+    tmp_path: Path,
+) -> None:
+    """Roles must follow actual contents, not a storyboard-only count."""
+    first = _image(tmp_path / "explicit-first.png")
+    last = _image(tmp_path / "explicit-last.png")
+    storyboard = _image(tmp_path / "extra-storyboard.png")
+    character = _image(tmp_path / "extra-reference.png")
+    product = _image(tmp_path / "product-front.png")
+    req = VideoGenerationRequest(
+        model="kling-3.0-omni",
+        first_frame_path=first,
+        last_frame_path=last,
+        image_paths=(storyboard,),
+        refer_image_paths=(character,),
+        product_reference_paths=(product,),
+        prompt="起点图一，尾帧图二，分镜@image3，人物@image4，商品图五。",
+        duration=10, aspect_ratio="9:16", multi_shot=True, audio="off",
+        external_task_id="offline-mixed-slot-check",
+        director_native_profile="allwe-ootd-sol-simple-v1",
+    )
+    payload = await _adapter(tmp_path).build_request_payload(req)
+    assert [(item["type"], item["id"]) for item in payload["contents"][1:]] == [
+        ("first_frame", "image_1"),
+        ("last_frame", "image_2"),
+        ("refer_image", "image_3"),
+        ("refer_image", "image_4"),
+        ("refer_image", "image_5"),
+    ]
+    sent = payload["contents"][0]["text"]
+    for number, intent in [
+        (1, "唯一视频起始首帧"), (2, "视频结束帧"),
+        (3, "后续分镜参考图"), (4, "其他视觉补充参考图"),
+        (5, "商品主参考图"),
+    ]:
+        assert f"@image_{number}={intent}" in sent
+    assert req.prompt == "起点图一，尾帧图二，分镜@image3，人物@image4，商品图五。"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile", [
+    "allwe-ootd-sol-cross-scene-b-v1",
+    "allwe-ootd-sol-dynamic-display-v1",
+])
+async def test_new_director_profiles_use_lossless_native_shot_compilation(
+    tmp_path: Path, profile: str,
+) -> None:
+    req = _request(
+        tmp_path,
+        "镜头一0-3秒：人物整理衣角。镜头二3-10秒：近景自然展示印花。",
+        profile=profile,
+    )
+    payload = await _adapter(tmp_path).build_request_payload(req)
+    text = payload["contents"][0]["text"]
+    assert text.startswith("shot 1, 3,")
+    assert "shot 2, 7," in text
+
+
 @pytest.mark.parametrize("seconds", [5, 10, 15])
 def test_ootd_eligibility_accepts_official_api_v3_omni(seconds: int) -> None:
     common = dict(generation_mode="automatic", cut_mode="explicit_cuts",
@@ -71,13 +131,11 @@ async def test_api_multireference_binding_preserves_distinct_roles(tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_missing_api_image_reference_falls_back_and_still_submits(tmp_path: Path) -> None:
-    """Unknown ID is logged, not a local submission blocker."""
+async def test_missing_api_image_reference_fails_before_paid_submission(tmp_path: Path) -> None:
+    """Unknown ID must not be silently forwarded to the paid API."""
     adapter = _adapter(tmp_path)
-    prompt = "首帧@image_9展示图案"
-    payload = await adapter.build_request_payload(_request(tmp_path, prompt))
-    assert payload["contents"][0]["text"] == prompt
-    assert [item["id"] for item in payload["contents"][1:]] == ["image_1", "image_2"]
+    with pytest.raises(KlingApiError, match="unbound image reference: image_9"):
+        await adapter.build_request_payload(_request(tmp_path, "首帧@image_9展示图案"))
 
 
 @pytest.mark.asyncio
@@ -98,10 +156,11 @@ async def test_normalization_unmatched_tokens_do_not_block_or_change_prompt(tmp_
 
 
 @pytest.mark.asyncio
-async def test_mixed_aliases_with_unbound_reference_revert_entire_original(tmp_path: Path) -> None:
-    prompt = "首帧图一，之后@image9展示背面"
-    payload = await _adapter(tmp_path).build_request_payload(_request(tmp_path, prompt))
-    assert payload["contents"][0]["text"] == prompt
+async def test_mixed_aliases_with_unbound_reference_fail_validation(tmp_path: Path) -> None:
+    with pytest.raises(KlingApiError, match="unbound image reference: image_9"):
+        await _adapter(tmp_path).build_request_payload(
+            _request(tmp_path, "首帧图一，之后@image9展示背面")
+        )
 
 
 @pytest.mark.asyncio
