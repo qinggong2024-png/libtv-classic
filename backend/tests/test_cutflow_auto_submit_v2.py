@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import test_cutflow_auto_edit as old
 import test_cutflow_handoff as shared
-from libtv_agent.domain.enums import AttemptStatus, DownloadStatus, GenerationStatus, ValidationStatus, VariantKind
+from libtv_agent.domain.enums import AttemptStatus, DownloadStatus, GenerationStatus, ParentTaskPhase, ValidationStatus, VariantKind
 from libtv_agent.domain.models import (
     AccountUsage, CutflowHandoff, DownloadArtifact, GenerationAttempt,
     GenerationVariant, MultiCutflowTask, ParentTask, RuntimeConfigVersion, User,
@@ -121,6 +121,52 @@ async def test_auto_single_uses_one_source_v2_and_reserves_once(handoff_env):
         assert len(tasks[0].sources_json[0]["productReferences"]) == 1
         assert len(usage) == 1 and usage[0].units == 1
         assert (await s.scalars(select(CutflowHandoff))).all() == []
+
+
+async def test_provider_rejected_sibling_keeps_one_usable_original_auto_editable(handoff_env):
+    database, settings, store, ids = handoff_env
+    await prepare(handoff_env)
+    failed_id = uuid.uuid4()
+    async with database.session_factory() as s:
+        parent = await s.get(ParentTask, ids["task"])
+        parent.phase = ParentTaskPhase.PARTIALLY_DELIVERABLE
+        s.add(GenerationVariant(
+            id=failed_id, parent_task_id=ids["task"],
+            variant_type=VariantKind.DYNAMIC, variant_index=2,
+            generation_status=GenerationStatus.FAILED,
+            download_status=DownloadStatus.NOT_READY,
+            validation_status=ValidationStatus.FAILED,
+        ))
+        await s.commit()
+
+    assert await enqueue_completed_v2(database, settings, store) == 1
+    assert await enqueue_completed_v2(database, settings, store) == 0
+    async with database.session_factory() as s:
+        tasks = (await s.scalars(select(MultiCutflowTask))).all()
+        usage = (await s.scalars(select(AccountUsage).where(AccountUsage.kind == "CUTFLOW"))).all()
+        assert len(tasks) == len(usage) == 1
+        assert tasks[0].idempotency_key == f"auto-unified-v2:{ids['task']}"
+        assert [source["variantId"] for source in tasks[0].sources_json] == [str(ids["variant"])]
+        assert usage[0].units == 1
+
+
+async def test_unknown_sibling_is_not_silently_discarded(handoff_env):
+    database, settings, store, ids = handoff_env
+    await prepare(handoff_env)
+    async with database.session_factory() as s:
+        parent = await s.get(ParentTask, ids["task"])
+        parent.phase = ParentTaskPhase.PARTIALLY_DELIVERABLE
+        s.add(GenerationVariant(
+            id=uuid.uuid4(), parent_task_id=ids["task"],
+            variant_type=VariantKind.DYNAMIC, variant_index=2,
+            generation_status=GenerationStatus.UNKNOWN,
+            download_status=DownloadStatus.NOT_READY,
+            validation_status=ValidationStatus.NOT_READY,
+        ))
+        await s.commit()
+    assert await enqueue_completed_v2(database, settings, store) == 0
+    async with database.session_factory() as s:
+        assert (await s.scalars(select(MultiCutflowTask))).all() == []
 
 
 async def test_two_sources_group_into_one_edit(handoff_env, tmp_path):

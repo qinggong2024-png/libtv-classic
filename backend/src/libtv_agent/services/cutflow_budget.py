@@ -65,14 +65,21 @@ async def bind_prepaid_cutflow(
             AccountUsage.user_id == parent.user_id,
         ))
         if row is not None and row.status == "RESERVED":
-            if row.units != units:
-                raise ValueError("prepaid CUT source count changed")
+            if not 0 < units <= row.units:
+                raise ValueError("prepaid CUT source count increased")
+            if row.amount_microusd is not None and row.amount_microusd % row.units:
+                raise ValueError("prepaid CUT unit price cannot be reconciled")
+            adjusted_amount = (
+                None if row.amount_microusd is None
+                else (row.amount_microusd // row.units) * units
+            )
             moved = await session.execute(
                 update(AccountUsage)
                 .where(AccountUsage.id == row.id,
                        AccountUsage.status == "RESERVED",
                        AccountUsage.operation_id == operation_id)
-                .values(operation_id=cutflow_task.id)
+                .values(operation_id=cutflow_task.id,
+                        units=units, amount_microusd=adjusted_amount)
                 .execution_options(synchronize_session=False)
             )
             if moved.rowcount != 1:

@@ -8,7 +8,9 @@ from types import SimpleNamespace
 import pytest
 import test_cutflow_auto_submit_v2 as base
 from fastapi import HTTPException
-from libtv_agent.domain.enums import GenerationStatus, ParentTaskPhase
+from httpx import ASGITransport, AsyncClient
+from libtv_agent.app import create_app
+from libtv_agent.domain.enums import DownloadStatus, GenerationStatus, ParentTaskPhase, ValidationStatus, VariantKind
 from libtv_agent.domain.models import (
     AccountUsage,
     GenerationAttempt,
@@ -69,6 +71,75 @@ async def test_prepaid_auto_edit_survives_exhausted_remaining_budget_without_dou
         assert usage[0].amount_microusd == 150_000
         assert usage[0].status == "RESERVED"
         assert str(jobs[0].id) != held_id
+
+
+async def test_two_clip_prepaid_budget_shrinks_when_only_one_clip_survives(handoff_env):
+    db, settings, store, ids = handoff_env
+    await _prepare(handoff_env, budget=300_000)
+    async with db.session_factory() as s:
+        parent = await s.get(ParentTask, ids["task"])
+        parent.phase = ParentTaskPhase.PARTIALLY_DELIVERABLE
+        await reserve_auto_cutflow(s, parent=parent, attempt_id=uuid.uuid4(), units=2)
+        held_id = parent.settings_json[BUDGET_KEY]
+        s.add(GenerationVariant(
+            id=uuid.uuid4(), parent_task_id=ids["task"],
+            variant_type=VariantKind.DYNAMIC, variant_index=2,
+            generation_status=GenerationStatus.FAILED,
+            download_status=DownloadStatus.NOT_READY,
+            validation_status=ValidationStatus.FAILED,
+        ))
+        await s.commit()
+    assert await enqueue_completed_v2(db, settings, store) == 1
+    assert await enqueue_completed_v2(db, settings, store) == 0
+    async with db.session_factory() as s:
+        jobs = (await s.scalars(select(MultiCutflowTask))).all()
+        usage = (await s.scalars(select(AccountUsage).where(AccountUsage.kind == "CUTFLOW"))).all()
+        assert len(jobs) == len(usage) == 1
+        assert str(usage[0].operation_id) != held_id
+        assert usage[0].operation_id == jobs[0].id
+        assert usage[0].units == 1
+        assert usage[0].amount_microusd == 150_000
+
+
+async def test_manual_partial_takeover_uses_same_auto_identity_and_prepayment(handoff_env):
+    db, settings, store, ids = handoff_env
+    await _prepare(handoff_env, budget=300_000)
+    async with db.session_factory() as s:
+        parent = await s.get(ParentTask, ids["task"])
+        parent.phase = ParentTaskPhase.PARTIALLY_DELIVERABLE
+        await reserve_auto_cutflow(s, parent=parent, attempt_id=uuid.uuid4(), units=2)
+        s.add(GenerationVariant(
+            id=uuid.uuid4(), parent_task_id=ids["task"],
+            variant_type=VariantKind.DYNAMIC, variant_index=2,
+            generation_status=GenerationStatus.FAILED,
+            download_status=DownloadStatus.NOT_READY,
+            validation_status=ValidationStatus.FAILED,
+        ))
+        await s.commit()
+    app = create_app(settings)
+    app.state.database = db
+    body = {
+        "sourceIds": [str(ids["variant"])],
+        "idempotencyKey": f"auto-unified-v2:{ids['task']}",
+        "confirmPolicy": True,
+        "allowSingleSource": True,
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post("/api/v1/cutflow-handoffs/multi", json=body,
+                                  headers={"X-User-Id": str(ids["user"])})
+        assert first.status_code == 202, first.text
+        repeat = await client.post("/api/v1/cutflow-handoffs/multi", json=body,
+                                   headers={"X-User-Id": str(ids["user"])})
+        assert repeat.status_code == 202, repeat.text
+        assert first.json()["id"] == repeat.json()["id"]
+
+    assert await enqueue_completed_v2(db, settings, store) == 0
+    async with db.session_factory() as s:
+        jobs = (await s.scalars(select(MultiCutflowTask))).all()
+        usage = (await s.scalars(select(AccountUsage).where(AccountUsage.kind == "CUTFLOW"))).all()
+        assert len(jobs) == len(usage) == 1
+        assert usage[0].operation_id == jobs[0].id
+        assert usage[0].units == 1 and usage[0].amount_microusd == 150_000
 
 
 async def test_prepaid_and_video_same_transaction_roll_back_on_budget_failure(handoff_env):
