@@ -15,7 +15,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from libtv_agent.adapters.kling_api_ootd import _OOTD_PROFILES, _native_shots_if_safe
+from libtv_agent.adapters.kling_api_ootd import (
+    _native_shots_if_safe, kling_ordered_image_slots, native_profile_enabled,
+)
 from libtv_agent.adapters.video_provider import VideoGenerationRequest
 
 logger = logging.getLogger(__name__)
@@ -37,18 +39,15 @@ def _reference_summary(
     # The provider contents contain base64 images. Never persist base64, paths,
     # provider credentials, callback URL, or the unredacted request payload.
     assets: list[dict[str, Any]] = []
-    # Match KlingOfficialApiAdapter._request_image_inputs order exactly.
-    remaining_storyboards = len(request.image_paths)
-    has_opening = request.first_frame_path is not None or remaining_storyboards > 0
-    if request.first_frame_path is None and remaining_storyboards > 0:
-        remaining_storyboards -= 1
-    intents = (
-        (["STORYBOARD_START"] if has_opening else [])
-        + (["STORYBOARD_END"] if request.last_frame_path is not None else [])
-        + ["STORYBOARD"] * remaining_storyboards
-        + ["REFERENCE"] * len(request.refer_image_paths)
-        + ["PRODUCT"] * len(request.product_reference_paths)
-    )
+    slots = kling_ordered_image_slots(request)
+    intents = [
+        "STORYBOARD_START" if slot.role == "first_frame" else
+        "STORYBOARD_END" if slot.role == "last_frame" else
+        "PRODUCT" if slot.intent.startswith("商品") else
+        "REFERENCE" if slot.intent == "其他视觉补充参考图" else
+        "STORYBOARD"
+        for slot in slots
+    ]
     image_index = 0
     for item in payload["contents"][1:]:
         if item.get("type") in {"first_frame", "refer_image", "last_frame"}:
@@ -71,7 +70,7 @@ def submission_snapshot(
     source_prompt = request.prompt
     profile = request.director_native_profile
     model = request.model
-    if profile not in _OOTD_PROFILES:
+    if not native_profile_enabled(profile):
         conversion_reason = "profile_not_in_native_allowlist"
     elif request.multi_shot is False:
         conversion_reason = "multi_shot_disabled"
