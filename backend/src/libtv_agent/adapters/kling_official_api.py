@@ -17,7 +17,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
-from libtv_agent.adapters.kling_api_ootd import api_ootd_prompt
+from libtv_agent.adapters.kling_api_ootd import api_ootd_prompt, kling_ordered_image_slots
 from libtv_agent.adapters.kling_official_cli import KlingCliError
 from libtv_agent.adapters.kling_ootd_audit import (
     audit_enabled,
@@ -455,19 +455,7 @@ class KlingOfficialApiAdapter:
     def _request_image_inputs(
         request: VideoGenerationRequest,
     ) -> list[tuple[str, Path]]:
-        legacy = list(request.image_paths)
-        first_frame = request.first_frame_path
-        if first_frame is None and legacy:
-            first_frame = legacy.pop(0)
-        inputs: list[tuple[str, Path]] = []
-        if first_frame is not None:
-            inputs.append(("first_frame", first_frame))
-        if request.last_frame_path is not None:
-            inputs.append(("last_frame", request.last_frame_path))
-        inputs.extend(("refer_image", path) for path in legacy)
-        inputs.extend(("refer_image", path) for path in request.refer_image_paths)
-        inputs.extend(("refer_image", path) for path in request.product_reference_paths)
-        return inputs
+        return [(slot.role, slot.path) for slot in kling_ordered_image_slots(request)]
 
     def _validate_image(self, path: Path) -> None:
         if not path.is_file():
