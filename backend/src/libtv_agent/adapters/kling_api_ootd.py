@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
+from pathlib import Path
 
 from libtv_agent.adapters.video_provider import VideoGenerationRequest
 
 _OOTD_PROFILES = frozenset((
     "allwe-ootd-sol-simple-v1", "allwe-ootd-sol-motion-v2.1", "allwe-ootd-sol-motion-v2.2",
+    "allwe-ootd-sol-cross-scene-b-v1", "allwe-ootd-sol-dynamic-display-v1",
 ))
 _LOG = logging.getLogger(__name__)
 # Both common Sol descriptions and official API-style tokens are text aliases.
@@ -27,23 +30,65 @@ _SHOT_MARK = re.compile(r"镜头[一二三四五六1-6]")
 _CHINESE_INDEX = {name: i for i, name in enumerate("一二三四五六", 1)}
 
 
-def _ootd_role_header(request: VideoGenerationRequest) -> str:
-    """Give each ordered input one role without relying on CLI internals."""
-    frames = len(request.image_paths)
-    products = len(request.product_reference_paths)
-    if frames <= 1 and products <= 1:
-        return request.prompt
-    roles = ["图片1=唯一视频起始首帧"]
-    roles.extend(f"图片{i}=后续镜头参考" for i in range(2, frames + 1))
-    roles.extend(
-        f"图片{frames + i}=" + ("商品主参考图" if i == 1 else "商品细节补充参考图")
-        for i in range(1, products + 1)
+class UnboundImageReference(ValueError):
+    """A prompt references an image slot not actually included in provider contents."""
+
+
+@dataclass(frozen=True)
+class KlingImageSlot:
+    role: str
+    path: Path
+    intent: str
+
+
+def kling_ordered_image_slots(request: VideoGenerationRequest) -> tuple[KlingImageSlot, ...]:
+    """One authoritative slot order for both the wire payload and text aliases.
+
+    Keep this synchronized by *using* it in the official adapter, rather than
+    independently estimating image IDs from storyboard/product counts.
+    """
+    legacy = list(request.image_paths)
+    opening = request.first_frame_path
+    if opening is None and legacy:
+        opening = legacy.pop(0)
+    slots: list[KlingImageSlot] = []
+    if opening is not None:
+        slots.append(KlingImageSlot("first_frame", opening, "唯一视频起始首帧"))
+    if request.last_frame_path is not None:
+        slots.append(KlingImageSlot("last_frame", request.last_frame_path, "视频结束帧"))
+    slots.extend(KlingImageSlot("refer_image", path, "后续分镜参考图") for path in legacy)
+    slots.extend(
+        KlingImageSlot("refer_image", path, "其他视觉补充参考图")
+        for path in request.refer_image_paths
     )
+    slots.extend(
+        KlingImageSlot(
+            "refer_image", path,
+            "商品主参考图" if index == 1 else "商品细节补充参考图",
+        )
+        for index, path in enumerate(request.product_reference_paths, start=1)
+    )
+    return tuple(slots)
+
+
+def _ootd_role_header(request: VideoGenerationRequest) -> str:
+    """Describe the *actual* contents order, including explicit first/last frames."""
+    needs_header = (
+        len(request.image_paths) > 1
+        or len(request.product_reference_paths) > 1
+        or bool(request.refer_image_paths)
+        or request.last_frame_path is not None
+        or (request.first_frame_path is not None and bool(request.image_paths))
+    )
+    if not needs_header:
+        return request.prompt
+    slots = kling_ordered_image_slots(request)
+    roles = [f"图片{index}={slot.intent}" for index, slot in enumerate(slots, start=1)]
     guard = (
-        "【图片角色，按上传顺序】" + "；".join(roles)
-        + "。首帧以图片1的原始画面起镜，其他分镜只辅助后续构图、动作及景别，"
-        "不要求逐张定格或强制固定切镜。商品图片仅控制衣服外观、文字、"
-        "花纹与材质，不替换人物及场景。"
+        "【图片角色，按实际 API 图片顺序】" + "；".join(roles)
+        + "。起始首帧控制开场人物与场景，后续分镜参考图保持其真实取景含义；"
+        "是否使用后续分镜由导演模式决定。商品参考图只约束服装设计、文字、"
+        "颜色和材质，不代替场景与人物。"
     )
     return f"{guard}\n\n{request.prompt}"
 
@@ -89,18 +134,14 @@ def api_ootd_prompt(request: VideoGenerationRequest) -> str:
     original = request.prompt
     try:
         if request.director_native_profile in _OOTD_PROFILES:
-            if len(request.image_paths) > 1 or len(request.product_reference_paths) > 1:
+            if _ootd_role_header(request) != request.prompt:
                 prompt = _ootd_role_header(request)
             else:
                 prompt = original
         else:
             prompt = original
 
-        image_count = (
-            int(bool(request.first_frame_path)) + len(request.image_paths)
-            + int(bool(request.last_frame_path)) + len(request.refer_image_paths)
-            + len(request.product_reference_paths)
-        )
+        image_count = len(kling_ordered_image_slots(request))
 
         def bind(match: re.Match[str]) -> str:
             reference = match.group(1) or match.group(2)
@@ -109,7 +150,7 @@ def api_ootd_prompt(request: VideoGenerationRequest) -> str:
             else:
                 number = _IMAGE_CHINESE_INDEX.get(reference, 0)
             if not 1 <= number <= image_count:
-                raise ValueError(f"unbound image reference: image_{number}")
+                raise UnboundImageReference(f"unbound image reference: image_{number}")
             return f"@image_{number}"
 
         # No matching aliases is a normal case: keep the prompt as-is.
@@ -121,6 +162,9 @@ def api_ootd_prompt(request: VideoGenerationRequest) -> str:
         if len(converted) > 3072:
             raise ValueError("shot formatting exceeds Kling 3.0 prompt limit")
         return converted
+    except UnboundImageReference:
+        # Never send a misleading or missing image ID to a paid provider request.
+        raise
     except Exception as exc:
         # Reference normalization is optional. Leave regular provider validation
         # (file existence, image constraints, model settings) unchanged.
