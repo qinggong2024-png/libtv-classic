@@ -5,6 +5,7 @@ format is derived only when its shot timing is unambiguous and lossless.
 """
 from __future__ import annotations
 
+import logging
 import re
 
 from libtv_agent.adapters.video_provider import VideoGenerationRequest
@@ -12,7 +13,12 @@ from libtv_agent.adapters.video_provider import VideoGenerationRequest
 _OOTD_PROFILES = frozenset((
     "allwe-ootd-sol-simple-v1", "allwe-ootd-sol-motion-v2.1", "allwe-ootd-sol-motion-v2.2",
 ))
-_IMAGE_TOKEN = re.compile(r"@image_(\d+)(?!\d)|图片(\d+)(?!\d)")
+_LOG = logging.getLogger(__name__)
+# Both common Sol descriptions and official API-style tokens are text aliases.
+# Only the official @image_N token is sent when a matching contents ID exists.
+_IMAGE_TOKEN = re.compile(r"@image_?(\d+)(?!\d)|图片?(\d+|[一二三四五六七八九十]+)(?![\d一二三四五六七八九十])")
+_IMAGE_CHINESE_INDEX = {name: index for index, name in enumerate("一二三四五六七八九", 1)}
+_IMAGE_CHINESE_INDEX["十"] = 10
 _SHOT_HEADING = re.compile(
     r"镜头([一二三四五六1-6])\s*"
     r"(\d+)\s*[-–—~至]\s*(\d+)\s*秒\s*[:：]?"
@@ -75,28 +81,52 @@ def _native_shots_if_safe(prompt: str, duration: int | None) -> str:
 
 
 def api_ootd_prompt(request: VideoGenerationRequest) -> str:
-    """Bind image IDs to the API contents order; leave CLI and 4.0 untouched."""
-    if request.director_native_profile not in _OOTD_PROFILES:
-        return request.prompt
-    if len(request.image_paths) > 1 or len(request.product_reference_paths) > 1:
-        prompt = _ootd_role_header(request)
-    else:
-        prompt = request.prompt
+    """Best-effort Kling 3.0 Omni image binding; never block submission.
 
-    image_count = (
-        int(bool(request.first_frame_path)) + len(request.image_paths)
-        + int(bool(request.last_frame_path)) + len(request.refer_image_paths)
-        + len(request.product_reference_paths)
-    )
-    # In normal OOTD tasks the first image_path becomes first_frame, not a
-    # duplicate. Each ordered input corresponds to exactly one contents ID.
-    def bind(match: re.Match[str]) -> str:
-        number = int(match.group(1) or match.group(2))
-        if not 1 <= number <= image_count:
-            raise ValueError(f"OOTD references nonexistent API image_{number}")
-        return f"@image_{number}"
+    The unchanged source prompt is used if any rewrite or reference mapping
+    fails. This adapter does not create images or alter the ordered contents IDs.
+    """
+    original = request.prompt
+    try:
+        if request.director_native_profile in _OOTD_PROFILES:
+            if len(request.image_paths) > 1 or len(request.product_reference_paths) > 1:
+                prompt = _ootd_role_header(request)
+            else:
+                prompt = original
+        else:
+            prompt = original
 
-    prompt = _IMAGE_TOKEN.sub(bind, prompt)
-    if request.multi_shot is False:
-        return prompt
-    return _native_shots_if_safe(prompt, request.duration)
+        image_count = (
+            int(bool(request.first_frame_path)) + len(request.image_paths)
+            + int(bool(request.last_frame_path)) + len(request.refer_image_paths)
+            + len(request.product_reference_paths)
+        )
+
+        def bind(match: re.Match[str]) -> str:
+            reference = match.group(1) or match.group(2)
+            if reference.isdecimal():
+                number = int(reference)
+            else:
+                number = _IMAGE_CHINESE_INDEX.get(reference, 0)
+            if not 1 <= number <= image_count:
+                raise ValueError(f"unbound image reference: image_{number}")
+            return f"@image_{number}"
+
+        # No matching aliases is a normal case: keep the prompt as-is.
+        converted = _IMAGE_TOKEN.sub(bind, prompt)
+        if len(converted) > 3072:
+            raise ValueError("image reference rewrite exceeds Kling 3.0 prompt limit")
+        if request.director_native_profile in _OOTD_PROFILES and request.multi_shot is not False:
+            converted = _native_shots_if_safe(converted, request.duration)
+        if len(converted) > 3072:
+            raise ValueError("shot formatting exceeds Kling 3.0 prompt limit")
+        return converted
+    except Exception as exc:
+        # Reference normalization is optional. Leave regular provider validation
+        # (file existence, image constraints, model settings) unchanged.
+        _LOG.warning(
+            "KLING_IMAGE_REFERENCE_NORMALIZE_FALLBACK: using original prompt; "
+            "reason=%s",
+            type(exc).__name__,
+        )
+        return original
