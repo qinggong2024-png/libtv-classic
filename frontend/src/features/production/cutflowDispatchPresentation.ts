@@ -40,13 +40,14 @@ export function cutflowDispatchPresentation(
 
   if (hasFailedEdit) return result('剪辑任务失败', '已找到失败的剪辑记录；请查看错误原因。不要直接重复创建新任务。', '处理失败', 'history', '查看原因', 'attention')
   if (hasActiveEdit) {
-    if (latestEdit?.status === 'QUEUED') return result('已创建送剪任务', 'ALLWE 已保存剪辑任务，正在等待素材打包与传输；尚未确认 CUT 接单。', '等待传输')
+    if (latestEdit?.status === 'QUEUED') return result('待送剪，正在准备素材', 'ALLWE 已保存送剪任务，后台将打包并投递原片；尚未确认 CUT 接单。', '待投递')
     if (latestEdit?.status === 'READY') {
       if (latestEdit.errorCode === 'CUTFLOW_NOTIFICATION_TOO_LARGE') return result('等待 CUT 接单', '通知超限，已切换等待 NAS 扫描接单；请核对共享目录与 CUT 接单状态。', '接单待核实', 'history', '查看记录', 'attention')
       if (latestEdit.errorCode === 'CUTFLOW_STATUS_MISSING' || latestEdit.errorCode === 'CUTFLOW_IMPORT_REJECTED')
         return result('CUT 接单异常', '素材包已创建，但 CUT 接单尚未确认，请检查剪辑记录；不要重复送剪。', '接单待核实', 'history', '查看记录', 'attention')
       return result('素材已送出，等待 CUT 接单', '素材包已就绪，正在等待 CUT 确认接收；尚不能算剪辑中。', '等待接单')
     }
+    if (latestEdit?.status === 'ACCEPTED') return result('CUT 已接单，排队中', 'CUT 已确认接单，正在等待可用剪辑资源；不需要再次送剪。', 'CUT 排队中')
     if (latestEdit?.status === 'IMPORTING') return result('CUT 已接单，正在导入', '剪辑端已开始导入素材，等待进入剪辑流程。', '导入中')
     if (latestEdit?.status === 'EDITING') return result('CUT 正在剪辑', '剪辑端已进入执行阶段，完成后会回传成片。', '剪辑中')
     if (latestEdit?.status === 'UNKNOWN') return result('CUT 状态待核实', '本地已有剪辑任务，但远端阶段尚未确认；请查询原任务，不要重新送剪。', '状态待核实', 'refresh', '重新查询', 'attention')

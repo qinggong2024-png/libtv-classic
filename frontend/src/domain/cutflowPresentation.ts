@@ -20,6 +20,7 @@ export function cutflowPresentation(handoff: CutflowHandoff) {
 const ACTIVE_MULTI_CUTFLOW_STATUSES = new Set([
   'QUEUED',
   'READY',
+  'ACCEPTED',
   'IMPORTING',
   'EDITING',
   'UNKNOWN',
@@ -36,10 +37,13 @@ export function multiCutflowPresentation(task: MultiCutflowTask) {
     return { label: 'CUT 拒绝接单，等待排查', active: true, completed: false }
   }
   if (task.status === 'QUEUED') {
-    return { label: '已创建送剪任务', active: true, completed: false }
+    return { label: '待送剪，正在准备素材', active: true, completed: false }
   }
   if (task.status === 'READY') {
     return { label: '素材已就绪，等待 CUT 接单', active: true, completed: false }
+  }
+  if (task.status === 'ACCEPTED') {
+    return { label: 'CUT 已接单，排队中', active: true, completed: false }
   }
   if (task.status === 'IMPORTING') {
     return { label: 'CUT 已接单，正在导入', active: true, completed: false }

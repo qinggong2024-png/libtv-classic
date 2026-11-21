@@ -34,7 +34,7 @@ describe('task center: finished means final cut, not just raw video', () => {
   })
   it('shows an accepted cut task as in progress without encouraging another submit', () => {
     expect(taskCenterState(base, [batch('QUEUED', 0)])).toMatchObject({
-      group: 'active', label: '已创建送剪任务', manualSelection: false,
+      group: 'active', label: '待送剪，正在准备素材', manualSelection: false,
     })
   })
   it('surfaces a rejected notification without allowing another cut', () => {

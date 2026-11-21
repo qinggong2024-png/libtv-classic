@@ -260,6 +260,117 @@ async def test_v2_notification_failure_keeps_task_ready_without_failure_count(
 
 
 @pytest.mark.asyncio
+async def test_v2_http_timeout_reconciles_cut_acceptance_without_second_submission(
+    handoff_env, monkeypatch,
+):
+    """A timeout is not a rejection: the original CUT task identity survives."""
+    database, settings, store, _ids = handoff_env
+    settings.cutflow_transport = "lan"
+    settings.cutflow_nas_status_enabled = True
+    task = await create_v2_task(handoff_env)
+    submissions = []
+
+    def delayed_receipt(_settings, payload):
+        submissions.append(payload["taskId"])
+        raise TimeoutError("simulated HTTP response timeout after 90 seconds")
+
+    monkeypatch.setattr(worker, "cut_multi_submit_request", delayed_receipt)
+    await worker.process_multi_task(database, settings, store, task, "lease-token")
+
+    async with database.session_factory() as session:
+        saved = await session.get(MultiCutflowTask, task.id)
+        assert saved.status == "READY"
+        assert saved.failure_count == 0
+        assert saved.next_run_at is not None
+        assert saved.manifest_json["_lastNotification"]["errorCode"] == "TimeoutError"
+        assert saved.manifest_json["taskId"] == str(task.id)
+        saved.lease_token = "lease-after-timeout"
+        await session.commit()
+        await session.refresh(saved)
+        task = saved
+
+    write_status(settings, task, status_payload(task.id, revision=1, status="accepted"))
+    await worker.process_multi_task(database, settings, store, task, "lease-after-timeout")
+
+    async with database.session_factory() as session:
+        saved = await session.get(MultiCutflowTask, task.id)
+        assert saved.status == "ACCEPTED"
+        assert saved.failure_count == 0
+        assert saved.error_code is None
+        assert saved.manifest_json["_lastCutRevision"] == 1
+    assert submissions == [str(task.id)]
+
+
+@pytest.mark.asyncio
+async def test_v2_repeated_poll_keeps_nas_polling_without_http_notification_flood(
+    handoff_env, monkeypatch,
+):
+    database, settings, store, _ids = handoff_env
+    settings.cutflow_transport = "lan"
+    settings.cutflow_nas_status_enabled = True
+    task = await create_v2_task(handoff_env)
+    submissions = []
+
+    def slow_cut(_settings, payload):
+        submissions.append(payload["taskId"])
+        raise TimeoutError("CUT may have accepted while response was lost")
+
+    monkeypatch.setattr(worker, "cut_multi_submit_request", slow_cut)
+    await worker.process_multi_task(database, settings, store, task, "lease-token")
+    async with database.session_factory() as session:
+        saved = await session.get(MultiCutflowTask, task.id)
+        original_notification = saved.manifest_json["_lastNotification"]
+        assert original_notification["outcome"] == "failed"
+        saved.lease_token = "lease-second"
+        await session.commit()
+        await session.refresh(saved)
+        task = saved
+    await worker.process_multi_task(database, settings, store, task, "lease-second")
+
+    async with database.session_factory() as session:
+        saved = await session.get(MultiCutflowTask, task.id)
+        assert saved.status == "READY"
+        assert saved.manifest_json["_lastNotification"] == original_notification
+        assert saved.failure_count == 0
+        assert saved.next_run_at is not None
+    assert submissions == [str(task.id)]
+
+
+@pytest.mark.asyncio
+async def test_v2_cut_acceptance_is_not_resubmitted_when_nas_snapshot_disappears(
+    handoff_env, monkeypatch,
+):
+    database, settings, store, _ids = handoff_env
+    settings.cutflow_transport = "lan"
+    settings.cutflow_nas_status_enabled = True
+    task = await create_v2_task(handoff_env)
+    write_status(settings, task, status_payload(task.id, revision=1, status="accepted"))
+    submissions = []
+    monkeypatch.setattr(
+        worker, "cut_multi_submit_request",
+        lambda *_: submissions.append("duplicate"),
+    )
+    await worker.process_multi_task(database, settings, store, task, "lease-token")
+    async with database.session_factory() as session:
+        saved = await session.get(MultiCutflowTask, task.id)
+        assert saved.status == "ACCEPTED"
+        saved.lease_token = "lease-snapshot-missing"
+        await session.commit()
+        await session.refresh(saved)
+        task = saved
+
+    status_file = settings.cutflow_handoff_root / "outbox" / str(task.id) / "status.json"
+    status_file.unlink()
+    await worker.process_multi_task(database, settings, store, task, "lease-snapshot-missing")
+    async with database.session_factory() as session:
+        saved = await session.get(MultiCutflowTask, task.id)
+        assert saved.status == "ACCEPTED"
+        assert saved.error_code == "CUTFLOW_STATUS_MISSING"
+        assert saved.next_run_at is not None
+    assert submissions == []
+
+
+@pytest.mark.asyncio
 async def test_http_413_is_visible_but_does_not_resubmit_or_lose_nas_recovery(
     handoff_env, monkeypatch,
 ):
@@ -308,7 +419,7 @@ async def test_http_413_is_visible_but_does_not_resubmit_or_lose_nas_recovery(
     await worker.process_multi_task(database, settings, store, task, "lease-recovered")
     async with database.session_factory() as session:
         saved = await session.get(MultiCutflowTask, task.id)
-        assert saved.status == "IMPORTING"
+        assert saved.status == "ACCEPTED"
         assert saved.error_code is None
         assert saved.error_message is None
         assert saved.failure_count == 0

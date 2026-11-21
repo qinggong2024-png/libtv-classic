@@ -50,6 +50,7 @@ describe('automatic CUT admission waiting', () => {
     expect(taskCenterState(task, [], { now: readyAt + 180_000 })).toMatchObject({ group: 'attention', label: '送剪任务尚未建立', manualSelection: false })
   })
   it('never replaces an accepted job or a read failure with a timeout diagnosis', () => {
+    expect(taskCenterState(task, [batch('ACCEPTED')], { now: readyAt + 900_000 })).toMatchObject({ group: 'active', label: 'CUT 已接单，排队中' })
     expect(taskCenterState(task, [batch('IMPORTING')], { now: readyAt + 900_000 })).toMatchObject({ group: 'active', label: 'CUT 已接单，正在导入' })
     expect(taskCenterState(task, [], { error: true, now: readyAt + 900_000 }).label).toBe('剪辑状态同步异常')
     expect(taskCenterState(task, [], { loaded: false, now: readyAt + 900_000 }).label).toBe('正在核对剪辑状态')

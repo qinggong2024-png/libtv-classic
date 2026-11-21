@@ -71,7 +71,8 @@ def output_payload(task, *, relative_path=None):
 
 
 @pytest.mark.parametrize(("remote", "local"), [
-    ("queued", "QUEUED"), ("uploading", "IMPORTING"), ("editing", "EDITING"),
+    ("queued", "ACCEPTED"), ("accepted", "ACCEPTED"),
+    ("uploading", "IMPORTING"), ("editing", "EDITING"),
     ("review", "PENDING_REVIEW"), ("completed", "PENDING_REVIEW"),
     ("failed", "FAILED"), ("unknown", "UNKNOWN"),
 ])

@@ -343,7 +343,7 @@ async def test_round_trip_publishes_posts_polls_then_imports(
         assert first.manifest_path == f"inbox/multi-{task_id}/manifest.json"
 
         second = await _tick(database, settings, store, task_id)
-        assert second.status == "IMPORTING"
+        assert second.status == "ACCEPTED"
 
         receiver.publish_completed(str(task_id))
         final = await _tick(database, settings, store, task_id)

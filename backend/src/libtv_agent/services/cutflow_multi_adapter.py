@@ -26,8 +26,8 @@ from libtv_agent.services.cutflow_video_type import normalize_video_type
 CONTRACT_VERSION = JOB_CONTRACT
 IDEMPOTENCY_PREFIX = f"{CONTRACT_VERSION}:"
 MULTI_STATUS_MAP = {
-    "accepted": "IMPORTING", "processing": "EDITING",
-    "queued": "QUEUED", "uploading": "IMPORTING", "importing": "IMPORTING",
+    "accepted": "ACCEPTED", "processing": "EDITING",
+    "queued": "ACCEPTED", "uploading": "IMPORTING", "importing": "IMPORTING",
     "editing": "EDITING", "review": "PENDING_REVIEW", "completed": "PENDING_REVIEW",
     "failed": "FAILED", "unknown": "UNKNOWN",
 }

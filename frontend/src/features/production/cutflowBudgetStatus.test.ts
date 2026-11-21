@@ -29,6 +29,27 @@ describe('automatic CUT budget admission status', () => {
     expect(result.detail).toContain('$0.30')
   })
 
+  it('distinguishes durable local send from verified CUT acceptance and queueing', () => {
+    const saved = cutflowDispatchPresentation(
+      { autoSubmitToCutflow: true }, true, true, false,
+      false, true, false, true,
+      { status: 'QUEUED', errorCode: null, errorMessage: null }, snapshot,
+    )
+    expect(saved).toMatchObject({ headline: '待送剪，正在准备素材', stageLabel: '待投递' })
+    const awaitingAck = cutflowDispatchPresentation(
+      { autoSubmitToCutflow: true }, true, true, false,
+      false, true, false, true,
+      { status: 'READY', errorCode: null, errorMessage: null }, snapshot,
+    )
+    expect(awaitingAck.headline).toBe('素材已送出，等待 CUT 接单')
+    const accepted = cutflowDispatchPresentation(
+      { autoSubmitToCutflow: true }, true, true, false,
+      false, true, false, true,
+      { status: 'ACCEPTED', errorCode: null, errorMessage: null }, snapshot,
+    )
+    expect(accepted).toMatchObject({ headline: 'CUT 已接单，排队中', stageLabel: 'CUT 排队中' })
+  })
+
   it('never suppresses a confirmed editing record based on an old budget snapshot', () => {
     const result = cutflowDispatchPresentation(
       { autoSubmitToCutflow: true }, true, true, false,

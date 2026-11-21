@@ -54,6 +54,9 @@ from sqlalchemy import or_, select, update
 MAX_RESPONSE_BYTES = 1_048_576
 OUTPUT_PATH_PREFIX = "outbox"
 STATUS_PATH = "status.json"
+NOTIFICATION_REPEAT_SECONDS = 120
+NOTIFICATION_ERROR_REPEAT_SECONDS = 60
+NOTIFICATION_REJECT_REPEAT_SECONDS = 300
 TASK_PACKAGE_SAFE_ID = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
 )
@@ -523,6 +526,15 @@ def _next_retry(failure_count: int) -> datetime:
     )
 
 
+def _notification_repeat_seconds(notification: dict | None) -> int:
+    """HTTP is a best-effort READY wake-up, never a CUT acceptance receipt."""
+    if notification and notification.get("httpStatus") in {409, 413}:
+        return NOTIFICATION_REJECT_REPEAT_SECONDS
+    if notification and notification.get("outcome") == "failed":
+        return NOTIFICATION_ERROR_REPEAT_SECONDS
+    return NOTIFICATION_REPEAT_SECONDS
+
+
 async def _heartbeat(database: Database, task_id: uuid.UUID, token: str) -> None:
     while True:
         await asyncio.sleep(20)
@@ -586,56 +598,69 @@ async def process_multi_task(
                 # HTTP is only a wake-up. A lost notification, rejected token or
                 # temporarily unavailable CUT endpoint must not change business
                 # state; the durable scanner will consume READY independently.
-                # Keep NAS receipt polling frequent even if CUT's HTTP gate is
-                # rejecting notifications. Rate-limit only repeated 413 POSTs.
+                # Keep NAS polling frequent. Repeated HTTP notifications are
+                # rate-limited independently, never creating a fresh task ID.
                 prior_notification = manifest.get("_lastNotification")
                 prior_at = (
                     cutflow_observation.timestamp(prior_notification.get("at"))
                     if isinstance(prior_notification, dict) else None
                 )
                 age = (datetime.now(UTC) - prior_at).total_seconds() if prior_at else None
-                if (isinstance(prior_notification, dict)
-                        and prior_notification.get("httpStatus") == 413
-                        and age is not None and 0 <= age < 300):
+                # Once CUT's authoritative revision was verified, never POST
+                # again just because its NAS snapshot temporarily disappeared.
+                if (task.status in {"ACCEPTED", "IMPORTING", "EDITING", "UNKNOWN"}
+                        or isinstance(manifest.get("_lastCutRevision"), int)):
                     await _write_claimed(database, task, token, {
-                        "status": "READY",
+                        "status": task.status,
                         "manifest_json": manifest,
                         "output_json": list(task.output_json or []),
-                        "error_code": "CUTFLOW_NOTIFICATION_TOO_LARGE",
-                        "error_message": (
-                            "CUT HTTP 接单通知被拒绝（413：请求体过大）。NAS 素材包已发布，"
-                            "等待 CUT 扫描接单；请检查 CUT 接口大小限制，无需重新生成或重复送剪。"
-                        ),
+                        "error_code": "CUTFLOW_STATUS_MISSING",
+                        "error_message": "CUT 已接单但状态快照暂时不可读取；保持原任务并继续核对",
                         "failure_count": 0,
                         "next_run_at": datetime.now(UTC) + timedelta(
                             seconds=min(settings.cutflow_nas_scan_seconds, 300),
                         ),
                     })
                     return
-                notification = {
-                    "at": datetime.now(UTC).isoformat(),
-                    "outcome": "seen",
-                    "errorCode": None,
-                    "httpStatus": None,
-                }
-                try:
-                    await asyncio.to_thread(
-                        cut_multi_submit_request,
-                        settings,
-                        cut_multi_request(task, manifest),
-                    )
-                except Exception as exc:
-                    notification.update(
-                        outcome="failed",
-                        errorCode=(
-                            exc.code
-                            if isinstance(exc, CutflowHandoffError)
-                            else type(exc).__name__
-                        ),
-                        httpStatus=getattr(exc, "status_code", None),
-                    )
-                    if isinstance(exc, MultiControlHTTPError) and exc.detail:
-                        notification["reason"] = exc.detail
+                repeat_seconds = _notification_repeat_seconds(
+                    prior_notification if isinstance(prior_notification, dict) else None,
+                )
+                skip_notification = (
+                    isinstance(prior_notification, dict)
+                    and age is not None and 0 <= age < repeat_seconds
+                )
+                if skip_notification:
+                    notification = prior_notification
+                else:
+                    notification = {
+                        "at": datetime.now(UTC).isoformat(),
+                        "outcome": "seen",
+                        "errorCode": None,
+                        "httpStatus": None,
+                    }
+                    try:
+                        posted = await asyncio.to_thread(
+                            cut_multi_submit_request,
+                            settings,
+                            cut_multi_request(task, manifest),
+                        )
+                        if posted.get("taskId") not in {None, str(task.id)}:
+                            notification.update(
+                                outcome="failed",
+                                errorCode="CUTFLOW_NOTIFICATION_ID_MISMATCH",
+                            )
+                    except Exception as exc:
+                        notification.update(
+                            outcome="failed",
+                            errorCode=(
+                                exc.code
+                                if isinstance(exc, CutflowHandoffError)
+                                else type(exc).__name__
+                            ),
+                            httpStatus=getattr(exc, "status_code", None),
+                        )
+                        if isinstance(exc, MultiControlHTTPError) and exc.detail:
+                            notification["reason"] = exc.detail
                 ready_at = manifest.get("_readyAt")
                 if not isinstance(ready_at, str):
                     ready_at = datetime.now(UTC).isoformat()

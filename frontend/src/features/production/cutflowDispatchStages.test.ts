@@ -8,7 +8,8 @@ const snapshot = (status: string, errorCode: string | null = null) =>
 
 describe('CUT stage proof and safe user-facing labels', () => {
   it.each([
-    ['QUEUED', '已创建送剪任务', '等待传输'],
+    ['QUEUED', '待送剪，正在准备素材', '待投递'],
+    ['ACCEPTED', 'CUT 已接单，排队中', 'CUT 排队中'],
     ['READY', '素材已送出，等待 CUT 接单', '等待接单'],
     ['IMPORTING', 'CUT 已接单，正在导入', '导入中'],
     ['EDITING', 'CUT 正在剪辑', '剪辑中'],
