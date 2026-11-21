@@ -6,6 +6,7 @@ format is derived only when its shot timing is unambiguous and lossless.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,8 +15,23 @@ from libtv_agent.adapters.video_provider import VideoGenerationRequest
 
 _OOTD_PROFILES = frozenset((
     "allwe-ootd-sol-simple-v1", "allwe-ootd-sol-motion-v2.1", "allwe-ootd-sol-motion-v2.2",
+))
+_PILOT_OOTD_PROFILES = frozenset((
     "allwe-ootd-sol-cross-scene-b-v1", "allwe-ootd-sol-dynamic-display-v1",
 ))
+
+
+def native_profile_enabled(profile: str | None) -> bool:
+    """Keep cross-scene/dynamic wire formatting isolated until real A/B proof."""
+    if profile in _OOTD_PROFILES:
+        return True
+    return (
+        profile in _PILOT_OOTD_PROFILES
+        and os.environ.get("ALLWE_KLING_NATIVE_SHOTS_PILOT", "0").strip().lower()
+        in {"1", "true", "on", "yes"}
+    )
+
+
 _LOG = logging.getLogger(__name__)
 # Both common Sol descriptions and official API-style tokens are text aliases.
 # Only the official @image_N token is sent when a matching contents ID exists.
@@ -135,7 +151,7 @@ def api_ootd_prompt(request: VideoGenerationRequest) -> str:
     try:
         prompt = (
             _ootd_role_header(request)
-            if request.director_native_profile in _OOTD_PROFILES else original
+            if native_profile_enabled(request.director_native_profile) else original
         )
 
         image_count = len(kling_ordered_image_slots(request))
@@ -154,7 +170,7 @@ def api_ootd_prompt(request: VideoGenerationRequest) -> str:
         converted = _IMAGE_TOKEN.sub(bind, prompt)
         if len(converted) > 3072:
             raise ValueError("image reference rewrite exceeds Kling 3.0 prompt limit")
-        if request.director_native_profile in _OOTD_PROFILES and request.multi_shot is not False:
+        if native_profile_enabled(request.director_native_profile) and request.multi_shot is not False:
             converted = _native_shots_if_safe(converted, request.duration)
         if len(converted) > 3072:
             raise ValueError("shot formatting exceeds Kling 3.0 prompt limit")
