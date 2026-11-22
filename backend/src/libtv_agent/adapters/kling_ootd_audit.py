@@ -88,6 +88,18 @@ def submission_snapshot(
     role_prompt = _ootd_role_header(request) if image_roles_enabled else source_prompt
     if len(role_prompt) > 3072:
         role_prompt = source_prompt
+    actual_role_header_added = role_prompt != source_prompt
+    # Optional, independently gated Sol/Kling director memory can prepend a
+    # short execution hint in newer runtimes. Audit the real wire preparation
+    # without enabling memory or assuming that a hint was applied.
+    memory_hint = getattr(request, "director_memory_kling_hint", None)
+    if (
+        profile in _OOTD_PROFILES and isinstance(memory_hint, str)
+        and 12 <= len(memory_hint) <= 520
+        and "\n" not in memory_hint and "\r" not in memory_hint
+        and len(memory_hint) + 1 + len(role_prompt) <= 3072
+    ):
+        role_prompt = memory_hint + "\n" + role_prompt
     image_prompt, image_status, image_changed_count = _image_alias_conversion_result(
         role_prompt, request
     )
@@ -149,7 +161,7 @@ def submission_snapshot(
         "imageReferenceSourceChanged": source_image_prompt != source_prompt,
         "imageReferenceBindingVerified": binding_verified,
         "imageReferenceWireStageVerified": wire_stages_verified,
-        "roleHeaderAdded": role_prompt != source_prompt,
+        "roleHeaderAdded": actual_role_header_added,
         "settings": {key: payload["settings"].get(key)
                      for key in ("duration", "resolution", "aspect_ratio", "audio", "multi_shot")},
         "imageRoles": _reference_summary(request, payload),
