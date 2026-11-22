@@ -32,6 +32,30 @@ function directorLabel(value: string | null) {
 const modeLabel = (value: string | null) =>
   value === 'automatic' ? 'Sol 自动编排' : value === 'custom' ? '用户自定义提示词' : value || '未记录'
 
+const imageBindingLabel = (value: string | null) => {
+  switch (value) {
+    case 'converted': return '已转换为 @image_N'
+    case 'already_canonical': return '原文已经是标准引用'
+    case 'no_recognized_alias': return '无需要转换的引用'
+    case 'unbound_or_ambiguous_reference_fallback': return '图片编号无效或不明确，已保留原文'
+    case 'length_guard_fallback': return '超过长度限制，已保留原文'
+    case 'wire_stage_mismatch': return '无法核对转换阶段与提交文本'
+    default: return '旧版审计未记录'
+  }
+}
+
+const nativeShotLabel = (value: string | null) => {
+  switch (value) {
+    case 'converted_to_native_shots': return '已转换为原生 shot 格式'
+    case 'already_native_shots_in_source': return '输入已采用原生 shot 格式'
+    case 'native_shot_pattern_not_losslessly_parseable': return '未转换，保留 Sol 原时间轴'
+    case 'native_conversion_skipped_after_image_role_binding': return '格式未通过安全校验，保留原文'
+    case 'profile_not_in_native_allowlist': return '当前导演配置不适用'
+    case 'multi_shot_disabled': return '多分镜未开启'
+    default: return '旧版审计未记录'
+  }
+}
+
 function AdminReferenceImage({ adminId, artifactId, assetId, filename }: {
   adminId: string
   artifactId: string
@@ -136,7 +160,21 @@ export function AdminVideoTracePanel({ adminId, item, onPlay, onClose }: {
             <summary>查看编排草案原始 Prompt</summary>
             <pre className="admin-trace-prompt">{trace.prompt.plan.masterPrompt}</pre>
           </details>}
-          <p className="admin-trace-caution"><AlertTriangle size={14}/> 历史版本没有逐次提交的不可变全文快照，因此不能保证当前提示词与当时发给 Kling 的每个字符完全相同；这不是供应商实际请求报文。</p>
+          {trace.klingWireAudit ? <div className="admin-trace-plan" aria-label="Kling 实际提交审计">
+            <h4>Kling 实际提交证据 · {time(trace.klingWireAudit.recordedAtUtc)}</h4>
+            <p>已核实为此片段的供应商接单快照，非根据当前规则推算。</p>
+            <dl className="admin-trace-meta">
+              <div><dt>图片引用转换</dt><dd>{imageBindingLabel(trace.klingWireAudit.imageReferenceSourceConversion)}</dd></div>
+              <div><dt>实际图号绑定</dt><dd>{trace.klingWireAudit.imageReferenceBindingVerified === true ? '已校验' : trace.klingWireAudit.imageReferenceBindingVerified === false ? '未通过校验' : '旧版未记录'}</dd></div>
+              <div><dt>原生分镜转换</dt><dd>{nativeShotLabel(trace.klingWireAudit.nativeShotConversion)}</dd></div>
+            </dl>
+            {trace.klingWireAudit.imageReferenceSourceAliasesChanged != null && <p>Sol 原文被规范化的图片别名：{trace.klingWireAudit.imageReferenceSourceAliasesChanged} 处。</p>}
+            <details className="admin-trace-technical">
+              <summary>查看真正发送给 Kling 的提示词（已确认接单）</summary>
+              <pre className="admin-trace-prompt">{trace.klingWireAudit.exactKlingPrompt}</pre>
+            </details>
+          </div> : <p className="admin-trace-caution"><AlertTriangle size={14}/> 未找到与本片段供应商接单记录匹配的原始请求审计；只能展示数据库保存的提示词，不能确认图片或分镜是否实际转换。</p>}
+          <p className="admin-trace-caution"><AlertTriangle size={14}/> 上方“当前数据库保存”的提示词可能不同于当时发出的实际请求，只有已核实的 Kling 提交快照能证明发送文本。</p>
         </section>
         <section className="admin-trace-section">
           <div className="admin-trace-section-title"><Image size={17}/><h3>当时绑定或上传的参考图</h3></div>

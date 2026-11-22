@@ -97,9 +97,36 @@ it('separates saved prompt from submission evidence and shows references and mea
   expect(getAdminVideoTrace).toHaveBeenCalledWith('platform-admin', 'saved-video-id')
   expect(document.body.textContent).toContain('遵循参考图')
   expect(document.body.textContent).toContain('Saved prompt text')
-  expect(document.body.textContent).toContain('不能保证当前提示词与当时发给 Kling')
+  expect(document.body.textContent).toContain('不能确认图片或分镜是否实际转换')
   expect(document.body.textContent).toContain('image_1')
   expect(document.body.textContent).toContain('供应商确认提交')
   expect(document.body.textContent).toContain('1 分 14 秒')
   expect(document.body.textContent).toContain('未找到与这条原片直接关联的 CUT')
+})
+
+
+it('shows only evidence-backed Kling image and shot conversion results', async () => {
+  vi.mocked(getAdminVideoTrace).mockResolvedValue({
+    ...trace,
+    klingWireAudit: {
+      evidence: 'provider_accepted_wire_snapshot',
+      recordedAtUtc: '2026-11-22T05:00:00Z',
+      submissionState: 'PROVIDER_ACCEPTED',
+      imageReferenceConversion: 'converted',
+      imageReferenceSourceConversion: 'converted',
+      imageReferenceSourceAliasesChanged: 2,
+      imageReferenceBindingVerified: true,
+      nativeShotConversion: 'converted_to_native_shots',
+      exactKlingPrompt: 'shot 1, 3, @image_1正面; shot 2, 7, @image_2印花;',
+    },
+  })
+  view = await mount(<AdminVideoTracePanel adminId="platform-admin" item={item}
+    onPlay={() => {}} onClose={() => {}} />)
+  await act(async () => { await Promise.resolve() })
+  expect(document.body.textContent).toContain('Kling 实际提交证据')
+  expect(document.body.textContent).toContain('已转换为 @image_N')
+  expect(document.body.textContent).toContain('已转换为原生 shot 格式')
+  expect(document.body.textContent).toContain('Sol 原文被规范化的图片别名：2 处')
+  expect(document.body.textContent).not.toContain('不能确认图片或分镜是否实际转换')
+  expect(document.body.textContent).toContain('查看真正发送给 Kling 的提示词')
 })

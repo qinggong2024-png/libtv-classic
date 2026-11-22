@@ -18,9 +18,27 @@ _OOTD_PROFILES = frozenset((
 _LOG = logging.getLogger(__name__)
 # Both common Sol descriptions and official API-style tokens are text aliases.
 # Only the official @image_N token is sent when a matching contents ID exists.
-_IMAGE_TOKEN = re.compile(r"@image_?(\d+)(?!\d)|图片?(\d+|[一二三四五六七八九十]+)(?![\d一二三四五六七八九十])")
+# An image ID is the provider's actual ordered contents ID, not a guessed
+# human role. Constrain Chinese aliases to avoid splitting 原图一致/构图一致.
+# Historical Sol outputs use 图1, 图片二 and @image_3; other common sources
+# use spaced numerals, ordinals, circled digits and English image labels.
+_IMAGE_NUMERAL = r"(?:\d+|[一二三四五六七八九十]+|[①②③④⑤⑥⑦⑧⑨⑩])"
+_IMAGE_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9_])@?image[ _-]*(?P<english>\d+)(?!\d)"
+    r"|(?<![原构])图片?[ \t]*#?[ \t]*(?P<chinese>" + _IMAGE_NUMERAL + r")"
+    r"(?![\d一二三四五六七八九十])"
+    r"(?P<range>[ \t]*[-–—－~～至到][ \t]*" + _IMAGE_NUMERAL + r")?"
+    r"(?!致|张|个|系列)"
+    r"|第[ \t]*(?P<ordinal>" + _IMAGE_NUMERAL + r")[ \t]*(?:张|个|幅)?"
+    r"[ \t]*(?:图片|图)"
+    r"|(?P<first>首帧图|首图)",
+    re.IGNORECASE,
+)
 _IMAGE_CHINESE_INDEX = {name: index for index, name in enumerate("一二三四五六七八九", 1)}
 _IMAGE_CHINESE_INDEX["十"] = 10
+_IMAGE_CIRCLED_INDEX = {name: index for index, name in enumerate("①②③④⑤⑥⑦⑧⑨⑩", 1)}
+_IMAGE_RANGE_SUFFIX = re.compile(r"[ \t]*[-–—－~～至到][ \t]*(" + _IMAGE_NUMERAL + r")$")
+_CANONICAL_IMAGE = re.compile(r"@image_\d+(?!\d)")
 # Sol's real OOTD drafts mostly use line-leading unnumbered decimal ranges;
 # some use numbered shots or minute:second timestamps. Recognize these formats
 # without forcing Sol to write a rigid schema or changing its creative prompt.
@@ -157,32 +175,89 @@ def _native_shots_if_safe(prompt: str, duration: int | None) -> str:
         return prompt
 
 
-def _normalize_image_refs_if_safe(prompt: str, request: VideoGenerationRequest) -> str:
-    """Convert image aliases only when all referenced inputs exist.
+def _image_index(text: str) -> int:
+    """Only unambiguous provided image ordinals are interpreted."""
+    if text.isdecimal():
+        return int(text)
+    return _IMAGE_CHINESE_INDEX.get(text, _IMAGE_CIRCLED_INDEX.get(text, 0))
 
-    Unsupported image IDs, absent aliases, and conversion errors preserve the
-    stage input. This helper has no authority to reject a paid generation.
+
+def _image_inputs_count(request: VideoGenerationRequest) -> int:
+    """Mirror KlingOfficialApiAdapter._request_image_inputs (no element IDs)."""
+    # A separately supplied first frame precedes all other storyboard inputs.
+    # If absent, image_paths[0] becomes the first-frame content, not an extra.
+    return (
+        int(request.first_frame_path is not None)
+        + len(request.image_paths)
+        + int(request.last_frame_path is not None)
+        + len(request.refer_image_paths)
+        + len(request.product_reference_paths)
+    )
+
+
+def _image_alias_conversion_result(
+    prompt: str, request: VideoGenerationRequest,
+) -> tuple[str, str, int]:
+    """Pure outcome for image rewriting and verifiable wire audit.
+
+    A bad/unbound image index rejects the entire optional rewrite, not the
+    request. In-text ranges are preserved as explicit bounded endpoint refs;
+    they are never guessed from garment orientation or the scene description.
     """
-    try:
-        image_count = (
-            int(bool(request.first_frame_path)) + len(request.image_paths)
-            + int(bool(request.last_frame_path)) + len(request.refer_image_paths)
-            + len(request.product_reference_paths)
-        )
+    matches = list(_IMAGE_TOKEN.finditer(prompt))
+    if not matches:
+        return prompt, "no_recognized_alias", 0
+    image_count = _image_inputs_count(request)
+    converted_count = 0
 
+    try:
         def bind(match: re.Match[str]) -> str:
-            reference = match.group(1) or match.group(2)
-            number = (
-                int(reference) if reference.isdecimal()
-                else _IMAGE_CHINESE_INDEX.get(reference, 0)
+            nonlocal converted_count
+            token = match.group()
+            number_text = (
+                match.group("english") or match.group("chinese")
+                or match.group("ordinal")
             )
+            number = _image_index(number_text) if number_text else 1
             if not 1 <= number <= image_count:
                 raise ValueError("image reference is not bound in request contents")
-            return f"@image_{number}"
+            ranged = match.group("range")
+            if ranged:
+                suffix = _IMAGE_RANGE_SUFFIX.fullmatch(ranged)
+                if suffix is None:
+                    raise ValueError("ambiguous image range")
+                end_number = _image_index(suffix.group(1))
+                if not number < end_number <= image_count:
+                    raise ValueError("image range is not bound in request contents")
+                # Retain the author's interval notation, but bind both ends.
+                joiner = re.search(r"[-–—－~～至到]", ranged)
+                assert joiner is not None
+                rendered = f"@image_{number}{joiner.group()}@image_{end_number}"
+            else:
+                rendered = f"@image_{number}"
+            if rendered != token:
+                converted_count += 1
+            return rendered
 
         converted = _IMAGE_TOKEN.sub(bind, prompt)
         if len(converted) > 3072:
             raise ValueError("image reference rewrite exceeds provider prompt limit")
+        return converted, (
+            "converted" if converted != prompt else "already_canonical"
+        ), converted_count
+    except (ValueError, OverflowError, AssertionError) as exc:
+        return prompt, (
+            "length_guard_fallback" if "prompt limit" in str(exc)
+            else "unbound_or_ambiguous_reference_fallback"
+        ), 0
+
+
+def _normalize_image_refs_if_safe(prompt: str, request: VideoGenerationRequest) -> str:
+    """Fail-open image alias binder with no effect on Sol's stored draft."""
+    try:
+        converted, outcome, _ = _image_alias_conversion_result(prompt, request)
+        if outcome.endswith("_fallback"):
+            _LOG.warning("KLING_IMAGE_REFERENCE_NORMALIZE_FALLBACK: %s", outcome)
         return converted
     except Exception as exc:
         _LOG.warning(

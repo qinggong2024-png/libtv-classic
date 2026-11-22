@@ -1,5 +1,8 @@
 """A real saved clip can be traced across other accounts without granting write access."""
+import hashlib
+import json
 import uuid
+from types import SimpleNamespace
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
@@ -244,3 +247,97 @@ async def test_video_trace_is_private_to_platform_admin(account_app):
             response = await client.get(path, headers=actor(ids, key))
             assert response.status_code == 403
         assert (await client.get(path, headers=actor(ids, "root"))).status_code == 404
+
+
+async def test_admin_video_trace_reads_only_provider_matched_wire_snapshot(
+    account_app, tmp_path, monkeypatch,
+):
+    app, client, ids = account_app
+    parent = ParentTask(
+        user_id=ids["other"],
+        client_task_id="image-reference-wire-audit",
+        title="接单证据测试",
+        asset_count=1,
+        phase=ParentTaskPhase.DELIVERABLE,
+    )
+    async with app.state.database.session_factory() as session:
+        session.add(parent)
+        await session.flush()
+        variant = GenerationVariant(
+            parent_task_id=parent.id,
+            variant_type=VariantKind.STABLE,
+            revision=1,
+            variant_index=1,
+            prompt_text="图 1 正面。镜头一0–3秒：正面。镜头二3–10秒：印花。",
+            generation_config_json={"model": "kling-3.0-omni"},
+        )
+        session.add(variant)
+        await session.flush()
+        attempt = GenerationAttempt(
+            variant_id=variant.id,
+            status=AttemptStatus.SUCCEEDED,
+            provider="kling_official_api",
+            provider_model="kling-3.0-omni",
+            intent_hash="f" * 64,
+            task_id="matched-provider-id",
+        )
+        session.add(attempt)
+        await session.flush()
+        video = DownloadArtifact(
+            attempt_id=attempt.id,
+            status=DownloadStatus.READY,
+            object_key="video/real.mp4",
+        )
+        session.add(video)
+        await session.commit()
+        video_id = str(video.id)
+    evidence_dir = tmp_path / "ootd-wire-audit"
+    evidence_dir.mkdir()
+    filepath = evidence_dir / (
+        hashlib.sha256(("f" * 64).encode("utf-8")).hexdigest() + ".json"
+    )
+    evidence = {
+        "externalTaskId": "f" * 64,
+        "submissionState": "PROVIDER_ACCEPTED",
+        "providerTaskId": "matched-provider-id",
+        "recordedAtUtc": "2026-11-22T05:10:00+00:00",
+        "imageReferenceConversion": "converted",
+        "imageReferenceSourceConversion": "converted",
+        "imageReferenceSourceAliasesChanged": 1,
+        "imageReferenceBindingVerified": True,
+        "nativeShotConversion": "converted_to_native_shots",
+        "exactKlingPrompt": "shot 1, 3, @image_1正面; shot 2, 7, @image_2印花;",
+        "secret_key": "secret-must-not-be-exposed",
+        "localPath": "private-path-must-not-be-exposed",
+    }
+    filepath.write_text(json.dumps(evidence, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(
+        "libtv_agent.services.admin_video_trace.get_settings",
+        lambda: SimpleNamespace(runner_root=tmp_path),
+    )
+    authorized = await client.get(f"{BASE}/{video_id}/trace", headers=actor(ids,"root"))
+    assert authorized.status_code == 200, authorized.text
+    wire = authorized.json()["klingWireAudit"]
+    assert wire["evidence"] == "provider_accepted_wire_snapshot"
+    assert wire["imageReferenceSourceAliasesChanged"] == 1
+    assert wire["imageReferenceBindingVerified"] is True
+    assert wire["nativeShotConversion"] == "converted_to_native_shots"
+    assert wire["exactKlingPrompt"] == evidence["exactKlingPrompt"]
+    assert "secret-must-not-be-exposed" not in authorized.text
+    assert "private-path-must-not-be-exposed" not in authorized.text
+
+    # A snapshot with a different provider receipt is never shown for this
+    # video, even when its externalTaskId and filename are valid.
+    evidence["providerTaskId"] = "different-provider-id"
+    filepath.write_text(json.dumps(evidence, ensure_ascii=False), encoding="utf-8")
+    mismatched = await client.get(f"{BASE}/{video_id}/trace", headers=actor(ids,"root"))
+    assert mismatched.status_code == 200
+    assert mismatched.json()["klingWireAudit"] is None
+
+    # PREPARED is not proof of actual supplier acceptance either.
+    evidence["providerTaskId"] = "matched-provider-id"
+    evidence["submissionState"] = "WIRE_PREPARED"
+    filepath.write_text(json.dumps(evidence, ensure_ascii=False), encoding="utf-8")
+    prepared = await client.get(f"{BASE}/{video_id}/trace", headers=actor(ids,"root"))
+    assert prepared.status_code == 200
+    assert prepared.json()["klingWireAudit"] is None

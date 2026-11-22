@@ -854,6 +854,17 @@ export interface AdminVideoTraceEvent {
 }
 
 export interface AdminVideoTrace {
+  klingWireAudit?: {
+    evidence: 'provider_accepted_wire_snapshot'
+    recordedAtUtc: string | null
+    submissionState: string
+    imageReferenceConversion: string | null
+    imageReferenceSourceConversion: string | null
+    imageReferenceSourceAliasesChanged: number | null
+    imageReferenceBindingVerified: boolean | null
+    nativeShotConversion: string | null
+    exactKlingPrompt: string
+  } | null
   artifactId: string
   taskId: string
   attemptId: string

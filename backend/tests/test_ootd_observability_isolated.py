@@ -38,7 +38,7 @@ def _adapter(tmp_path: Path) -> KlingOfficialApiAdapter:
 
 
 @pytest.mark.asyncio
-async def test_dynamic_prompt_is_unchanged_even_when_legacy_converter_enabled(tmp_path):
+async def test_dynamic_prompt_audit_records_native_rewrite_with_true_wire_text(tmp_path):
     prompt = (
         "10秒、9:16竖屏。同一人同一件T恤。"
         "0.0–3.0秒｜首帧自然转身。"
@@ -57,9 +57,14 @@ async def test_dynamic_prompt_is_unchanged_even_when_legacy_converter_enabled(tm
     payload = await adapter.build_request_payload(request)
     baseline = json.dumps(payload, sort_keys=True)
     audit = submission_snapshot(request, payload)
-    assert audit["nativeShotConversion"] == "profile_not_in_native_allowlist"
-    assert audit["preAdapterPrompt"] == audit["exactKlingPrompt"] == prompt
-    assert audit["promptChanged"] is False
+    assert audit["nativeShotConversion"] == "converted_to_native_shots"
+    assert audit["preAdapterPrompt"] == prompt
+    assert audit["exactKlingPrompt"].startswith("shot 1, 3,")
+    assert audit["exactKlingPrompt"] == payload["contents"][0]["text"]
+    assert audit["promptChanged"] is True
+    assert audit["imageReferenceWireStageVerified"] is True
+    assert audit["imageReferenceBindingVerified"] is True
+    assert audit["roleHeaderAdded"] is True
     assert [x["id"] for x in audit["imageRoles"]] == ["image_1", "image_2", "image_3"]
     assert all(len(x["sha256"]) == 64 for x in audit["imageRoles"])
     assert [x["intentRole"] for x in audit["imageRoles"]] == [
@@ -223,3 +228,81 @@ def test_classic_startup_audit_requires_an_explicit_local_flag(
     assert lan.lan_environment(8002, 5176, "127.0.0.1")[
         "ALLWE_OOTD_SUBMISSION_AUDIT_ENABLED"
     ] == "1"
+
+
+@pytest.mark.asyncio
+async def test_submission_audit_proves_image_alias_and_native_shot_independently(
+    tmp_path: Path,
+) -> None:
+    prompt = (
+        "原图一致，图 1 为首帧。"
+        "镜头一0–3.2秒：胸前图案完整显示。"
+        "镜头二3.2–10秒：以第2张图为准，DIRECT CUT。"
+    )
+    request = VideoGenerationRequest(
+        prompt=prompt, model="kling-3.0-omni",
+        image_paths=(_image(tmp_path / "first.png"),),
+        product_reference_paths=(_image(tmp_path / "product.png"),),
+        duration=10, multi_shot=True, external_task_id="audit-alias-test",
+        director_native_profile="allwe-ootd-sol-dynamic-display-v1",
+    )
+    payload = await _adapter(tmp_path).build_request_payload(request)
+    audit = submission_snapshot(request, payload)
+    assert audit["imageReferenceConversion"] == "converted"
+    assert audit["imageReferenceSourceConversion"] == "converted"
+    assert audit["imageReferenceSourceAliasesChanged"] == 2
+    assert audit["imageReferenceBindingVerified"]
+    assert audit["imageReferenceWireStageVerified"]
+    assert audit["nativeShotConversion"] == "converted_to_native_shots"
+    assert audit["exactKlingPrompt"].startswith("shot 1, 3,")
+    assert "原图一致" in audit["exactKlingPrompt"]
+    assert "@image_1" in audit["exactKlingPrompt"]
+    assert "@image_2" in audit["exactKlingPrompt"]
+
+
+@pytest.mark.asyncio
+async def test_submission_audit_unbound_alias_falls_back_but_proves_shot(
+    tmp_path: Path,
+) -> None:
+    prompt = (
+        "镜头一0-3秒：图1是首帧。"
+        "镜头二3-10秒：图9是不存在的参考。"
+    )
+    request = VideoGenerationRequest(
+        prompt=prompt, model="kling-3.0-omni",
+        image_paths=(_image(tmp_path / "first.png"),),
+        product_reference_paths=(_image(tmp_path / "product.png"),),
+        duration=10, multi_shot=True, external_task_id="audit-unbound-test",
+        director_native_profile="allwe-ootd-sol-dynamic-display-v1",
+    )
+    payload = await _adapter(tmp_path).build_request_payload(request)
+    audit = submission_snapshot(request, payload)
+    assert audit["imageReferenceConversion"] == "unbound_or_ambiguous_reference_fallback"
+    assert audit["imageReferenceBindingVerified"] is False
+    assert audit["imageReferenceWireStageVerified"] is True
+    assert audit["nativeShotConversion"] == "converted_to_native_shots"
+    assert "图9" in audit["exactKlingPrompt"]
+
+
+@pytest.mark.asyncio
+async def test_submission_audit_role_header_only_is_not_source_alias_conversion(
+    tmp_path: Path,
+) -> None:
+    request = VideoGenerationRequest(
+        prompt="自然动作与清楚印花。",
+        model="kling-3.0-omni",
+        image_paths=(
+            _image(tmp_path / "first.png"), _image(tmp_path / "later.png"),
+        ),
+        product_reference_paths=(_image(tmp_path / "product.png"),),
+        duration=10, multi_shot=True, external_task_id="audit-header-test",
+        director_native_profile="allwe-ootd-sol-dynamic-display-v1",
+    )
+    payload = await _adapter(tmp_path).build_request_payload(request)
+    audit = submission_snapshot(request, payload)
+    assert audit["roleHeaderAdded"]
+    assert audit["imageReferenceSourceConversion"] == "no_recognized_alias"
+    assert audit["imageReferenceSourceAliasesChanged"] == 0
+    assert audit["imageReferenceConversion"] == "converted"
+    assert audit["imageReferenceBindingVerified"]
+    assert audit["nativeShotConversion"] == "native_shot_pattern_not_losslessly_parseable"

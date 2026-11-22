@@ -352,3 +352,93 @@ async def test_unsafe_decimal_shot_still_preserves_image_normalization(
     result = (await _adapter(tmp_path).build_request_payload(request))["contents"][0]["text"]
     assert "shot 1" not in result
     assert result == prompt.replace("图一", "@image_1").replace("图片2", "@image_2")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source,expected", [
+    ("图 1 为唯一首帧。图片 2 是商品参考。", "@image_1 为唯一首帧。@image_2 是商品参考。"),
+    ("第1张图用作首帧，第2张图片用于细节。", "@image_1用作首帧，@image_2用于细节。"),
+    ("第一张图开场，第二个图片看印花。", "@image_1开场，@image_2看印花。"),
+    ("Image 1 opens. image_2 is the product.", "@image_1 opens. @image_2 is the product."),
+    ("@image 1开场，@image2展示商品。", "@image_1开场，@image_2展示商品。"),
+    ("图①是首帧，图②作为商品参考。", "@image_1是首帧，@image_2作为商品参考。"),
+    ("首图自然起镜，首帧图保留原场景。", "@image_1自然起镜，@image_1保留原场景。"),
+    ("图一：首帧。图片二：商品图。", "@image_1：首帧。@image_2：商品图。"),
+    ("@image_1起镜，图2是商品。", "@image_1起镜，@image_2是商品。"),
+])
+async def test_image_alias_variants_are_bound_to_existing_contents(
+    tmp_path: Path, source: str, expected: str,
+) -> None:
+    request = _request(tmp_path, source)
+    sent = (await _adapter(tmp_path).build_request_payload(request))["contents"][0]["text"]
+    assert sent == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", [
+    "图案与原图一致，构图一致，图片一致。",
+    "这是一张图片，图片一张就够。",
+    "与原图一致、图一系列、构图一体。",
+    "原图片2要保留，原图一致。",
+])
+async def test_image_nonreference_chinese_not_corrupted(
+    tmp_path: Path, source: str,
+) -> None:
+    sent = (await _adapter(tmp_path).build_request_payload(_request(tmp_path, source)))[
+        "contents"
+    ][0]["text"]
+    assert sent == source
+
+
+@pytest.mark.asyncio
+async def test_image_reference_in_real_sol_instruction_keeps_ordinary_words(
+    tmp_path: Path,
+) -> None:
+    source = "服装花纹与原图一致，构图一致，图1是首帧，图 2 是商品图。"
+    sent = (await _adapter(tmp_path).build_request_payload(_request(tmp_path, source)))[
+        "contents"
+    ][0]["text"]
+    assert sent == "服装花纹与原图一致，构图一致，@image_1是首帧，@image_2 是商品图。"
+
+
+@pytest.mark.asyncio
+async def test_image_range_endpoints_are_both_bound(tmp_path: Path) -> None:
+    request = _request(tmp_path, "以图3–5为准，图1作为起镜。", count=2, products=3)
+    sent = (await _adapter(tmp_path).build_request_payload(request))["contents"][0]["text"]
+    assert "@image_3–@image_5" in sent
+    assert "以@image_3–@image_5为准" in sent
+    assert "原始画面" in sent
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", [
+    "图1首帧，然后图3展示背面。",
+    "图1首帧，商品看图1–3。",
+    "图1首帧，商品看第3张图。",
+    "图1首帧，商品看图十一。",
+])
+async def test_unbound_image_aliases_do_not_partially_rewrite(
+    tmp_path: Path, source: str,
+) -> None:
+    sent = (await _adapter(tmp_path).build_request_payload(_request(tmp_path, source)))[
+        "contents"
+    ][0]["text"]
+    assert sent == source
+
+
+@pytest.mark.asyncio
+async def test_image_alias_converter_preserves_existing_shot_conversion(tmp_path: Path) -> None:
+    prompt = (
+        "原图一致，图 1 为首帧。"
+        "镜头一0–3.2秒：人物自然展示印花。"
+        "镜头二3.2–10秒：直接切镜，以第2张图为准。"
+    )
+    request = _request(
+        tmp_path, prompt, profile="allwe-ootd-sol-dynamic-display-v1",
+    )
+    sent = (await _adapter(tmp_path).build_request_payload(request))["contents"][0]["text"]
+    assert sent.startswith("shot 1, 3,")
+    assert "shot 2, 7," in sent
+    assert "原图一致" in sent
+    assert "@image_1" in sent
+    assert "@image_2" in sent

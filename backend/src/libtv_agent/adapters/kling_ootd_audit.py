@@ -15,7 +15,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from libtv_agent.adapters.kling_api_ootd import _OOTD_PROFILES, _native_shots_if_safe
+from libtv_agent.adapters.kling_api_ootd import (
+    _OOTD_PROFILES,
+    _IMAGE_TOKEN,
+    _CANONICAL_IMAGE,
+    _image_alias_conversion_result,
+    _native_shots_if_safe,
+    _ootd_role_header,
+)
 from libtv_agent.adapters.video_provider import VideoGenerationRequest
 
 logger = logging.getLogger(__name__)
@@ -71,17 +78,55 @@ def submission_snapshot(
     source_prompt = request.prompt
     profile = request.director_native_profile
     model = request.model
+    # Reconstruct deterministic formatting stages from the same immutable
+    # request used for this paid submission. Do not infer success from an
+    # enabled setting or assume that a prompt changed only because of aliases.
+    image_roles_enabled = (
+        profile in _OOTD_PROFILES
+        and (len(request.image_paths) > 1 or len(request.product_reference_paths) > 1)
+    )
+    role_prompt = _ootd_role_header(request) if image_roles_enabled else source_prompt
+    if len(role_prompt) > 3072:
+        role_prompt = source_prompt
+    image_prompt, image_status, image_changed_count = _image_alias_conversion_result(
+        role_prompt, request
+    )
+    aliases_seen = len(list(_IMAGE_TOKEN.finditer(role_prompt)))
+    aliases_seen_in_source = len(list(_IMAGE_TOKEN.finditer(source_prompt)))
+    source_image_prompt, source_image_status, source_changed_count = (
+        _image_alias_conversion_result(source_prompt, request)
+    )
+    staged_shots = (
+        _native_shots_if_safe(image_prompt, request.duration)
+        if profile in _OOTD_PROFILES and request.multi_shot is not False
+        else image_prompt
+    )
     if profile not in _OOTD_PROFILES:
         conversion_reason = "profile_not_in_native_allowlist"
     elif request.multi_shot is False:
         conversion_reason = "multi_shot_disabled"
-    elif _native_shots_if_safe(source_prompt, request.duration) == source_prompt:
-        conversion_reason = "native_shot_pattern_not_losslessly_parseable"
+    elif staged_shots != image_prompt and wire_prompt == staged_shots:
+        conversion_reason = "converted_to_native_shots"
+    elif staged_shots != image_prompt:
+        conversion_reason = "native_conversion_skipped_after_image_role_binding"
+    elif image_prompt.lstrip().startswith("shot 1,"):
+        conversion_reason = "already_native_shots_in_source"
     else:
-        conversion_reason = (
-            "converted_to_native_shots" if "shot 1," in wire_prompt
-            else "native_conversion_skipped_after_image_role_binding"
-        )
+        conversion_reason = "native_shot_pattern_not_losslessly_parseable"
+    # Every provider image receives an image_N id. Audit the supplied tokens
+    # without reconstructing or persisting any base64 payload.
+    actual_image_ids = {
+        item["id"]
+        for item in payload["contents"][1:]
+        if item.get("type") in {"first_frame", "last_frame", "refer_image"}
+    }
+    wire_ref_ids = set(_CANONICAL_IMAGE.findall(wire_prompt))
+    binding_verified = image_status != "unbound_or_ambiguous_reference_fallback" and all(
+        token.removeprefix("@") in actual_image_ids for token in wire_ref_ids
+    )
+    wire_stages_verified = wire_prompt in {image_prompt, staged_shots}
+    if not wire_stages_verified:
+        image_status = "wire_stage_mismatch"
     return {
         "schema": "allwe-ootd-kling-wire-audit-v1",
         "externalTaskId": request.external_task_id,
@@ -95,7 +140,16 @@ def submission_snapshot(
         "exactKlingPromptSha256": _hash(wire_prompt),
         "promptChanged": source_prompt != wire_prompt,
         "nativeShotConversion": conversion_reason,
-        "roleHeaderAdded": wire_prompt.startswith("【图片角色"),
+        "imageReferenceConversion": image_status,
+        "imageReferenceSourceConversion": source_image_status,
+        "imageReferenceAliasesDetected": aliases_seen,
+        "imageReferenceSourceAliasesDetected": aliases_seen_in_source,
+        "imageReferenceAliasesChanged": image_changed_count,
+        "imageReferenceSourceAliasesChanged": source_changed_count,
+        "imageReferenceSourceChanged": source_image_prompt != source_prompt,
+        "imageReferenceBindingVerified": binding_verified,
+        "imageReferenceWireStageVerified": wire_stages_verified,
+        "roleHeaderAdded": role_prompt != source_prompt,
         "settings": {key: payload["settings"].get(key)
                      for key in ("duration", "resolution", "aspect_ratio", "audio", "multi_shot")},
         "imageRoles": _reference_summary(request, payload),

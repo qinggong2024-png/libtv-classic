@@ -5,10 +5,14 @@ tokens, raw provider responses, or billing credentials are exposed.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi import HTTPException
+from libtv_agent.config import get_settings
 from libtv_agent.domain.enums import DownloadStatus
 from libtv_agent.domain.models import (
     Asset,
@@ -79,6 +83,73 @@ def _safe_plan_item(value) -> dict:
     }
 
 
+def _confirmed_wire_audit(
+    attempt: GenerationAttempt, variant: GenerationVariant, task: ParentTask,
+) -> dict | None:
+    """Read only this clip's provider-acknowledged immutable wire snapshot.
+
+    Filenames are derived from the stored submission identity, never supplied
+    by HTTP clients. No local paths, base64 images, credentials, or arbitrary
+    audit JSON keys are exposed by the administrator response.
+    """
+    if attempt.provider_model != "kling-3.0-omni":
+        return None
+    root = Path(get_settings().runner_root) / "ootd-wire-audit"
+    candidates = [
+        attempt.intent_hash,
+        f"{task.id.hex}-{variant.id.hex}-{variant.revision}",
+    ]
+    for identity in candidates:
+        if not isinstance(identity, str) or not identity or len(identity) > 256:
+            continue
+        file = root / (hashlib.sha256(identity.encode("utf-8")).hexdigest() + ".json")
+        try:
+            if not file.is_file() or file.stat().st_size > 100_000:
+                continue
+            record = json.loads(file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError, TypeError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        if record.get("externalTaskId") != identity:
+            continue
+        state = record.get("submissionState")
+        if state not in {"PROVIDER_ACCEPTED", "PROVIDER_RECOVERED"}:
+            continue
+        # A different provider receipt must never be paired with this clip.
+        if (
+            not isinstance(attempt.task_id, str)
+            or record.get("providerTaskId") != attempt.task_id
+        ):
+            continue
+        final_text = record.get("exactKlingPrompt")
+        if not isinstance(final_text, str) or not 0 < len(final_text) <= 3072:
+            continue
+        image_status = record.get("imageReferenceConversion")
+        native_status = record.get("nativeShotConversion")
+        return {
+            "evidence": "provider_accepted_wire_snapshot",
+            "recordedAtUtc": record.get("recordedAtUtc"),
+            "submissionState": state,
+            "imageReferenceConversion": image_status if isinstance(image_status, str) else None,
+            "imageReferenceSourceConversion": (
+                record.get("imageReferenceSourceConversion")
+                if isinstance(record.get("imageReferenceSourceConversion"), str) else None
+            ),
+            "imageReferenceSourceAliasesChanged": (
+                record.get("imageReferenceSourceAliasesChanged")
+                if type(record.get("imageReferenceSourceAliasesChanged")) is int else None
+            ),
+            "imageReferenceBindingVerified": (
+                record.get("imageReferenceBindingVerified")
+                if isinstance(record.get("imageReferenceBindingVerified"), bool) else None
+            ),
+            "nativeShotConversion": native_status if isinstance(native_status, str) else None,
+            "exactKlingPrompt": final_text,
+        }
+    return None
+
+
 async def get_admin_video_trace(session: AsyncSession, artifact_id: uuid.UUID) -> dict:
     row = (await session.execute(
         select(DownloadArtifact, GenerationAttempt, GenerationVariant, ParentTask)
@@ -96,6 +167,7 @@ async def get_admin_video_trace(session: AsyncSession, artifact_id: uuid.UUID) -
         raise HTTPException(404, "saved video not found")
     artifact, attempt, variant, task = row
 
+    wire_audit = _confirmed_wire_audit(attempt, variant, task)
     config = variant.generation_config_json or {}
     settings = task.settings_json or {}
     if not isinstance(config, dict):
@@ -316,6 +388,7 @@ async def get_admin_video_trace(session: AsyncSession, artifact_id: uuid.UUID) -
         "taskId": str(task.id),
         "attemptId": str(attempt.id),
         "variantId": str(variant.id),
+        "klingWireAudit": wire_audit,
         "taskCreatedAt": _iso(task.created_at),
         "prompt": {
             "savedText": variant.prompt_text or None,
@@ -369,7 +442,7 @@ async def get_admin_video_trace(session: AsyncSession, artifact_id: uuid.UUID) -
             "createdAt": _iso(item.created_at),
         } for item in validation_rows],
         "limitations": [
-            "历史提示词是当前保存的版本；没有独立的逐请求全文快照时不能确认与实际发送内容逐字一致。",
+            "历史提示词是当前保存的版本；没有已核实的供应商提交快照时不能确认与实际发送内容逐字一致。",
             "时间线仅列出真实保存的事件，未记录的节点不推测，也不以最后更新时间冒充完成时间。",
             "素材绑定优先使用本次变体保存的 referenceImageBindings；"
             "缺少绑定时仅展示当时任务内标记用于生成的图片。",
