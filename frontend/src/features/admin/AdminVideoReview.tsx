@@ -2,7 +2,7 @@ import { AlertCircle, AlertTriangle, ChevronLeft, ChevronRight, Clapperboard, Cl
 import { useEffect, useState } from 'react'
 import { adminVideoThumbnailUrl, fetchAdminVideoObjectUrl, getAdminVideos } from '../../api'
 import { errorMessage } from '../../errorPresentation'
-import { VideoModal } from '../../shared/components/Media'
+import { PortalVideoModal } from '../../shared/components/Media'
 import { AdminVideoTracePanel } from './AdminVideoTracePanel'
 import type { AdminVideoHealthFilter, AdminVideoPage, AdminVideoRecord, AdminVideoSort } from '../../types'
 import './adminVideoReview.css'
@@ -30,7 +30,8 @@ function ReviewedVideo({ adminId, item, onClose }: {
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
   }, [adminId, item.artifactId])
-  return <VideoModal src={url ?? undefined} title={item.title} loadError={error} onClose={onClose} />
+  return <PortalVideoModal src={url ?? undefined} title={friendlyVideoTitle(item)} loadError={error} onClose={onClose}
+    aspectRatioHint={item.width && item.height ? item.width / item.height : undefined} />
 }
 
 function readableDate(text: string | null): string {
@@ -39,6 +40,14 @@ function readableDate(text: string | null): string {
   return Number.isNaN(date.valueOf())
     ? '日期未记录'
     : date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
+function friendlyVideoTitle(item: AdminVideoRecord): string {
+  const value = item.title?.trim() ?? ''
+  const technical = /^(?:[0-9a-f]{24,}|[0-9a-f]{8}-[0-9a-f-]{27,})/i.test(value)
+  return technical || !value
+    ? `${item.brandName || item.username} · 原片 · ${readableDate(item.createdAt)}`
+    : value
 }
 
 export function AdminVideoReview({ adminId }: { adminId: string }) {
@@ -82,9 +91,8 @@ export function AdminVideoReview({ adminId }: { adminId: string }) {
   return <section className="admin-video-review" aria-label="全平台视频质量巡检">
     <header className="admin-video-header">
       <div>
-        <span className="section-kicker">全平台质检 · 管理员专用</span>
         <h2>最近生成的视频</h2>
-        <p>可以查看各品牌和账号的实际生成原片，发现印花、手部、动作、镜头及节奏问题。这里只用于观察，不会改变其他账号的任务。</p>
+        <p>跨账号查看原片与生产链路 · 只读巡检</p>
       </div>
       <button className="secondary-button" type="button" disabled={loading} onClick={() => { setLoading(true); setRefreshKey(v => v + 1) }}><RefreshCw size={16} />刷新</button>
     </header>
@@ -106,7 +114,7 @@ export function AdminVideoReview({ adminId }: { adminId: string }) {
     {page?.healthSummary ? <section className="admin-video-attention" aria-label="需要你关注的生产链路异常">
       <div className="admin-video-attention-heading">
         <strong>需要你关注</strong>
-        <span>根据真实生成与送剪记录归类，不代表画面质量评分</span>
+        <span>仅反映已记录的链路问题</span>
       </div>
       <div className="admin-video-attention-list">
         <button
@@ -119,7 +127,7 @@ export function AdminVideoReview({ adminId }: { adminId: string }) {
           <AlertCircle size={18} className="admin-video-attention-icon is-critical" />
           <span className="admin-video-attention-content">
             <strong>{page.healthSummary.critical} 条明确异常</strong>
-            <small>已记录的送剪失败、校验失败或人工拒绝，需要优先核实</small>
+            <small>送剪失败或校验失败</small>
           </span>
           <span className="admin-video-attention-action">{healthFilter === 'critical' ? '正在查看' : '查看视频'}</span>
           <ChevronRight size={16} aria-hidden="true" />
@@ -134,7 +142,7 @@ export function AdminVideoReview({ adminId }: { adminId: string }) {
           <Clock3 size={18} className="admin-video-attention-icon is-warning" />
           <span className="admin-video-attention-content">
             <strong>{page.healthSummary.warning} 条需要检查</strong>
-            <small>耗时偏长或关键记录不完整，建议查看生产时间线</small>
+            <small>耗时偏长或记录缺失</small>
           </span>
           <span className="admin-video-attention-action">{healthFilter === 'warning' ? '正在查看' : '查看视频'}</span>
           <ChevronRight size={16} aria-hidden="true" />
@@ -161,7 +169,7 @@ export function AdminVideoReview({ adminId }: { adminId: string }) {
     </div>
     <div className="admin-video-summary">
       <span>本条件下共 <strong>{page?.total ?? '—'}</strong> 条已保存原片</span>
-      <span>建议检查：商品印花完整度 · 手部穿帮 · 动作自然度 · 展示时长 · 镜头节奏</span>
+
     </div>
     {error && <p role="alert" className="service-alert">{error}</p>}
     {loading ? <div className="admin-video-loading" role="status"><LoaderCircle size={19} className="spin" />正在加载最近视频…</div> : null}
@@ -174,9 +182,9 @@ export function AdminVideoReview({ adminId }: { adminId: string }) {
           {item.durationSeconds != null ? <span className="admin-video-duration">{Math.round(item.durationSeconds)}s</span> : null}
         </button>
         <div className="admin-video-card-body">
-          <strong title={item.title}>{item.title}</strong>
+          <strong title={item.title}>{friendlyVideoTitle(item)}</strong>
           <span>{item.brandName || '未归属品牌'} · {item.username}</span>
-          <small>{readableDate(item.createdAt)} · {item.variant} · {item.provider}</small>
+          <small>{readableDate(item.createdAt)} · {item.variant === 'STABLE' ? '原片 A' : item.variant === 'DYNAMIC' ? '原片 B' : '生成原片'}</small>
           {item.health?.primary && <details className="admin-video-issue" title={`${item.health.primary.title}：${item.health.primary.detail}。建议：${item.health.primary.nextStep}`}>
             <summary>
               {item.health.severity === 'critical'
@@ -196,7 +204,6 @@ export function AdminVideoReview({ adminId }: { adminId: string }) {
             </div>
           </details>}
           <div className="admin-video-card-actions">
-            <button type="button" className="text-button" onClick={() => setSelected(item)}>播放检查</button>
             <button type="button" className="text-button" onClick={() => setInspected(item)}><Workflow size={14} />查看生产链路</button>
           </div>
         </div>
@@ -210,7 +217,7 @@ export function AdminVideoReview({ adminId }: { adminId: string }) {
       </div>
     </footer> : null}
     <p className="admin-video-note">自动标记仅根据已保存的失败、校验、参考图绑定和耗时记录；手部穿帮、印花变形等画面质量仍需人工检查。失败但没有保存原片的任务请到「运行总览 → 异常处理」查看。只读巡检，不会重新付费生成。</p>
-    {inspected ? <AdminVideoTracePanel key={inspected.artifactId} adminId={adminId} item={inspected} onPlay={() => setSelected(inspected)} onClose={() => setInspected(null)} /> : null}
+    {inspected ? <AdminVideoTracePanel key={inspected.artifactId} adminId={adminId} item={inspected} onPlay={() => { setSelected(inspected); setInspected(null) }} onClose={() => setInspected(null)} /> : null}
     {selected ? <ReviewedVideo key={selected.artifactId} adminId={adminId} item={selected} onClose={() => setSelected(null)} /> : null}
   </section>
 }

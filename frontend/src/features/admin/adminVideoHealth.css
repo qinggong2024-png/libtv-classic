@@ -102,3 +102,31 @@
   .admin-video-attention-heading{display:grid}
   .admin-video-attention-action{display:none}
 }
+
+
+/* Actual desktop acceptance: keep the original filmstrip in the first viewport. */
+.admin-video-review{gap:11px}
+.admin-video-header{align-items:center}
+.admin-video-header h2{font-size:19px;margin:1px 0}
+.admin-video-header p{margin:2px 0 0}
+.admin-video-filters{padding:9px 11px}
+.admin-video-days button{padding:7px 11px}
+.admin-video-filters input{padding:9px}
+.admin-video-attention{padding:10px 13px}
+.admin-video-attention-heading{margin-bottom:3px}
+.admin-video-attention-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.admin-video-attention-row{
+  min-height:54px;padding:7px 9px;border:1px solid var(--line);
+  border-radius:8px
+}
+.admin-video-attention-row + .admin-video-attention-row{border-top:1px solid var(--line)}
+.admin-video-attention-icon{margin-left:0}
+.admin-video-attention-content strong{font-size:13px}
+.admin-video-attention-content small{font-size:11px}
+.admin-video-attention-action{font-size:11px}
+.admin-video-gallery-toolbar{min-height:32px}
+.admin-video-gallery-nav button{padding:6px 10px}
+.admin-video-summary{font-size:11px}
+@media(max-width:740px){
+  .admin-video-attention-list{grid-template-columns:1fr}
+}

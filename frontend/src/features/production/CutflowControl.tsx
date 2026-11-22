@@ -4,7 +4,7 @@ import { ApiError, bindCutflowSourceSite, createCutflowHandoff, fetchAssetObject
 import { CutflowSiteSelect } from './CutflowSiteSelect'
 import { CutflowDiagnostics } from './CutflowDiagnostics'
 import { CutflowVideoThumbnail } from './CutflowVideoThumbnail'
-import { VideoModal } from '../../shared/components/Media'
+import { PortalVideoModal } from '../../shared/components/Media'
 import { GenerationCostBadge } from '../../shared/components/GenerationCostBadge'
 import { cutflowPresentation, cutflowRecoveryHint, cutflowReviewLabel, multiCutflowPresentation } from '../../domain/cutflowPresentation'
 import './cutflow.css'
@@ -238,6 +238,6 @@ export function CutflowControl({ taskId, variantId, artifactId, siteProfileId, c
       {cutflowRecoveryHint(current?.errorCode) ? <small>{cutflowRecoveryHint(current?.errorCode)}</small> : null}
       {current ? <CutflowDiagnostics key={current.id} handoffId={current.id} /> : null}
     </div>
-    {preview ? <VideoModal src={preview.url} title={preview.title} playbackErrorMessage="成片无法播放，请重新预览或下载后查看" onClose={() => setPreview(null)} /> : null}
+    {preview ? <PortalVideoModal src={preview.url} title={preview.title} playbackErrorMessage="成片无法播放，请重新预览或下载后查看" onClose={() => setPreview(null)} /> : null}
   </section>
 }

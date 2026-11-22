@@ -86,6 +86,18 @@ describe('task timing at interruption', () => {
 })
 
 
+describe('compact task timing presentation', () => {
+  it('keeps the full history collapsed and retains meaningful short stages', () => {
+    const markup = renderToStaticMarkup(<TaskTimingTimeline task={task('DELIVERABLE')} />)
+    expect(markup).toContain('task-timing--condensed')
+    expect(markup).toContain('task-timing-compact__steps')
+    expect(markup).toContain('查看详细耗时与各阶段记录')
+    expect(markup).toMatch(/<details class="task-timing-breakdown">/)
+    expect(markup).toContain('实际总耗时')
+    expect(markup).toContain('处理耗时')
+  })
+})
+
 describe('waiting and processing timeline', () => {
   it('shows elapsed, observed processing and stage gaps without inventing parallel duration', () => {
     const source = task('DELIVERABLE')

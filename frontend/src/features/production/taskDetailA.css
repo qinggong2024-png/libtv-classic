@@ -90,3 +90,56 @@
 .app-shell .production-workspace.task-layout-a .task-detail-batch>.task-cut-entry__error{grid-column:1 / -1;margin:0;color:var(--danger);font-size:13px}
 @media(min-width:1600px){.app-shell .production-workspace.task-layout-a .drawer-content{padding:24px 32px}.task-a-delivery__content{grid-template-columns:220px minmax(0,1fr)}.task-a-delivery__preview video{max-height:360px}}
 @media(min-width:1000px) and (max-width:1350px){.task-a-delivery__content{grid-template-columns:150px minmax(0,1fr);gap:16px}.task-a-delivery__result{padding:18px}.app-shell .production-workspace.task-layout-a .task-a-delivery__sources{padding:18px}.task-a-delivery__metadata h3{font-size:17px}}
+
+
+/* Results-first detail refinement verified against the single-clip task screen. */
+@media (min-width: 921px) {
+  .app-shell .production-workspace.task-layout-a .task-original-standard .production-video-result {
+    max-width: 830px;
+    padding: 15px;
+  }
+  .app-shell .production-workspace.task-layout-a .task-original-standard
+  .variant-status--with-selection{
+    grid-template-columns:245px minmax(0,1fr);
+    grid-template-areas:"media details" "media actions";
+    gap:10px 18px;
+    align-items:start;
+  }
+  .app-shell .production-workspace.task-layout-a .task-original-standard
+  .variant-status--with-selection > .variant-status__media {
+    grid-area:media;
+    display:flex;
+    flex-direction:column;
+    align-items:flex-start;
+    gap:10px;
+  }
+  .app-shell .production-workspace.task-layout-a .task-original-standard
+  .variant-status--with-selection .variant-result-preview {
+    width:100%;
+    max-width:245px;
+    height:auto;
+    max-height:350px;
+    aspect-ratio:9/16;
+  }
+  .app-shell .production-workspace.task-layout-a .task-original-standard
+  .variant-status--with-selection > div:nth-child(2) {
+    grid-area:details;
+    min-width:0;
+    align-self:end;
+  }
+  .app-shell .production-workspace.task-layout-a .task-original-standard
+  .variant-status--with-selection > .variant-status-actions {
+    grid-area:actions;
+    align-self:start;
+    justify-self:start;
+  }
+  .app-shell .production-workspace.task-layout-a .task-original-standard
+  .variant-status--with-selection .task-direct-cut-button {
+    width:100%;
+    max-width:245px;
+  }
+}
+.app-shell .production-workspace.task-layout-a
+.task-adaptive-cut--ready .task-adaptive-cut__body > small { display:none; }
+.app-shell .production-workspace.task-layout-a .task-a-originals
+.task-detail-section__heading > p { font-size:11px; }

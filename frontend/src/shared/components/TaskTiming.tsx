@@ -1,6 +1,6 @@
 // 本文件由 App.tsx 拆分生成（2026-09-28 前端架构拆分 v2）。
 // 代码为逐字搬运，未经逻辑改写。
-import { AlertTriangle, Check, CircleHelp, LoaderCircle, Pause, X } from 'lucide-react'
+import { AlertTriangle, Check, ChevronDown, CircleHelp, LoaderCircle, Pause, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { type Task } from '../../types'
 import type { CutflowHandoff, MultiCutflowTask } from '../../api'
@@ -237,8 +237,44 @@ export function TaskTimingTimeline({ task, cutflowStates = {}, multiCutflows = [
   const confirmationStage = confirmationVisible ? stagesByKey.get('CONFIRMATION') : undefined
   const confirmationSeconds = confirmationStage ? stageElapsedSeconds(confirmationStage, now) ?? 0 : 0
 
-  return <section className="task-timing" aria-labelledby="task-timing-title">
-    <header className="task-timing-header">
+  const generationMiniStatus = stagesByKey.get('GENERATION')?.status
+    ?? (task.variants.some(variant => variant.downloadArtifactId) ? 'COMPLETED' : 'PENDING')
+  const analysisMiniStatus = stagesByKey.get('ANALYSIS')?.status
+    ?? (generationMiniStatus !== 'PENDING' ? 'COMPLETED' : 'PENDING')
+  const miniStages = [
+    { key: 'analysis', label: '分析', status: analysisMiniStatus },
+    { key: 'generation', label: '生成', status: generationMiniStatus },
+    ...(latestMultiCutflow || cutflowVariants.length
+      ? [{ key: 'cutflow', label: '剪辑', status: cutflowStatus }]
+      : []),
+  ]
+  const mainStatus = showCutflowHeading ? cutflowLabel
+    : currentStage ? providerTimingStageLabel(currentStage.key, task.generationProvider)
+      : taskStatus(task).label
+  const miniStatusClass = (status: string) => {
+    if (status === 'COMPLETED') return 'is-complete'
+    if (status === 'ACTIVE') return 'is-current'
+    if (['UNKNOWN', 'INTERRUPTED', 'FAILED', 'CANCELLED'].includes(status)) return 'is-issue'
+    return 'is-pending'
+  }
+
+  return <section className="task-timing task-timing--condensed" aria-labelledby="task-timing-title">
+    <div className="task-timing-compact">
+      <div className="task-timing-compact__status">
+        <span>制作状态</span>
+        <strong id="task-timing-title">{mainStatus}</strong>
+        <small>总历时 {totalSeconds !== null ? formatDurationSeconds(totalSeconds) : '未完整记录'}</small>
+      </div>
+      <ol className="task-timing-compact__steps" aria-label="制作阶段概览">
+        {miniStages.map(step => <li key={step.key} className={miniStatusClass(step.status)}>
+          <span className="task-timing-compact__mark" aria-hidden="true" />
+          <span>{step.label}</span>
+        </li>)}
+      </ol>
+    </div>
+    <details className="task-timing-breakdown">
+      <summary><span>查看详细耗时与各阶段记录</span><ChevronDown size={15} aria-hidden="true" /></summary>
+      <header className="task-timing-header">
       <div>
         <span>{showCutflowHeading ? cutflowStatus === 'ACTIVE' ? '当前阶段' : '剪辑状态' : activeStage ? '当前阶段' : stoppedStage ? '停止阶段' : COMPLETED_PHASES.has(task.phase) ? cutflowStatus === 'PENDING' && cutflowVariants.length ? '视频生成完成' : '任务已完成' : task.phase === 'PARTIALLY_DELIVERABLE' ? '部分结果已就绪' : '执行状态'}</span>
         <h3 id="task-timing-title">
@@ -288,5 +324,6 @@ export function TaskTimingTimeline({ task, cutflowStates = {}, multiCutflows = [
         <span className="task-timing-duration">{cutflowLabel}{editingHasTiming ? ` · ${formatCompactDurationSeconds(editingSeconds)}` : ''}</span>
       </li> : null}
     </ol>
+    </details>
   </section>
 }

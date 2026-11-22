@@ -74,7 +74,7 @@ export function TaskThumb({ task, large = false }: { task: Task; large?: boolean
 }
 
 /** 全站共用视频弹窗，供原片和剪辑成片复用。 */
-export function VideoModal({ src, title, loadError, playbackErrorMessage = '视频无法播放，请重新打开或下载后查看', onClose, onPlaying }: { src?: string; title: string; loadError?: string; playbackErrorMessage?: string; onClose: () => void; onPlaying?: () => void }) {
+export function VideoModal({ src, title, loadError, playbackErrorMessage = '视频无法播放，请重新打开或下载后查看', onClose, onPlaying, aspectRatioHint }: { src?: string; title: string; loadError?: string; playbackErrorMessage?: string; onClose: () => void; onPlaying?: () => void; aspectRatioHint?: number | null }) {
   const [playbackError, setPlaybackError] = useState<{ src: string | undefined; message: string } | null>(null)
   const [mediaSize, setMediaSize] = useState<{ src: string; ratio: number } | null>(null)
   if (playbackError && playbackError.src !== src) setPlaybackError(null)
@@ -82,15 +82,16 @@ export function VideoModal({ src, title, loadError, playbackErrorMessage = '视�
   useDismiss(true, onClose, dialogRef)
   const failure = loadError || (playbackError?.src === src ? playbackError?.message : '')
   const hasMedia = Boolean(src && !failure)
-  const mediaRatio = src && mediaSize?.src === src ? mediaSize.ratio : null
-  const fittedWidth = mediaRatio ? `min(calc((100dvh - 110px) * ${mediaRatio}), calc(100vw - 32px), 1080px)` : undefined
-  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+  const mediaRatio = src && mediaSize?.src === src ? mediaSize.ratio
+    : aspectRatioHint && Number.isFinite(aspectRatioHint) && aspectRatioHint > 0 ? aspectRatioHint : null
+  const fittedWidth = mediaRatio ? `min(calc((100dvh - 176px) * ${mediaRatio}), calc(100vw - 40px), 1080px)` : undefined
+  return <div className="modal-backdrop video-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <section ref={dialogRef} className="video-modal video-modal--content-fit" role="dialog" aria-modal="true" aria-labelledby="video-title"
       style={{ width: fittedWidth ?? 'min(340px, calc(100vw - 32px))', minWidth: 0, maxWidth: 'calc(100vw - 32px)', maxHeight: 'calc(100dvh - 24px)', gridTemplateColumns: 'minmax(0, 1fr)' }}>
       <header><div><span>视频预览</span><h2 id="video-title">{title}</h2></div><button className="icon-button" onClick={onClose} aria-label="关闭预览"><X size={19} /></button></header>
       {/* Keep main's native-ratio preview even in classic builds without its CSS. */}
       <div className={`video-stage video-stage--content-fit${hasMedia ? ' has-media' : ''}`}
-        style={{ width: fittedWidth ?? 'min(340px, calc(100vw - 32px))', height: mediaRatio ? 'auto' : 'min(60dvh, 420px)', minWidth: 0, maxWidth: '100%', maxHeight: 'calc(100dvh - 110px)', aspectRatio: mediaRatio ? String(mediaRatio) : 'auto', background: hasMedia ? '#10151d' : 'var(--surface-soft)', color: 'var(--primary)' }}>
+        style={{ width: fittedWidth ?? 'min(340px, calc(100vw - 32px))', height: mediaRatio ? 'auto' : 'min(60dvh, 420px)', minWidth: 0, maxWidth: '100%', maxHeight: 'calc(100dvh - 166px)', aspectRatio: mediaRatio ? String(mediaRatio) : 'auto', background: hasMedia ? '#10151d' : 'var(--surface-soft)', color: 'var(--primary)' }}>
         {failure
           ? <div className="video-error" style={{ maxWidth: 310, padding: 24, color: 'var(--danger)', textAlign: 'center' }}><AlertTriangle size={24} /><strong>{failure}</strong></div>
           : src
@@ -105,12 +106,17 @@ export function VideoModal({ src, title, loadError, playbackErrorMessage = '视�
 }
 
 /** CUT media uses the exact same video dialog as generated clips, with authenticated blob loading. */
+/** Keep the player above task drawers and inspection panels, never inside clipped content. */
+export function PortalVideoModal(props: Parameters<typeof VideoModal>[0]) {
+  return createPortal(<VideoModal {...props} />, document.body)
+}
+
 export function RemoteVideoPreview({ mediaUrl, title, onClose, onPlaying }: { mediaUrl: string; title: string; onClose: () => void; onPlaying?: () => void }) {
   const { url, error } = useMediaObjectUrl(mediaUrl, fetchAssetObjectUrl, '剪辑成片加载失败')
-  return createPortal(<VideoModal src={url} title={title} loadError={error} onClose={onClose} onPlaying={onPlaying} />, document.body)
+  return <PortalVideoModal src={url} title={title} loadError={error} onClose={onClose} onPlaying={onPlaying} />
 }
 
 export function VideoPreview({ artifactId, title, onClose }: { artifactId: string; title: string; onClose: () => void }) {
   const { url, error } = useMediaObjectUrl(artifactId, fetchArtifactObjectUrl, '视频加载失败')
-  return <VideoModal src={url} title={title} loadError={error} onClose={onClose} />
+  return <PortalVideoModal src={url} title={title} loadError={error} onClose={onClose} />
 }

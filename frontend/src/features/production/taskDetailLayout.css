@@ -480,3 +480,104 @@
     width: min(100%, 260px);
   }
 }
+
+
+/* Keep the task detail focused on its output; diagnostics open on demand. */
+.task-timing--condensed {
+  overflow: visible;
+  box-shadow: none;
+  border-color: var(--line);
+}
+.task-timing-compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 13px 16px 11px;
+}
+.task-timing-compact__status {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+.task-timing-compact__status > span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.task-timing-compact__status > strong {
+  font-size: 14px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.task-timing-compact__status > small {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+.task-timing-compact__steps {
+  display: flex;
+  flex: 0 1 290px;
+  min-width: 170px;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.task-timing-compact__steps li {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  padding-top: 7px;
+  border-top: 2px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}
+.task-timing-compact__mark {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.task-timing-compact__steps li.is-complete {
+  border-top-color: var(--success);
+  color: var(--text-secondary);
+}
+.task-timing-compact__steps li.is-current {
+  border-top-color: var(--primary);
+  color: var(--primary);
+  font-weight: 700;
+}
+.task-timing-compact__steps li.is-issue {
+  border-top-color: var(--warning);
+  color: var(--warning);
+}
+.task-timing-breakdown {
+  border-top: 1px solid var(--line);
+}
+.task-timing-breakdown > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  padding: 9px 16px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.task-timing-breakdown > summary::-webkit-details-marker { display: none; }
+.task-timing-breakdown > summary svg {
+  color: var(--muted);
+  transition: transform .15s ease;
+}
+.task-timing-breakdown[open] > summary svg { transform: rotate(180deg); }
+.task-timing-breakdown .task-timing-header { background: var(--surface-soft); }
+@media (max-width: 760px) {
+  .task-timing-compact { flex-wrap: wrap; padding: 12px; }
+  .task-timing-compact__steps { flex: 1 1 100%; }
+}

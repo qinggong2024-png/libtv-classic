@@ -98,7 +98,7 @@ it('leaves a normal video visually quiet while keeping review access', async () 
   expect(view.host.querySelector('.admin-video-card')?.className).toBe('admin-video-card')
   expect(view.host.querySelector('.admin-video-issue')).toBeNull()
   expect(view.host.querySelector('.admin-video-health-badge')).toBeNull()
-  expect(view.host.textContent).toContain('播放检查')
+  expect(view.host.querySelector('.admin-video-preview[aria-label^="播放视频"]')).not.toBeNull()
   expect(view.host.textContent).toContain('查看生产链路')
   expect(view.host.textContent).not.toContain('暂未发现链路异常 · 画面仍需人工检查')
 })
@@ -145,6 +145,19 @@ it('shows a warning as one understated explanation row instead of multiple badge
     .find(button => button.textContent?.includes('1 条需要检查'))
   await act(async () => { warningQueue?.click(); await Promise.resolve() })
   expect(getAdminVideos).toHaveBeenLastCalledWith('administrator-id', 7, 0, '', '', 'warning', 'priority')
+})
+
+it('replaces opaque historical generation hashes with readable clip labels', async () => {
+  const opaque = 'ccad70e00dc676af8c54d3d757a62057f14521d74e753ad5b2ec0c5a43ced089-output'
+  vi.mocked(getAdminVideos).mockResolvedValue({
+    ...data,
+    items: data.items.map(item => ({ ...item, title: opaque })),
+  })
+  view = await mount(<AdminVideoReview adminId="administrator-id" />)
+  await act(async () => { await Promise.resolve() })
+  expect(view.host.querySelector('.admin-video-card-body > strong')?.textContent).toContain('Pagewings · 原片')
+  expect(view.host.querySelector('.admin-video-card-body > strong')?.textContent).not.toContain('ccad70e00d')
+  expect(view.host.querySelector('.admin-video-card-body > strong')?.getAttribute('title')).toBe(opaque)
 })
 
 it('shows an owner-labelled video and a review control without any editing action', async () => {

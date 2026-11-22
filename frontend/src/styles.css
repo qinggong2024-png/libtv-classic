@@ -1246,6 +1246,8 @@ main { min-height: 100dvh; }
 .reuse-controls .primary-button { white-space: nowrap; }
 
 .modal-backdrop { z-index: var(--z-modal); align-items: center; justify-content: center; padding: clamp(12px, 2dvh, 20px); overflow: auto; overscroll-behavior: contain; }
+.video-modal-backdrop { z-index: 1500; }
+.video-modal-backdrop .video-modal--content-fit header { min-height: 54px; }
 .video-modal { width: min(1080px, 100%); max-height: calc(100dvh - clamp(24px, 4dvh, 40px)); display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border-radius: 10px; background: #fff; box-shadow: var(--shadow-md); }
 .video-modal header { min-height: 66px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 15px; border-bottom: 1px solid var(--line); }
 .video-modal header > div { min-width: 0; display: grid; gap: 2px; }

@@ -103,14 +103,14 @@ describe('video blob cancellation fault injection', () => {
     await view.render(<VideoPreview artifactId="b" title="Video" onClose={() => {}} />)
     await act(async () => { a.resolve('blob:stale-a'); b.reject(new Error('injected download fault')) })
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:stale-a')
-    expect(view.host.textContent).toContain('视频加载失败')
+    expect(document.body.textContent).toContain('视频加载失败')
     await view.render(<VideoPreview artifactId="a" title="Video" onClose={() => {}} />)
-    expect(view.host.textContent).not.toContain('视频加载失败')
-    expect(view.host.querySelector('video')?.getAttribute('src')).toBe('blob:artifact')
+    expect(document.body.textContent).not.toContain('视频加载失败')
+    expect(document.querySelector('video')?.getAttribute('src')).toBe('blob:artifact')
     const c = deferred<string>()
     vi.mocked(fetchArtifactObjectUrl).mockReturnValue(c.promise)
     await view.render(<VideoPreview artifactId="c" title="Video" onClose={() => {}} />)
-    expect(view.host.querySelector('video')).toBeNull()
+    expect(document.querySelector('video')).toBeNull()
     await view.render(<VideoPreview artifactId="a" title="Video" onClose={() => {}} />)
     expect(view.host.querySelector('video')).toBeNull()
     await view.render(null)
@@ -164,6 +164,18 @@ describe('native player focus and presentation', () => {
     expect(document.activeElement).toBe(trigger)
     expect(document.querySelector('[data-dismiss-focus-guard]')).toBeNull()
     trigger.remove()
+  })
+  it('uses a known portrait ratio before metadata and portals the shared player', async () => {
+    const { PortalVideoModal } = await import('./Media')
+    view = await mount(<div className="clipped-parent">
+      <PortalVideoModal src="blob:known" title="巡检原片" aspectRatioHint={9 / 16} onClose={() => {}} />
+    </div>)
+    const modal = document.querySelector<HTMLElement>('.video-modal')!
+    expect(modal).not.toBeNull()
+    expect(view.host.querySelector('.video-modal')).toBeNull()
+    expect(modal.style.width).toContain('56.25dvh - 99px')
+    expect(modal.querySelector<HTMLElement>('.video-stage')?.style.maxHeight).toContain('166px')
+    expect(modal.querySelector('video')?.getAttribute('controls')).not.toBeNull()
   })
   it('fits portrait and landscape media to the same dialog without a spare column', async () => {
     const longTitle = 'Woman_smiling_at_Christmas_party_4e119493_2K · 11/13 12:14 · 结果 1'
