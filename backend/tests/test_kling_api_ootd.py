@@ -145,12 +145,19 @@ def test_native_format_when_integer_shots_are_fully_grounded() -> None:
 
 
 @pytest.mark.parametrize("prompt,duration", [
-    ("镜头一0-3.2秒：整理。镜头二3.2-10秒：展示。", 10),
+    ("镜头一0-3.5秒：整理。镜头二3.5-10秒：展示。", 10),  # Ambiguous half-second.
+    ("镜头一0-3.49秒：整理。镜头二3.49-10秒：展示。", 10),
     ("镜头一0-4秒：整理。镜头二5-10秒：展示。", 10),
+    ("镜头一0-4秒：整理。镜头二3.9-10秒：展示。", 10),
     ("镜头一0-4秒：整理。镜头二4-9秒：展示。", 10),
+    ("镜头一0-0.8秒：整理。镜头二0.8-10秒：展示。", 10),
+    ("镜头一0-3秒：整理。镜头三3-10秒：展示。", 10),
+    ("镜头一0-3秒：整理。镜头二3-10秒：展示。镜头三：缺少时间。", 10),
     ("模特整理衣服，直接切镜再展示。", 10),
+    ("00:00–00:61秒：整理。\n00:61–00:10秒：展示。", 10),
+    ("0–3秒：整理。\n3–10秒：展示。\n补充0–2秒：只是一句说明。", 10),
 ])
-def test_unstructured_or_fractional_timings_are_not_rewritten(prompt: str, duration: int) -> None:
+def test_ambiguous_or_incomplete_timings_are_not_rewritten(prompt: str, duration: int) -> None:
     assert _native_shots_if_safe(prompt, duration) == prompt
 
 
@@ -261,3 +268,87 @@ async def test_native_formatter_overflow_reverts_just_native_stage(
     request = _request(tmp_path, prompt)
     sent = (await _adapter(tmp_path).build_request_payload(request))["contents"][0]["text"]
     assert sent == "@image_1清楚展示衣服。"
+
+
+@pytest.mark.parametrize("source, expected", [
+    ("镜头一0–3.2 秒：正面。镜头二3.2–10秒：印花。",
+     ("shot 1, 3,", "shot 2, 7,")),
+    ("0.0–2.6秒：正面。\n2.6–6.4秒：印花。\n6.4–10.0秒：整体穿搭。",
+     ("shot 1, 3,", "shot 2, 3,", "shot 3, 4,")),
+    ("10秒自然手机拍摄。\n\n0.0–3.2秒：首帧人物站稳。\n3.2–10.0秒：DIRECT CUT 印花近景。",
+     ("shot 1, 3,", "shot 2, 7,")),
+    ("00:00–00:03.2｜首帧正面。\n00:03.2–00:10｜切镜印花。",
+     ("shot 1, 3,", "shot 2, 7,")),
+    ("00:00–00:03.2秒：正面。\n00:03.2–00:10.0秒：印花。",
+     ("shot 1, 3,", "shot 2, 7,")),
+    ("镜头1（0–3.2秒）：正面。镜头2（3.2–10秒）：印花。",
+     ("shot 1, 3,", "shot 2, 7,")),
+    ("分镜1：0–3秒：正面。分镜2：3–10秒：印花。",
+     ("shot 1, 3,", "shot 2, 7,")),
+    ("第1镜头0–3秒：正面。第2镜头3–10秒：印花。",
+     ("shot 1, 3,", "shot 2, 7,")),
+    ("Shot 1 (0–3s): Front print. Shot 2 (3–10s): Full outfit.",
+     ("shot 1, 3,", "shot 2, 7,")),
+    ("镜头①（0–3秒）：正面。镜头②（3–10秒）：印花。",
+     ("shot 1, 3,", "shot 2, 7,")),
+    ("- 0–3秒：正面。\n- 3–10秒：印花。",
+     ("shot 1, 3,", "shot 2, 7,")),
+    ("自然手持拍摄。0.0–3.2秒：正面。3.2–10秒：切镜印花。",
+     ("shot 1, 3,", "shot 2, 7,")),
+    ("0秒至3秒：正面。\n3秒至10秒：印花。",
+     ("shot 1, 3,", "shot 2, 7,")),
+])
+def test_realistic_sol_timeline_formats(source: str, expected: tuple[str, ...]) -> None:
+    result = _native_shots_if_safe(source, 10)
+    assert result.startswith(expected[0])
+    for piece in expected:
+        assert piece in result
+    assert "印花" in result or "Full outfit" in result
+
+
+@pytest.mark.parametrize("prompt, duration", [
+    ("0.0–2.5秒：正面。\n2.5–10秒：印花。", 10),
+    ("0–2秒：正面。\n2.1–10秒：印花。", 10),
+    ("0–3秒：正面。\n2.9–10秒：印花。", 10),
+    ("镜头一0–3秒：正面。\n镜头二4–10秒：印花。", 10),
+    ("0–0.9秒：正面。\n0.9–10秒：印花。", 10),
+    ("0–3.49秒：正面。\n3.49–10秒：印花。", 10),
+    ("0–3秒：正面。\n3–11秒：印花。", 10),
+    ("0–9.6秒：正面。\n9.6–10秒：印花。", 10),
+    ("0–3秒：正面。\n3–10秒：印花。\n旁白再提 0–3 秒。", 10),
+    ("0–3秒：正面。\n3–10秒：印花。\n镜头三：缺少时长", 10),
+    ("0–3秒：正面。\n3–10秒：印花。" + "额外说明" * 600, 10),
+])
+def test_unsafe_sol_timeline_falls_back_without_truncation(
+    prompt: str, duration: int
+) -> None:
+    assert _native_shots_if_safe(prompt, duration) == prompt
+
+
+@pytest.mark.asyncio
+async def test_decimal_bare_sol_shots_and_image_refs_are_independent(
+    tmp_path: Path,
+) -> None:
+    prompt = (
+        "10秒真实美式UGC拍摄。\n"
+        "0.0–3.2秒：图一是唯一首帧，人物自然展示正面服装。\n"
+        "3.2–10.0秒：直接切镜，参考图片2展示完整印花。"
+    )
+    request = _request(tmp_path, prompt, count=1, products=1, duration=10,
+                       profile="allwe-ootd-sol-dynamic-display-v1")
+    result = (await _adapter(tmp_path).build_request_payload(request))["contents"][0]["text"]
+    assert result.startswith("shot 1, 3,")
+    assert "shot 2, 7," in result
+    assert "@image_1" in result and "@image_2" in result
+    assert request.prompt == prompt
+
+
+@pytest.mark.asyncio
+async def test_unsafe_decimal_shot_still_preserves_image_normalization(
+    tmp_path: Path,
+) -> None:
+    prompt = "0–3.5秒：图一正面。\n3.5–10秒：图片2印花。"
+    request = _request(tmp_path, prompt, profile="allwe-ootd-sol-dynamic-display-v1")
+    result = (await _adapter(tmp_path).build_request_payload(request))["contents"][0]["text"]
+    assert "shot 1" not in result
+    assert result == prompt.replace("图一", "@image_1").replace("图片2", "@image_2")

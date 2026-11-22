@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from libtv_agent.adapters.video_provider import VideoGenerationRequest
 
@@ -20,12 +21,31 @@ _LOG = logging.getLogger(__name__)
 _IMAGE_TOKEN = re.compile(r"@image_?(\d+)(?!\d)|图片?(\d+|[一二三四五六七八九十]+)(?![\d一二三四五六七八九十])")
 _IMAGE_CHINESE_INDEX = {name: index for index, name in enumerate("一二三四五六七八九", 1)}
 _IMAGE_CHINESE_INDEX["十"] = 10
-_SHOT_HEADING = re.compile(
-    r"镜头([一二三四五六1-6])\s*"
-    r"(\d+)\s*[-–—~至]\s*(\d+)\s*秒\s*[:：]?"
+# Sol's real OOTD drafts mostly use line-leading unnumbered decimal ranges;
+# some use numbered shots or minute:second timestamps. Recognize these formats
+# without forcing Sol to write a rigid schema or changing its creative prompt.
+_TIME_TOKEN = r"(?:(?:\d{1,2}:){1,2}\d{1,2}(?:\.\d+)?|\d+(?:\.\d+)?)"
+_TIME_RANGE = (
+    rf"(?P<start>{_TIME_TOKEN})[ \t]*(?:秒)?[ \t]*[-–—－~～至到][ \t]*"
+    rf"(?P<end>{_TIME_TOKEN})(?![\d.])[ \t]*(?:秒钟?|[sS](?:ec(?:onds?)?)?)?"
 )
-_SHOT_MARK = re.compile(r"镜头[一二三四五六1-6]")
+_HEADING_END = r"[ \t]*[）)\]】]?[ \t]*(?:[:：｜|、][ \t]*)?"
+_NUMBERED_HEADING = re.compile(
+    r"(?:(?:镜头|分镜|(?i:shot))[ \t]*(?P<number>[一二三四五六1-6①②③④⑤⑥])"
+    r"|第[ \t]*(?P<ordinal>[一二三四五六1-6])[ \t]*(?:镜头|分镜))"
+    r"[ \t:：｜|（(\[【、]*" + _TIME_RANGE + _HEADING_END
+)
+_BARE_HEADING = re.compile(
+    r"(?m)(?:^|(?<=[。；;]))[ \t]*(?:[-*•][ \t]+)?" + _TIME_RANGE + _HEADING_END
+)
+_ANY_TIME_RANGE = re.compile(_TIME_RANGE)
+_SHOT_MARK = re.compile(
+    r"(?m)(?:^|(?<=[。；;\n]))[ \t]*(?:(?:镜头|分镜|(?i:shot))[ \t]*"
+    r"[一二三四五六1-6①②③④⑤⑥]|第[ \t]*[一二三四五六1-6][ \t]*(?:镜头|分镜))"
+)
 _CHINESE_INDEX = {name: i for i, name in enumerate("一二三四五六", 1)}
+_CIRCLED_INDEX = {name: i for i, name in enumerate("①②③④⑤⑥", 1)}
+_MAX_CUT_ADJUSTMENT = Decimal("0.4")  # At most 0.4 second drift per cut.
 
 
 def _ootd_role_header(request: VideoGenerationRequest) -> str:
@@ -49,36 +69,92 @@ def _ootd_role_header(request: VideoGenerationRequest) -> str:
     return f"{guard}\n\n{request.prompt}"
 
 
-def _native_shots_if_safe(prompt: str, duration: int | None) -> str:
-    """Convert fully timed integer shots; otherwise keep every Sol word intact.
+def _time_seconds(token: str) -> Decimal:
+    """Parse plain seconds or MM:SS[.fraction], without floating-point drift."""
+    fields = token.split(":")
+    if len(fields) > 3:
+        raise ValueError("unsupported timecode")
+    total = Decimal(0)
+    for index, part in enumerate(fields):
+        value = Decimal(part)
+        if index > 0 and value >= 60:
+            raise ValueError("timecode second/minute exceeds 59")
+        total = total * 60 + value
+    return total
 
-    Never round fractional timestamps, guess missing time spans, drop a preamble,
-    invent a shot, or truncate words to satisfy the 512-char shot limit.
+
+def _native_shots_if_safe(prompt: str, duration: int | None) -> str:
+    """Loss-aware Sol timeline -> Kling whole-second native shot conversion.
+
+    Supports explicit numbered shots and Sol's actual bare-line decimal/clock
+    timelines. Never invent missing cuts, accept overlapping/gapped shots,
+    alter creative descriptions or force an ambiguous rounding choice.
+    Return the unchanged input whenever the transformation is not provably safe.
     """
-    if duration is None:
+    if duration is None or not isinstance(duration, int) or duration < 2:
         return prompt
-    matches = list(_SHOT_HEADING.finditer(prompt))
-    if not 2 <= len(matches) <= 6 or len(_SHOT_MARK.findall(prompt)) != len(matches):
-        return prompt
-    converted: list[str] = []
-    previous_end = 0
-    for index, match in enumerate(matches, 1):
-        number = _CHINESE_INDEX.get(match.group(1), match.group(1))
-        start, end = int(match.group(2)), int(match.group(3))
-        if int(number) != index or start != previous_end or end <= start:
+    try:
+        headings = sorted(
+            [*_NUMBERED_HEADING.finditer(prompt), *_BARE_HEADING.finditer(prompt)],
+            key=lambda match: match.start(),
+        )
+        if not 2 <= len(headings) <= 6:
             return prompt
-        stop = matches[index].start() if index < len(matches) else len(prompt)
-        text = prompt[match.end():stop].strip()
-        if index == 1:
-            text = (prompt[:match.start()].strip() + " " + text).strip()
-        text = text.rstrip("；; ")
-        if not text or len(text) > 512:
+        if any(a.end() > b.start() for a, b in zip(headings, headings[1:])):
             return prompt
-        converted.append(f"shot {index}, {end - start}, {text}")
-        previous_end = end
-    if previous_end != duration:
+        # If a different time-range syntax or unnumbered shot was missed, do
+        # not silently attach its words to a neighboring shot.
+        if len(list(_ANY_TIME_RANGE.finditer(prompt))) != len(headings):
+            return prompt
+        if any(
+            not any(mark.start() >= shot.start() and mark.start() < shot.end()
+                    for shot in headings)
+            for mark in _SHOT_MARK.finditer(prompt)
+        ):
+            return prompt
+
+        labels: list[str] = []
+        edges: list[Decimal] = [Decimal(0)]
+        for index, match in enumerate(headings, 1):
+            number = match.groupdict().get("number") or match.groupdict().get("ordinal")
+            if number:
+                number = _CHINESE_INDEX.get(number, _CIRCLED_INDEX.get(number, number))
+                if int(number) != index:
+                    return prompt
+            start = _time_seconds(match.group("start"))
+            end = _time_seconds(match.group("end"))
+            if start != edges[-1] or end <= start or end - start < 1:
+                return prompt
+            if end > duration:
+                return prompt
+            finish = headings[index].start() if index < len(headings) else len(prompt)
+            description = prompt[match.end():finish].strip().rstrip("；; ")
+            if index == 1:
+                description = (prompt[:match.start()].strip() + " " + description).strip()
+            if not description or len(description) > 512:
+                return prompt
+            labels.append(description)
+            edges.append(end)
+        if edges[-1] != duration:
+            return prompt
+
+        whole: list[int] = [0]
+        for endpoint in edges[1:-1]:
+            rounded = endpoint.to_integral_value(rounding=ROUND_HALF_UP)
+            if abs(endpoint - rounded) > _MAX_CUT_ADJUSTMENT:
+                return prompt
+            whole.append(int(rounded))
+        whole.append(duration)
+        if any(end - start < 1 for start, end in zip(whole, whole[1:])):
+            return prompt
+        return "; ".join(
+            f"shot {index}, {end - start}, {description}"
+            for index, (start, end, description) in enumerate(
+                zip(whole, whole[1:], labels), 1
+            )
+        ) + ";"
+    except (InvalidOperation, ValueError, OverflowError, AttributeError):
         return prompt
-    return "; ".join(converted) + ";"
 
 
 def _normalize_image_refs_if_safe(prompt: str, request: VideoGenerationRequest) -> str:
