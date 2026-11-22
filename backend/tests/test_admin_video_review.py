@@ -8,6 +8,7 @@ from libtv_agent.domain.models import (
     DownloadArtifact,
     GenerationAttempt,
     GenerationVariant,
+    MultiCutflowTask,
     ParentTask,
     User,
 )
@@ -38,7 +39,13 @@ async def test_admin_recent_video_listing_and_cross_owner_media_are_read_only(
             )
             session.add(variant)
             await session.flush()
-            attempt = GenerationAttempt(variant_id=variant.id, status=AttemptStatus.SUCCEEDED)
+            submitted = datetime.now(UTC) - timedelta(days=i, minutes=2)
+            attempt = GenerationAttempt(
+                variant_id=variant.id,
+                status=AttemptStatus.SUCCEEDED,
+                submitted_at=submitted,
+                completed_at=submitted + timedelta(seconds=90),
+            )
             session.add(attempt)
             await session.flush()
             artifact = DownloadArtifact(
@@ -51,6 +58,13 @@ async def test_admin_recent_video_listing_and_cross_owner_media_are_read_only(
             session.add(artifact)
             await session.flush()
             art_ids.append((parent.id, artifact.id))
+        session.add(MultiCutflowTask(
+            user_id=ids["other"],
+            idempotency_key="quality-review-failure-test",
+            payload_hash="a" * 64,
+            sources_json=[{"artifactId": str(art_ids[1][1])}],
+            status="FAILED",
+        ))
         await session.commit()
 
     monkeypatch.setattr(app.state.object_store, "localize", AsyncMock(return_value=saved))
@@ -62,6 +76,18 @@ async def test_admin_recent_video_listing_and_cross_owner_media_are_read_only(
     assert {r["username"] for r in result["items"]} == {"member", "other"}
     assert {r["brandName"] for r in result["items"]} == {"品牌 A", "品牌 B"}
     assert all("object_key" not in r for r in result["items"])
+    assert result["healthSummary"] == {"critical": 1, "warning": 0, "normal": 1}
+    assert result["items"][0]["health"]["primary"]["code"] == "CUT_FAILED"
+    assert result["items"][0]["username"] == "other"
+    assert result["items"][0]["health"]["primary"]["stage"] == "CUT 送剪"
+    flagged = await client.get(BASE, headers=root, params={"health": "critical"})
+    assert flagged.status_code == 200
+    assert flagged.json()["total"] == 1
+    assert flagged.json()["items"][0]["health"]["severity"] == "critical"
+    normal = await client.get(BASE, headers=root, params={"health": "normal"})
+    assert normal.json()["total"] == 1
+    newest = await client.get(BASE, headers=root, params={"sort": "newest"})
+    assert newest.json()["items"][0]["title"] == "quality-0"
 
     narrow = await client.get(BASE, headers=root, params={"days": 7, "search": "quality-0"})
     assert narrow.json()["total"] == 1
@@ -102,7 +128,8 @@ async def test_other_accounts_cannot_enumerate_or_play_admin_videos(account_app)
                      f"{BASE}/{uuid.uuid4()}/thumbnail"):
             response = await client.get(path, headers=actor(ids, who))
             assert response.status_code == 403, response.text
-    for params in ({"days": 100}, {"limit": 100}, {"search": "x" * 81}):
+    for params in ({"days": 100}, {"limit": 100}, {"search": "x" * 81},
+                   {"health": "invalid"}, {"sort": "invalid"}):
         response = await client.get(BASE, headers=actor(ids, "root"), params=params)
         assert response.status_code == 422
     async with app.state.database.session_factory() as session:

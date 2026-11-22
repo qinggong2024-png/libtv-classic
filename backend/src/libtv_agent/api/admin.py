@@ -938,6 +938,8 @@ async def admin_recent_videos(
     offset: int = Query(default=0, ge=0, le=10000),
     search: str = Query(default="", max_length=80),
     brand_id: uuid.UUID | None = None,
+    health: Literal['all', 'critical', 'warning', 'normal'] = 'all',
+    sort: Literal['priority', 'newest'] = 'priority',
 ) -> dict[str, Any]:
     _require_management_admin(actor)
     if days not in {1, 7, 30, 90}:
@@ -945,6 +947,7 @@ async def admin_recent_videos(
     return await list_admin_videos(
         session, days=days, limit=limit, offset=offset,
         search=search, brand_id=brand_id,
+        health_filter=health, sort=sort,
     )
 
 

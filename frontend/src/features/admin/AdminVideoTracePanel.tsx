@@ -88,6 +88,16 @@ export function AdminVideoTracePanel({ adminId, item, onPlay, onClose }: {
       {error && <p role="alert" className="service-alert">{error}</p>}
       {!trace && !error && <div role="status" className="admin-trace-wait">正在读取原始编排和阶段时间记录…</div>}
       {trace && <div className="admin-trace-body">
+        {item.health?.reasons.length ? <section className="admin-trace-health" aria-label="发现的异常环节">
+          <h3>系统发现 {item.health.reasons.length} 项需要关注的链路记录</h3>
+          {item.health.reasons.map(issue => <div key={issue.code} className={`admin-trace-health-issue is-${issue.level}`}>
+            <strong>{issue.title} · {issue.stage}</strong>
+            <p>{issue.detail}</p>
+            <p><b>建议：</b>{issue.nextStep}</p>
+            <small>判断依据：{issue.evidence}</small>
+          </div>)}
+          <p className="admin-trace-health-hint">只依据系统记录标记；不能代表已经自动检测出视频画面的穿帮或印花问题。</p>
+        </section> : null}
         <section className="admin-trace-quick">
           <div><small>编排方式</small><strong>{directorLabel(trace.direction.directorMode)}</strong><span>{modeLabel(trace.direction.generationMode)}</span></div>
           <div><small>模型 / 生成时长</small><strong>{trace.direction.model || trace.direction.provider || '未记录'}</strong><span>计划 {trace.direction.durationSeconds ?? '—'} 秒 · {trace.direction.multiShot ? '多分镜' : trace.direction.multiShot === false ? '非多分镜' : '多分镜未记录'}</span></div>

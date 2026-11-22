@@ -12,6 +12,7 @@ vi.mock('../../api', async original => ({
 }))
 const data: AdminVideoPage = {
   days: 7, total: 1, offset: 0, limit: 24,
+  healthSummary: { critical: 1, warning: 0, normal: 0 },
   items: [{
     artifactId: 'artifact-safe-id',
     attemptId: 'attempt-safe-id',
@@ -28,6 +29,21 @@ const data: AdminVideoPage = {
     provider: 'kling',
     validationStatus: 'PASSED',
     finalApprovalStatus: 'PENDING',
+    health: {
+      severity: 'critical',
+      qualityStatus: 'not_reviewed',
+      primary: {
+        code: 'CUT_FAILED', level: 'critical', title: '关联送剪任务失败',
+        stage: 'CUT 送剪', detail: '最新送剪记录失败',
+        nextStep: '核对CUT回执', evidence: 'multi_cutflow_task.status',
+      },
+      reasons: [{
+        code: 'CUT_FAILED', level: 'critical', title: '关联送剪任务失败',
+        stage: 'CUT 送剪', detail: '最新送剪记录失败',
+        nextStep: '核对CUT回执', evidence: 'multi_cutflow_task.status',
+      }],
+      message: '有明确失败记录，请优先核实',
+    },
   }],
 }
 let view: Awaited<ReturnType<typeof mount>>
@@ -45,10 +61,19 @@ afterAll(teardownReliabilityDom)
 it('shows an owner-labelled video and a review control without any editing action', async () => {
   view = await mount(<AdminVideoReview adminId="administrator-id" />)
   await act(async () => { await Promise.resolve() })
-  expect(getAdminVideos).toHaveBeenCalledWith('administrator-id', 7, 0, '')
+  expect(getAdminVideos).toHaveBeenCalledWith('administrator-id', 7, 0, '', '', 'all', 'priority')
   expect(view.host.textContent).toContain('其他账号生成的原片')
   expect(view.host.textContent).toContain('Pagewings · brand-user')
   expect(view.host.querySelectorAll('.admin-video-card')).toHaveLength(1)
   expect(view.host.querySelector('.admin-video-card img')?.getAttribute('src')).toContain('artifact-safe-id/thumbnail')
   expect(view.host.textContent).toContain('只读巡检')
+  expect(view.host.textContent).toContain('关联送剪任务失败')
+  expect(view.host.textContent).toContain('核对CUT回执')
+  expect(view.host.querySelector('.admin-video-health-critical')).not.toBeNull()
+  expect(view.host.querySelector('.admin-video-health-badge.is-critical')).not.toBeNull()
+  const warningButton = [...view.host.querySelectorAll<HTMLButtonElement>('button')]
+    .find(button => button.textContent?.includes('需要关注'))
+  expect(warningButton).toBeDefined()
+  await act(async () => { warningButton?.click(); await Promise.resolve() })
+  expect(getAdminVideos).toHaveBeenLastCalledWith('administrator-id', 7, 0, '', '', 'warning', 'priority')
 })

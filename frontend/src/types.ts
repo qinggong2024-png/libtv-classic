@@ -794,6 +794,26 @@ export interface Reconciliation {
   updatedAt: string
 }
 
+export type AdminVideoSeverity = 'critical' | 'warning' | 'normal'
+export type AdminVideoHealthFilter = 'all' | AdminVideoSeverity
+export type AdminVideoSort = 'priority' | 'newest'
+export interface AdminVideoHealthReason {
+  code: string
+  level: 'critical' | 'warning'
+  title: string
+  stage: string
+  detail: string
+  nextStep: string
+  evidence: string
+}
+export interface AdminVideoHealth {
+  severity: AdminVideoSeverity
+  primary: AdminVideoHealthReason | null
+  reasons: AdminVideoHealthReason[]
+  qualityStatus: 'rejected' | 'approved' | 'not_reviewed'
+  message: string
+}
+
 export interface AdminVideoRecord {
   artifactId: string
   attemptId: string
@@ -810,6 +830,7 @@ export interface AdminVideoRecord {
   provider: string
   validationStatus: string
   finalApprovalStatus: string
+  health?: AdminVideoHealth
 }
 export interface AdminVideoReference {
   id: string
@@ -897,6 +918,9 @@ export interface AdminVideoPage {
   limit: number
   offset: number
   days: number
+  healthFilter?: AdminVideoHealthFilter
+  sort?: AdminVideoSort
+  healthSummary?: Record<AdminVideoSeverity, number>
   items: AdminVideoRecord[]
 }
 

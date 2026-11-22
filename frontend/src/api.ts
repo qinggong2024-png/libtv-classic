@@ -1,4 +1,4 @@
-import type { AdminCredentialsStatus, AdminUser, AuthUser, BachConfig, BachConfigPatch, BatchConfirmationResponse, FeedbackReason, FeedbackValue, FixedVideoTaskOptions, ImageGenerationBatch, ImageGenerationClientManifest, KlingConfig, KlingConfigPatch, KlingElement, KlingElementCreate, KlingElementList, KlingStatus, LibTVAccountStatus, LibTVAccountSwitch, LibTVLoginStart, MotionActionSummary, MotionActionWrite, AdminVideoPage, AdminVideoTrace, OperationsIssueCategory, OperationsIssuePage, OperationsSnapshot, PromptAssistantResponse, PromptPreset, PromptPresetWrite, Reconciliation, RuntimeConfigSnapshot, SiteStyleProfileSummary, SiteStyleProfileWrite, SystemStatus, Task, UploadResult, VariantKind, VideoLearningPreference, VideoTemplateSummary, WaveSpeedConfig, WaveSpeedConfigPatch } from './types'
+import type { AdminCredentialsStatus, AdminUser, AuthUser, BachConfig, BachConfigPatch, BatchConfirmationResponse, FeedbackReason, FeedbackValue, FixedVideoTaskOptions, ImageGenerationBatch, ImageGenerationClientManifest, KlingConfig, KlingConfigPatch, KlingElement, KlingElementCreate, KlingElementList, KlingStatus, LibTVAccountStatus, LibTVAccountSwitch, LibTVLoginStart, MotionActionSummary, MotionActionWrite, AdminVideoPage, AdminVideoTrace, AdminVideoHealthFilter, AdminVideoSort, OperationsIssueCategory, OperationsIssuePage, OperationsSnapshot, PromptAssistantResponse, PromptPreset, PromptPresetWrite, Reconciliation, RuntimeConfigSnapshot, SiteStyleProfileSummary, SiteStyleProfileWrite, SystemStatus, Task, UploadResult, VariantKind, VideoLearningPreference, VideoTemplateSummary, WaveSpeedConfig, WaveSpeedConfigPatch } from './types'
 import { createUuid } from './uuid'
 import { userFacingError, validationMessage } from './errorPresentation'
 import type { AccountBrand, AccountEventReport, AccountPolicy, AccountUsageReport, GenerationBudget, GlobalUsagePricing } from './types'
@@ -631,8 +631,12 @@ export function getAdminVideos(
   offset = 0,
   search = '',
   brandId = '',
+  health: AdminVideoHealthFilter = 'all',
+  sort: AdminVideoSort = 'priority',
 ): Promise<AdminVideoPage> {
-  const params = new URLSearchParams({ days: String(days), offset: String(offset), limit: '24' })
+  const params = new URLSearchParams({
+    days: String(days), offset: String(offset), limit: '24', health, sort,
+  })
   if (search.trim()) params.set('search', search.trim())
   if (brandId) params.set('brand_id', brandId)
   return request(`/api/v1/admin/videos?${params.toString()}`, {}, { actorId: adminId })
