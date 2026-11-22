@@ -108,6 +108,7 @@ export function AdminVideoReview({ adminId }: { adminId: string }) {
           type="button"
           className={`admin-video-health-filter is-${key} ${healthFilter === key ? 'is-selected' : ''}`}
           aria-pressed={healthFilter === key}
+          disabled={!page?.healthSummary && key !== 'all'}
           onClick={() => {
             if (healthFilter === key) return
             setLoading(true)
@@ -122,7 +123,7 @@ export function AdminVideoReview({ adminId }: { adminId: string }) {
       </div>
       <label className="admin-video-health-sort">
         排序
-        <select aria-label="视频排序" value={sort} onChange={(event) => {
+        <select aria-label="视频排序" value={sort} disabled={!page?.healthSummary} onChange={(event) => {
           setLoading(true)
           setOffset(0)
           setSort(event.target.value as AdminVideoSort)
@@ -132,7 +133,7 @@ export function AdminVideoReview({ adminId }: { adminId: string }) {
         </select>
       </label>
     </div>
-    {page && !page.healthSummary ? <p className="admin-video-health-legacy" role="status">当前服务还未提供自动异常分类；视频卡片不会显示未经验证的判断。</p> : null}
+    {page && !page.healthSummary ? <p className="admin-video-health-legacy" role="status">运行中的 API 尚未提供异常分类数据；当前只展示原片，异常筛选和排序暂不可用。</p> : null}
     <div className="admin-video-summary">
       <span>本条件下共 <strong>{page?.total ?? '—'}</strong> 条已保存原片</span>
       <span>建议检查：商品印花完整度 · 手部穿帮 · 动作自然度 · 展示时长 · 镜头节奏</span>

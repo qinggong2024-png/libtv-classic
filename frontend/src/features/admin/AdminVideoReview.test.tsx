@@ -58,6 +58,22 @@ afterEach(async () => {
 })
 afterAll(teardownReliabilityDom)
 
+
+it('keeps severity filters disabled when running backend has not activated health fields', async () => {
+  vi.mocked(getAdminVideos).mockResolvedValue({
+    ...data,
+    healthSummary: undefined,
+    items: data.items.map(item => ({ ...item, health: undefined })),
+  })
+  view = await mount(<AdminVideoReview adminId="administrator-id" />)
+  await act(async () => { await Promise.resolve() })
+  expect(view.host.textContent).toContain('异常筛选和排序暂不可用')
+  expect(view.host.querySelector<HTMLSelectElement>('select[aria-label="视频排序"]')?.disabled).toBe(true)
+  const dangerous = [...view.host.querySelectorAll<HTMLButtonElement>('button')]
+    .find(button => button.textContent?.includes('严重异常'))
+  expect(dangerous?.disabled).toBe(true)
+})
+
 it('shows an owner-labelled video and a review control without any editing action', async () => {
   view = await mount(<AdminVideoReview adminId="administrator-id" />)
   await act(async () => { await Promise.resolve() })
