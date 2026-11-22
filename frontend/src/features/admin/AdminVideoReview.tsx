@@ -1,8 +1,9 @@
-import { ChevronLeft, ChevronRight, Clapperboard, LoaderCircle, Play, RefreshCw, Search } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Clapperboard, LoaderCircle, Play, RefreshCw, Search, Workflow } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { adminVideoThumbnailUrl, fetchAdminVideoObjectUrl, getAdminVideos } from '../../api'
 import { errorMessage } from '../../errorPresentation'
 import { VideoModal } from '../../shared/components/Media'
+import { AdminVideoTracePanel } from './AdminVideoTracePanel'
 import type { AdminVideoPage, AdminVideoRecord } from '../../types'
 import './adminVideoReview.css'
 
@@ -49,6 +50,7 @@ export function AdminVideoReview({ adminId }: { adminId: string }) {
   const [error, setError] = useState('')
   const [page, setPage] = useState<AdminVideoPage | null>(null)
   const [selected, setSelected] = useState<AdminVideoRecord | null>(null)
+  const [inspected, setInspected] = useState<AdminVideoRecord | null>(null)
 
   useEffect(() => {
     let active = true
@@ -109,7 +111,10 @@ export function AdminVideoReview({ adminId }: { adminId: string }) {
           <strong title={item.title}>{item.title}</strong>
           <span>{item.brandName || '未归属品牌'} · {item.username}</span>
           <small>{readableDate(item.createdAt)} · {item.variant} · {item.provider}</small>
-          <button type="button" className="text-button" onClick={() => setSelected(item)}>播放检查</button>
+          <div className="admin-video-card-actions">
+            <button type="button" className="text-button" onClick={() => setSelected(item)}>播放检查</button>
+            <button type="button" className="text-button" onClick={() => setInspected(item)}><Workflow size={14} />查看生产链路</button>
+          </div>
         </div>
       </article>)}
     </div> : null}
@@ -121,6 +126,7 @@ export function AdminVideoReview({ adminId }: { adminId: string }) {
       </div>
     </footer> : null}
     <p className="admin-video-note">只读巡检：不会修改原账号任务、视频审核状态、费用或提交新的生成请求。仅显示有服务端保存副本的原片。</p>
+    {inspected ? <AdminVideoTracePanel key={inspected.artifactId} adminId={adminId} item={inspected} onPlay={() => setSelected(inspected)} onClose={() => setInspected(null)} /> : null}
     {selected ? <ReviewedVideo key={selected.artifactId} adminId={adminId} item={selected} onClose={() => setSelected(null)} /> : null}
   </section>
 }

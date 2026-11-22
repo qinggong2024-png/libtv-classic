@@ -811,6 +811,87 @@ export interface AdminVideoRecord {
   validationStatus: string
   finalApprovalStatus: string
 }
+export interface AdminVideoReference {
+  id: string
+  filename: string
+  role: string
+  imageLabel: string | null
+  order: number
+  usedForGeneration: boolean
+  bindingEvidence: 'saved_binding' | 'task_asset_only'
+  available: boolean
+}
+
+export interface AdminVideoTraceEvent {
+  label: string
+  at: string
+  endAt: string | null
+  elapsedSeconds: number | null
+  status: string | null
+  source: string
+  origin: string
+}
+
+export interface AdminVideoTrace {
+  artifactId: string
+  taskId: string
+  attemptId: string
+  variantId: string
+  taskCreatedAt: string | null
+  prompt: {
+    savedText: string | null
+    savedHash: string | null
+    provenance: string
+    plan: {
+      creativeIdea?: string | null
+      visualHook?: string | null
+      buyerReason?: string | null
+      masterPrompt?: string | null
+      shotInstructions?: Array<string | Record<string, string> | null>
+    }
+    planner: string | null
+    compiledBy: string | null
+  }
+  direction: {
+    generationMode: string | null
+    directorMode: string | null
+    cutMode: string | null
+    smartStoryboard: boolean | null
+    multiShot: boolean | null
+    durationSeconds: number | null
+    model: string | null
+    provider: string
+    providerBackend: string | null
+    variantIndex: number | null
+    referenceCount: number
+  }
+  references: AdminVideoReference[]
+  timeline: AdminVideoTraceEvent[]
+  durations: Array<{
+    label: string
+    seconds: number | null
+    confidence: 'boundary' | 'measured' | 'aggregate' | 'client_reported'
+  }>
+  taskStatus: string
+  attemptStatus: string
+  downloadStatus: string
+  cut: Array<{
+    kind: 'single' | 'multi'
+    status: string
+    createdAt: string | null
+    updatedAt: string | null
+    errorCode: string | null
+    batchId: string | null
+  }>
+  validation: Array<{
+    status: string
+    coverage: string
+    issueCodes: string[]
+    createdAt: string | null
+  }>
+  limitations: string[]
+}
+
 export interface AdminVideoPage {
   total: number
   limit: number

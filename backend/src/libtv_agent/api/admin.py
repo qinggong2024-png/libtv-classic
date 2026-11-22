@@ -25,6 +25,7 @@ from libtv_agent.domain.models import (
 from libtv_agent.domain.schemas import ReconcileRequest
 from libtv_agent.runner.supervisor import RunnerSupervisor
 from libtv_agent.services.admin_video_review import get_admin_video_artifact, list_admin_videos
+from libtv_agent.services.admin_video_trace import get_admin_video_reference, get_admin_video_trace
 from libtv_agent.services.bach_config import (
     bach_admin_config_signature,
     bach_admin_config_status,
@@ -944,6 +945,36 @@ async def admin_recent_videos(
     return await list_admin_videos(
         session, days=days, limit=limit, offset=offset,
         search=search, brand_id=brand_id,
+    )
+
+
+@router.get("/videos/{artifact_id}/trace")
+async def admin_video_production_trace(
+    artifact_id: uuid.UUID, actor: Actor, session: Session
+) -> dict[str, Any]:
+    _require_management_admin(actor)
+    return await get_admin_video_trace(session, artifact_id)
+
+
+@router.get("/videos/{artifact_id}/references/{asset_id}/content")
+async def admin_video_reference_content(
+    artifact_id: uuid.UUID, asset_id: uuid.UUID,
+    actor: Actor, session: Session, request: Request
+) -> FileResponse:
+    _require_management_admin(actor)
+    asset = await get_admin_video_reference(session, artifact_id, asset_id)
+    try:
+        local = await request.app.state.object_store.localize(
+            asset.object_key,
+            request.app.state.settings.artifact_root / "cache" / "asset-previews"
+            / str(asset.id),
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status.HTTP_410_GONE, "reference image unavailable") from exc
+    return FileResponse(
+        local,
+        media_type=asset.mime_type,
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
     )
 
 
