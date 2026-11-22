@@ -152,3 +152,112 @@ def test_native_format_when_integer_shots_are_fully_grounded() -> None:
 ])
 def test_unstructured_or_fractional_timings_are_not_rewritten(prompt: str, duration: int) -> None:
     assert _native_shots_if_safe(prompt, duration) == prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile", [
+    "allwe-ootd-sol-cross-scene-b-v1",
+    "allwe-ootd-sol-dynamic-display-v1",
+])
+async def test_cross_scene_and_dynamic_directors_send_native_shots(tmp_path: Path, profile: str) -> None:
+    prompt = (
+        "镜头一0-3秒：图一正面展示衣服印花；"
+        "镜头二3-10秒：图片2展示完整服装及穿着效果。"
+    )
+    request = _request(tmp_path, prompt, profile=profile)
+    payload = await _adapter(tmp_path).build_request_payload(request)
+    sent = payload["contents"][0]["text"]
+    assert sent.startswith("shot 1, 3,")
+    assert "shot 2, 7," in sent
+    assert "@image_1" in sent
+    assert "@image_2" in sent
+    assert request.prompt == prompt
+
+
+@pytest.mark.asyncio
+async def test_unknown_image_ref_does_not_block_valid_native_shots(tmp_path: Path) -> None:
+    prompt = (
+        "镜头一0-3秒：图一穿衣正面；"
+        "镜头二3-10秒：@image_9 衣服印花特写。"
+    )
+    request = _request(tmp_path, prompt, profile="allwe-ootd-sol-dynamic-display-v1")
+    sent = (await _adapter(tmp_path).build_request_payload(request))["contents"][0]["text"]
+    assert sent.startswith("shot 1, 3,")
+    assert "shot 2, 7," in sent
+    assert "图一" in sent  # Invalid image reference reverts the entire image stage.
+    assert "@image_9" in sent
+
+
+@pytest.mark.asyncio
+async def test_invalid_shot_timing_keeps_successful_image_alias(tmp_path: Path) -> None:
+    prompt = "图一正面。镜头一0-3.5秒：自然展示；镜头二3.5-10秒：完整印花。"
+    request = _request(tmp_path, prompt, profile="allwe-ootd-sol-dynamic-display-v1")
+    sent = (await _adapter(tmp_path).build_request_payload(request))["contents"][0]["text"]
+    assert sent == prompt.replace("图一", "@image_1")
+    assert "shot 1" not in sent
+
+
+@pytest.mark.asyncio
+async def test_image_normalizer_exception_does_not_block_shot_rewrite(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    import libtv_agent.adapters.kling_api_ootd as formatter
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("simulated image converter failure")
+
+    monkeypatch.setattr(formatter, "_normalize_image_refs_if_safe", fail)
+    prompt = "镜头一0-3秒：正面；镜头二3-10秒：印花。"
+    request = _request(tmp_path, prompt)
+    # Unexpected exceptions at the optional image stage must also be nonblocking.
+    sent = (await _adapter(tmp_path).build_request_payload(request))["contents"][0]["text"]
+    assert sent.startswith("shot 1, 3,")
+
+
+@pytest.mark.asyncio
+async def test_native_formatter_exception_preserves_image_binding(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    import libtv_agent.adapters.kling_api_ootd as formatter
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("simulated storyboard converter failure")
+
+    monkeypatch.setattr(formatter, "_native_shots_if_safe", fail)
+    prompt = "镜头一0-3秒：图一正面；镜头二3-10秒：衣服中景。"
+    request = _request(tmp_path, prompt)
+    sent = (await _adapter(tmp_path).build_request_payload(request))["contents"][0]["text"]
+    assert sent == prompt.replace("图一", "@image_1")
+
+
+@pytest.mark.asyncio
+async def test_optional_role_header_overflow_never_blocks_submission(tmp_path: Path) -> None:
+    prompt = "完整印花与自然动作。" * 298
+    assert len(prompt) < 3072
+    request = _request(tmp_path, prompt, count=2, products=2)
+    sent = (await _adapter(tmp_path).build_request_payload(request))["contents"][0]["text"]
+    assert sent == prompt
+
+
+@pytest.mark.asyncio
+async def test_missing_match_and_non_ootd_keep_nonshot_text(tmp_path: Path) -> None:
+    prompt = "正面自然展示衣服与图案，正常速度。"
+    request = _request(tmp_path, prompt, profile="allwe-ootd-sol-dynamic-display-v1")
+    sent = (await _adapter(tmp_path).build_request_payload(request))["contents"][0]["text"]
+    assert sent == prompt
+    other = _request(tmp_path, prompt, profile="other-director")
+    sent_other = (await _adapter(tmp_path).build_request_payload(other))["contents"][0]["text"]
+    assert sent_other == prompt
+
+
+@pytest.mark.asyncio
+async def test_native_formatter_overflow_reverts_just_native_stage(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    import libtv_agent.adapters.kling_api_ootd as formatter
+
+    monkeypatch.setattr(formatter, "_native_shots_if_safe", lambda *_: "X" * 3100)
+    prompt = "图一清楚展示衣服。"
+    request = _request(tmp_path, prompt)
+    sent = (await _adapter(tmp_path).build_request_payload(request))["contents"][0]["text"]
+    assert sent == "@image_1清楚展示衣服。"
