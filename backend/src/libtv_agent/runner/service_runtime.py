@@ -327,6 +327,12 @@ async def run_service_loop(stopping: Event, project_root: Path) -> None:
                             limit=global_limit,
                         )
                         backlog_count = await operational_backlog_count(session)
+                        # Commit any auto-confirm writes and queue-snapshot read
+                        # transaction before running the potentially slow
+                        # provider/remote observation cycle. A still-open
+                        # SQLite transaction can block both API and CUT writes.
+                        # This is a transaction boundary, NOT a provider retry.
+                        await session.commit()
                         await supervisor.run_ready(session)
                         pending_video_ids = await pending_automatic_video_ids(
                             session, limit=settings.classic_auto_plan_concurrency

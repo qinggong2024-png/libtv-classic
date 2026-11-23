@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
@@ -25,9 +26,6 @@ from libtv_agent.domain.models import (
     User,
 )
 from libtv_agent.domain.schemas import VideoTaskCreate
-from libtv_agent.services.video_type_release import (
-    UNBOXING_PAUSED_CODE, UNBOXING_PAUSED_MESSAGE, unboxing_submission_paused,
-)
 from libtv_agent.services.account_access import platform_admin, review_users
 from libtv_agent.services.ai_creative_planner import (
     CREATIVE_PLANNER_VERSION,
@@ -38,16 +36,17 @@ from libtv_agent.services.ai_creative_planner import (
     production_v25_enabled,
 )
 from libtv_agent.services.automatic_motion_facts import observe_storyboards
-from libtv_agent.services.cutflow_budget import reserve_auto_cutflow
-from libtv_agent.services.cutflow_multi_worker import multi_worker_ready
 from libtv_agent.services.content_catalog import (
     get_merged_site_style_profile,
     motion_action_library,
 )
+from libtv_agent.services.cutflow_budget import reserve_auto_cutflow
+from libtv_agent.services.cutflow_multi_worker import multi_worker_ready
 from libtv_agent.services.feedback_learning import apply_video_learning
 from libtv_agent.services.generation_safety import paid_generation_authorized, write_preview_file
 from libtv_agent.services.kling_cli_cost import credits_to_microusd, estimate_cli_credits
 from libtv_agent.services.kling_preparation import prepare_kling_task
+from libtv_agent.services.kling_risk_control import repeated_product_risk_control
 from libtv_agent.services.material_validator import MaterialDescriptor, validate_materials
 from libtv_agent.services.ootd_cross_scene import product_analysis_enabled
 from libtv_agent.services.ootd_direction import creative_controls, use_product_evidence
@@ -58,8 +57,14 @@ from libtv_agent.services.runtime_control import (
     ensure_provider_submission_allowed,
     reserve_internal_pilot_budget,
 )
+from libtv_agent.services.sol_plan_checkpoint import restored_plan, save_plan_checkpoint
 from libtv_agent.services.subject_elements import automatic_element_metadata
 from libtv_agent.services.tasks import get_task
+from libtv_agent.services.video_type_release import (
+    UNBOXING_PAUSED_CODE,
+    UNBOXING_PAUSED_MESSAGE,
+    unboxing_submission_paused,
+)
 from libtv_agent.templates.garment_materials import (
     GarmentMaterial,
     infer_garment_material,
@@ -473,6 +478,33 @@ async def create_fixed_video_task(
             details=validation_json,
         )
 
+    # Protect automatic paid tasks only when the same exact product images
+    # have repeatedly failed Kling's official risk review, with no success.
+    # This makes no changes to Sol direction, product art, or existing jobs.
+    if (payload.generation_mode == "automatic"
+            and settings.kling_provider_backend == "api"
+            and ordered_subject_inputs):
+        prior_risk = await repeated_product_risk_control(
+            session,
+            user_id=user_id,
+            product_hashes=tuple(
+                by_id[item.upload_id].sha256 for item in ordered_subject_inputs
+            ),
+            exclude_task_id=existing_task.id if existing_task is not None else None,
+        )
+        if prior_risk is not None:
+            raise FixedVideoTaskValidationError(
+                "KLING_PRIOR_RISK_CONTROL_REJECTED",
+                "这组完全相同的商品参考图在近期已多次被可灵明确风控拒绝，"
+                "且没有成功回执。为了避免重复付费提交，已暂停本次自动生成；"
+                "请先核对商品图和参考素材。系统不会修改原始商品印花。",
+                details={
+                    "confirmedRiskRejections": prior_risk.failed_remote_task_count,
+                    "priorTaskCount": prior_risk.prior_task_count,
+                    "submissionMade": False,
+                },
+            )
+
     role_prompt = _reference_role_prompt(
         storyboard_count=len(ordered_inputs),
         subject_image_count=len(ordered_subject_inputs),
@@ -543,6 +575,52 @@ async def create_fixed_video_task(
         and settings.ai_adapter_mode == "openai"
         and _task_specific_v25_enabled(settings, existing_task)
     ))
+    # The input fingerprint spans the immutable user request, image bytes and
+    # exact planning route. Only a checkpoint from the same pre-paid task may
+    # avoid an additional Sol call after a worker crash.
+    checkpoint_fingerprint = None
+    cached_creative_variants = None
+    if (payload.generation_mode == "automatic"
+            and settings.ai_adapter_mode == "openai"
+            and existing_task is not None
+            and expected_analysis_run_id is not None):
+        checkpoint_fingerprint = sha256_json({
+            "schema": 1,
+            "payload": payload.model_dump(mode="json", by_alias=True),
+            "images": [
+                {"id": str(item.upload_id), "order": item.order,
+                 "sha256": by_id[item.upload_id].sha256}
+                for item in [*ordered_inputs, *ordered_subject_inputs]
+            ],
+            "rolePrompt": role_prompt,
+            "site": {
+                "profileId": source_site.get("profileId") if source_site else None,
+                "profileVersion": source_site.get("profileVersion") if source_site else None,
+                "tone": site_profile.tone if site_profile else None,
+                "audience": site_profile.audience if site_profile else None,
+                "productPriorities": site_profile.product_priorities if site_profile else [],
+                "forbiddenMismatches": site_profile.forbidden_mismatches if site_profile else [],
+            },
+            "planner": {
+                "model": settings.openai_model,
+                "reasoningEffort": settings.openai_reasoning_effort,
+                "route": settings.kling_provider_backend,
+                "ootdEnabled": ootd_enabled,
+                "analyzeProducts": analyze_products,
+                "ootdControls": ootd_controls,
+                "nativeI": native_i,
+                "nativeV34": native_v34,
+                "experimentalV25": task_uses_v25,
+                "ootdProfile": OOTD_PROFILE,
+                "creativeVersion": CREATIVE_PLANNER_VERSION,
+                "dynamicOOTD": os.environ.get("ALLWE_OOTD_DYNAMIC_ENABLED", "1"),
+                "crossSceneOOTD": os.environ.get("ALLWE_OOTD_CROSS_SCENE_ENABLED", "1"),
+            },
+        })
+        cached_creative_variants = restored_plan(
+            existing_task, fingerprint=checkpoint_fingerprint,
+            variant_count=payload.result_count,
+        )
     if payload.generation_mode == "automatic" and settings.ai_adapter_mode == "openai":
         # The visual evidence and creative plan are both generated before task creation.
         # A failed grounding/planning request cannot reach the paid video provider.
@@ -581,7 +659,9 @@ async def create_fixed_video_task(
                 ]
             # Preserve the production SQLite lock release before inference.
             await session.commit()
-            if ootd_enabled:
+            if cached_creative_variants is not None:
+                creative_variants = cached_creative_variants
+            elif ootd_enabled:
                 recent_ootd_prompts: tuple[str, ...] = ()
                 try:
                     # A savepoint keeps an optional history-query error from
@@ -605,9 +685,13 @@ async def create_fixed_video_task(
                     settings=settings, storyboard_images=storyboard_images,
                     product_images=product_images,
                     analyze_product_images=analyze_products,
-                    display_focus=payload.display_focus if payload.video_type == "ootd" else "overall",
+                    display_focus=(
+                        payload.display_focus if payload.video_type == "ootd" else "overall"
+                    ),
                     video_type=payload.video_type,
                     director_mode=payload.director_mode,
+                    brand_id=str((source_site["profileId"] if source_site
+                                  else payload.site_profile_id) or ""),
                     brand_tone=str(ootd_controls["brandTone"]),
                     action_intensity=payload.action_intensity,
                     creative_brief=payload.creative_brief,
@@ -693,11 +777,17 @@ async def create_fixed_video_task(
             }
             for index, variant in enumerate(creative_variants, 1)
         ]
+        if ootd_enabled:
+            planner_profile = (
+                OOTD_PROFILE if payload.director_mode == "cross_scene_v2"
+                else "allwe-ootd-sol-simple-v1"
+            )
+        elif task_uses_v25:
+            planner_profile = V25_EXPERIMENTAL_VERSION
+        else:
+            planner_profile = CREATIVE_PLANNER_VERSION
         plan_json = {
-            "compiler": (
-                (OOTD_PROFILE if payload.director_mode == "cross_scene_v2" else "allwe-ootd-sol-simple-v1") if ootd_enabled else V25_EXPERIMENTAL_VERSION if task_uses_v25
-                else CREATIVE_PLANNER_VERSION
-            ),
+            "compiler": planner_profile,
             "variants": [
                 {
                     "master_prompt": prompt,
@@ -714,10 +804,7 @@ async def create_fixed_video_task(
             ],
         }
         validation_json["aiCreativePlanner"] = {
-            "version": (
-                (OOTD_PROFILE if payload.director_mode == "cross_scene_v2" else "allwe-ootd-sol-simple-v1") if ootd_enabled else V25_EXPERIMENTAL_VERSION if task_uses_v25
-                else CREATIVE_PLANNER_VERSION
-            ),
+            "version": planner_profile,
             "requestAttempts": max(v.request_attempts for v in creative_variants),
             "verified": all(
                 fact["person_count_verified"]
@@ -726,6 +813,26 @@ async def create_fixed_video_task(
             "storyboardCount": len(ordered_inputs),
             "variantCount": len(creative_variants),
         }
+        if (cached_creative_variants is None and checkpoint_fingerprint is not None
+                and existing_task is not None and expected_analysis_run_id is not None):
+            # Persist the validated Sol response *before* the later task setup,
+            # queueing or any paid submission. A crash here can now resume the
+            # identical creative without another Sol request.
+            # Keep any SQLite busy rollback away from the already-loaded task
+            # and upload ORM objects (rollback expires them unconditionally).
+            async with AsyncSession(
+                bind=session.bind, expire_on_commit=False,
+            ) as checkpoint_session:
+                saved = await save_plan_checkpoint(
+                    checkpoint_session, task_id=existing_task.id,
+                    run_id=expected_analysis_run_id,
+                    fingerprint=checkpoint_fingerprint, variants=creative_variants,
+                )
+            if not saved:
+                raise FixedVideoTaskValidationError(
+                    "AI_CREATIVE_CANCELLED",
+                    "编排任务的执行权已变化；不会继续提交付费生成",
+                )
     elif payload.generation_mode == "automatic":
         # Fake/replay environments retain their historical fixtures for offline
         # compatibility; a live paid runtime must never silently use old actions.
@@ -904,6 +1011,9 @@ async def create_fixed_video_task(
         "generationMode": payload.generation_mode,
         "directorMode": payload.director_mode,
         "videoType": payload.video_type if payload.generation_mode == "automatic" else "ootd",
+        **({"directorMemoryBrand": str((source_site["profileId"] if source_site
+                                    else payload.site_profile_id) or "").lower()}
+           if ootd_enabled else {}),
         "elementIds": list(payload.element_ids),
         "resultCount": payload.result_count,
         "actionIntensity": payload.action_intensity,
@@ -921,7 +1031,10 @@ async def create_fixed_video_task(
         "multiShot": True if (ootd_enabled or native_i or native_v34) else (
             template.smart_storyboard
         ),
-        **({"directorNativeProfile": (OOTD_PROFILE if payload.director_mode == "cross_scene_v2" else "allwe-ootd-sol-simple-v1")} if ootd_enabled
+        **({"directorNativeProfile": (
+            OOTD_PROFILE if payload.director_mode == "cross_scene_v2"
+            else "allwe-ootd-sol-simple-v1"
+        )} if ootd_enabled
            else {"directorNativeProfile": V34_PROFILE} if native_v34
            else {"directorNativeProfile": "allwe-kling-i-native-five-shot-v1"}
            if native_i else {}),

@@ -235,6 +235,43 @@ async def test_callback_rejects_status_that_does_not_match_official_query(
 
 
 @pytest.mark.asyncio
+async def test_verified_callback_classifies_provider_risk_control(tmp_path: Path) -> None:
+    engine, factory = await _database(tmp_path)
+    task, _variant, attempt = _attempt_graph()
+    verified = _verified_result("failed")
+    adapter = FakeKlingAdapter(ProviderTaskResult(
+        status=verified.status,
+        raw_status=verified.raw_status,
+        outputs=verified.outputs,
+        raw_response={
+            **verified.raw_response,
+            "message": "Failure to pass the risk control system",
+        },
+        message="Failure to pass the risk control system",
+    ))
+    async with factory() as session:
+        session.add(User(id=USER_ID, username="callback-risk-user", password_hash="disabled"))
+        session.add(task)
+        await session.commit()
+        await process_kling_callback(
+            session,
+            adapter=adapter,
+            provider_name="kling_official_api",
+            observation=KlingCallbackObservation(
+                provider_task_id="remote-task-1",
+                status="failed",
+                message="unspecified failure",
+                outputs=(),
+                raw_payload={"id": "remote-task-1", "status": "failed"},
+            ),
+        )
+        assert attempt.last_error_code == "KLING_REMOTE_RISK_CONTROL_REJECTED"
+        assert attempt.error_message == "Failure to pass the risk control system"
+        assert attempt.provider_error_retryable is False
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_callback_route_accepts_official_top_level_contract(tmp_path: Path) -> None:
     database_url = f"sqlite+aiosqlite:///{(tmp_path / 'callback-route.db').as_posix()}"
     engine = create_async_engine(database_url)

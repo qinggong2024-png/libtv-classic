@@ -546,6 +546,20 @@ export const runPromptAssistant = (
   }),
 }, { timeoutMs: LONG_RUNNING_TIMEOUT_MS })
 
+export type TaskAttentionAcknowledgement = { taskId: string; signature: string }
+
+export const listTaskAttentionAcknowledgements = () =>
+  request<TaskAttentionAcknowledgement[]>('/api/v1/tasks/attention-acknowledgements')
+
+export const acknowledgeTaskAttention = (taskId: string, signature: string) =>
+  request<void>(`/api/v1/tasks/${taskId}/attention-acknowledgement`, {
+    method: 'PUT',
+    body: JSON.stringify({ signature }),
+  })
+
+export const clearTaskAttentionAcknowledgement = (taskId: string) =>
+  request<void>(`/api/v1/tasks/${taskId}/attention-acknowledgement`, { method: 'DELETE' })
+
 export const cancelTask = (taskId: string) => request<void>(`/api/v1/tasks/${taskId}/cancel`, {
   method: 'POST',
   headers: { 'Idempotency-Key': key() },

@@ -4,6 +4,7 @@ import os
 import sys
 
 from classic_lan import ROOT, STORAGE, generation_authorized, lan_environment
+from classic_worker_lease import exclusive_classic_worker
 
 
 def main() -> None:
@@ -22,6 +23,7 @@ def main() -> None:
         "LIBTV_EXECUTION_MODE",
         "PAID_GENERATION_ENABLED",
         "PAID_GENERATION_CONFIRMATION",
+        "CLASSIC_WORKER_LEASE_DIR",
     ):
         if os.environ.get(key) != expected[key]:
             raise SystemExit(f"Classic worker requires its isolated launcher environment: {key}")
@@ -29,7 +31,8 @@ def main() -> None:
     from libtv_agent.runner import local_runner
 
     local_runner.RUNNER_LOG_PATH = STORAGE / "logs" / "runner-events.log"
-    local_runner.main()
+    with exclusive_classic_worker("runner", STORAGE / "runtime"):
+        local_runner.main()
 
 
 if __name__ == "__main__":

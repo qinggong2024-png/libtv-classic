@@ -343,8 +343,8 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
         </section> : null}
         {needsRecovery && !analysisFailure ? <section className="analysis-recovery" role="alert">
           <span className="analysis-recovery-icon"><AlertTriangle size={22} /></span>
-          <div><span>{isWaveSpeedBalanceFailure(task) ? '账户余额不足' : '任务需要处理'}</span><h2>{task.variants.some(variant => variant.generationStatus === 'SUCCEEDED' && variant.downloadStatus === 'READY' && variant.validationStatus === 'FAILED') ? '生成已完成，成品校验未通过' : task.variants.some(variant => variant.generationStatus === 'SUCCEEDED' && variant.downloadStatus === 'FAILED') ? '生成已完成，成品下载失败' : taskRecoveryHeadline(task)}</h2><p>{taskFailureMessage(task)}</p></div>
-          {canGenerate && task.actionCapabilities.canRegenerate && !isWaveSpeedBalanceFailure(task) ? <button className="primary-button" type="button" onClick={onRemix}>使用原素材重新制作</button> : null}
+          <div><span>{isWaveSpeedBalanceFailure(task) ? '账户余额不足' : '任务需要处理'}</span><h2>{task.variants.some(variant => variant.generationStatus === 'SUCCEEDED' && variant.downloadStatus === 'READY' && variant.validationStatus === 'FAILED') ? '生成已完成，成品校验未通过' : task.variants.some(variant => variant.generationStatus === 'SUCCEEDED' && variant.downloadStatus === 'FAILED') ? '生成已完成，成品下载失败' : taskRecoveryHeadline(task)}</h2><p>{taskFailureMessage(task)}</p>{reusableVariants.length > 0 ? <button type="button" className="text-button" onClick={() => { const details = document.getElementById("task-generation-parameters"); if (details instanceof HTMLDetailsElement) details.open = true; details?.scrollIntoView({ behavior: motionAwareScroll(), block: "start" }) }}>查看已保存的 {reusableVariants.length} 条提示词</button> : null}</div>
+          {canGenerate && task.actionCapabilities.canRegenerate && task.phaseReasonCode !== 'KLING_PRIOR_RISK_CONTROL_REJECTED' && !isWaveSpeedBalanceFailure(task) ? <button className="primary-button" type="button" onClick={onRemix}>使用原素材重新制作</button> : null}
         </section> : null}
         {isCompleted && finishedBatches.length ? <section className="task-detail-section task-detail-primary-output" id="task-final-video" aria-label="最新成片">
           <TaskCutflowDeliveries batches={finishedBatches} sourceLabel={source => {
@@ -420,9 +420,9 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
           </aside> : null}
           </div></section>
         </> : null}
-        <TaskDetailDisclosure title="生成参数" hint="参考素材与生成设置 · 提示词">
+        <TaskDetailDisclosure id="task-generation-parameters" title="生成参数" hint={reusableVariants.length ? `参考素材与生成设置 · ${reusableVariants.length} 条提示词已保存` : "参考素材与生成设置 · 提示词"}>
           {sourceContent}
-          {isCompleted ? <section className="task-a-prompts" aria-label="本次提示词与历史方案"><h3>本次提示词与历史方案</h3>
+          {!isConfirmation && (reusableVariants.length > 0 || isCompleted) ? <section className="task-a-prompts" aria-label="本次提示词与历史方案"><h3>本次提示词与历史方案</h3>
                 {reusableVariants.length ? <div className={`history-prompts${reusableVariants.length === 1 ? ' history-prompts--single' : ''}`}>
                   {reusableVariants.map((variant) => <HistoricalPrompt key={variant.id} task={task} variant={variant} selected={reuseKinds.includes(variant.kind)} />)}
                 </div> : <p className="task-materials__empty">本次任务没有已保存的提示词。</p>}
@@ -476,7 +476,7 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
       {(canGenerate && task.actionCapabilities.canRegenerate) || task.actionCapabilities.canCancel || (canGenerate && isConfirmation) ? <footer className={`drawer-footer${canReuse ? ' drawer-footer--reuse' : ''}${isConfirmation ? ' drawer-footer--confirmation' : ''}`}>
         <div className="drawer-footer-actions">
           {task.actionCapabilities.canCancel ? <button className="secondary-button secondary-button--danger" disabled={busy} onClick={() => void cancel()}><X size={16} />取消任务</button> : null}
-          {canGenerate && task.actionCapabilities.canRegenerate && !canReuse && !needsRecovery ? <button className="secondary-button" onClick={onRemix}><RotateCcw size={16} />使用相同素材再制作</button> : null}
+          {canGenerate && task.actionCapabilities.canRegenerate && task.phaseReasonCode !== 'KLING_PRIOR_RISK_CONTROL_REJECTED' && !canReuse && !needsRecovery ? <button className="secondary-button" onClick={onRemix}><RotateCcw size={16} />使用相同素材再制作</button> : null}
         </div>
         {canReuse ? <div className="reuse-controls">
           <fieldset>

@@ -135,6 +135,95 @@ async def test_api_parallel_limit_is_durably_queued_and_retried_without_duplicat
     assert api.submit.await_count == 2
 
 
+@pytest.mark.parametrize("account_state", ["mismatch", "missing", "matched"])
+async def test_manual_api_reconciliation_requires_original_account_and_never_reposts(
+    lab, account_state,
+):
+    factory, supervisor, _ = lab
+    attempt_id, command_id = await ready(factory, supervisor)
+    provider = supervisor.settings.kling_api_provider_name
+    adapter = SimpleNamespace(
+        submission_account_id=AsyncMock(
+            return_value="account-b" if account_state == "mismatch" else "account-a"
+        ),
+        query=AsyncMock(return_value=ProviderTaskResult("running", "RUNNING", (), {})),
+        submit=AsyncMock(),
+    )
+    supervisor._kling_adapters[provider] = adapter
+    async with factory() as session:
+        attempt = await session.get(GenerationAttempt, attempt_id)
+        command = await session.get(GenerationCommand, command_id)
+        attempt.provider = provider
+        attempt.provider_account_id = (
+            None if account_state == "missing" else "account-a"
+        )
+        attempt.task_id = "original-cloud-id"
+        attempt.status = AttemptStatus.UNKNOWN_AFTER_SUBMIT
+        attempt.charge_status = ChargeStatus.UNKNOWN
+        command.status = CommandStatus.UNCERTAIN
+        await session.commit()
+
+    async with factory() as session:
+        if account_state == "matched":
+            assert await supervisor.reconcile_attempt(session, attempt_id) == "RUNNING"
+            adapter.query.assert_awaited_once_with("original-cloud-id")
+        else:
+            with pytest.raises(KlingCliError) as caught:
+                await supervisor.reconcile_attempt(session, attempt_id)
+            assert caught.value.code == (
+                "KLING_ACCOUNT_CHANGED" if account_state == "mismatch"
+                else "KLING_RECONCILIATION_ACCOUNT_UNVERIFIED"
+            )
+            adapter.query.assert_not_awaited()
+    async with factory() as session:
+        attempt = await session.get(GenerationAttempt, attempt_id)
+        command = await session.get(GenerationCommand, command_id)
+        assert attempt.task_id == "original-cloud-id"
+        assert attempt.provider_account_id == (
+            None if account_state == "missing" else "account-a"
+        )
+        assert attempt.charge_status == ChargeStatus.UNKNOWN
+        if account_state == "matched":
+            assert attempt.status == AttemptStatus.RUNNING
+            assert command.status == CommandStatus.PROCESS_STARTED
+        else:
+            assert attempt.status == AttemptStatus.UNKNOWN_AFTER_SUBMIT
+            assert command.status == CommandStatus.UNCERTAIN
+    adapter.submit.assert_not_awaited()
+
+
+async def test_manual_api_reconciliation_without_cloud_id_never_guesses_or_reposts(lab):
+    factory, supervisor, _ = lab
+    attempt_id, command_id = await ready(factory, supervisor)
+    provider = supervisor.settings.kling_api_provider_name
+    adapter = SimpleNamespace(
+        submission_account_id=AsyncMock(return_value="account-a"),
+        query=AsyncMock(), submit=AsyncMock(),
+    )
+    supervisor._kling_adapters[provider] = adapter
+    async with factory() as session:
+        attempt = await session.get(GenerationAttempt, attempt_id)
+        command = await session.get(GenerationCommand, command_id)
+        attempt.provider = provider
+        attempt.provider_account_id = "account-a"
+        attempt.task_id = None
+        attempt.status = AttemptStatus.UNKNOWN_AFTER_SUBMIT
+        attempt.charge_status = ChargeStatus.UNKNOWN
+        command.status = CommandStatus.UNCERTAIN
+        await session.commit()
+    async with factory() as session:
+        with pytest.raises(KlingCliError) as caught:
+            await supervisor.reconcile_attempt(session, attempt_id)
+        assert caught.value.code == "KLING_HISTORY_EVIDENCE_MISSING"
+    async with factory() as session:
+        attempt = await session.get(GenerationAttempt, attempt_id)
+        assert attempt.status == AttemptStatus.UNKNOWN_AFTER_SUBMIT
+        assert attempt.task_id is None
+        assert attempt.charge_status == ChargeStatus.UNKNOWN
+    adapter.query.assert_not_awaited()
+    adapter.submit.assert_not_awaited()
+
+
 async def test_api_cloud_active_capacity_tracks_remote_jobs_not_http_requests(lab):
     factory, supervisor, _ = lab
     provider = supervisor.settings.kling_api_provider_name

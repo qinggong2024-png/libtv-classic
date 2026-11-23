@@ -30,7 +30,10 @@ def apply_actor_scope(user: User, session: AsyncSession, request: Request) -> Us
             require_any_page(user, "make")
         elif relative.startswith("/tasks"):
             if request.method in {"GET", "HEAD"} or relative.endswith(
-                ("/feedback", "/final-approval", "/cancel", "/restore-remote-output")
+                (
+                    "/feedback", "/final-approval", "/cancel",
+                    "/restore-remote-output", "/attention-acknowledgement",
+                )
             ):
                 require_any_page(user, "make", "records")
             else:

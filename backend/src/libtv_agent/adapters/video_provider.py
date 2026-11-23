@@ -64,6 +64,9 @@ class VideoGenerationRequest:
     element_references: tuple[VideoElementReference, ...] = ()
     reference_video_path: Path | None = None
     director_native_profile: str | None = None
+    director_memory_brand: str | None = None
+    director_memory_garment_category: str | None = None
+    director_memory_kling_hint: str | None = None
     submission_operation_key: str | None = None
     submission_account_id: str | None = None
     submission_fingerprint: str | None = None

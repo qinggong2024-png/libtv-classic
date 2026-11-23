@@ -4,7 +4,7 @@ import { ArrowRight, ChevronRight, Clock3, Film, Images, RefreshCw, X } from 'lu
 import { useState } from 'react'
 import { type SystemStatus, type Task, type Variant } from '../../types'
 import { providerProgress, variantExecutionMessage } from '../../providerPresentation'
-import { readJsonStorage, readStorage, writeJsonStorage, writeStorage } from '../../safeStorage'
+import { readStorage, writeStorage } from '../../safeStorage'
 import { type View } from '../../app/appTypes'
 import { ACTIVE_PHASES, AWAITING_USER_INPUT_PHASES, COMPLETED_PHASES } from '../../domain/workflowStates'
 import { TaskElapsed } from '../../shared/components/TaskTiming'
@@ -18,7 +18,7 @@ import { type RemixSeed } from '../production/productionTypes'
 import { VideoRecreationPanel } from '../production/VideoRecreationPanel'
 
 export const DISMISSED_ATTENTION_STORAGE_KEY = 'dismissed-home-attention'
-export const DISMISSED_ATTENTION_ITEMS_STORAGE_KEY = 'dismissed-home-attention-items'
+
 
 export function ProcessingRow({ task, onOpen }: { task: Task; onOpen: () => void }) {
   const variants = task.variants.filter((item) => ['RUNNING', 'PENDING', 'UNKNOWN'].includes(item.generationStatus))
@@ -35,12 +35,12 @@ export function ProcessingRow({ task, onOpen }: { task: Task; onOpen: () => void
   </button>
 }
 
-export function AttentionItem({ task, onOpen, onDismiss }: { task: Task; onOpen: () => void; onDismiss: () => void }) {
+export function AttentionItem({ task, onOpen, onDismiss, reasonOverride }: { task: Task; onOpen: () => void; onDismiss: () => void; reasonOverride?: string }) {
   const unknownVariant = task.variants.find((variant) => variant.generationStatus === 'UNKNOWN')
   const unknown = Boolean(unknownVariant)
   const isWaiting = task.phase === 'AWAITING_CONFIRMATION'
   const isFinalApproval = task.phase === 'AWAITING_FINAL_APPROVAL'
-  const reason = task.phase === 'AWAITING_CONFIRMATION'
+  const reason = reasonOverride ?? (task.phase === 'AWAITING_CONFIRMATION'
     ? '等待确认视频动作方案'
     : isFinalApproval
       ? '视频已生成，可查看和下载'
@@ -48,7 +48,7 @@ export function AttentionItem({ task, onOpen, onDismiss }: { task: Task; onOpen:
       ? variantExecutionMessage(unknownVariant!, task.generationProvider)
       : isAnalysisFailure(task)
         ? taskFailureMessage(task)
-        : '视频生成遇到问题，需要处理'
+        : '视频生成遇到问题，需要处理')
   const action = task.phase === 'AWAITING_CONFIRMATION' ? '立即确认' : isFinalApproval ? '查看视频' : unknown ? '查询状态' : isAnalysisFailure(task) ? '重新分析' : '查看原因'
   return <article className="attention-item">
     <button type="button" className="attention-item-dismiss" onClick={onDismiss} aria-label={`关闭“${task.title}”的提醒`} title="关闭此提醒"><X size={16} /></button>
@@ -58,39 +58,24 @@ export function AttentionItem({ task, onOpen, onDismiss }: { task: Task; onOpen:
   </article>
 }
 
-export function HomeView({ active, tasks, seed, system, actorId, imageDraftScope = actorId, onCreated, onOpen, onEditing, onView, onPlay, onRemix, onFeedbackChanged, canReview = false, canViewRecords = true }: { active: boolean; tasks: Task[]; seed: RemixSeed | null; system: SystemStatus | null; actorId: string | null; imageDraftScope?: string | null; onCreated: (task: Task, open?: boolean) => void; onOpen: (task: Task) => void; onEditing?: (task: Task, variant: Variant) => void; onView: (view: View) => void; onPlay: (task: Task, variant: Variant) => void; onRemix: (task: Task) => void; onFeedbackChanged: (task: Task) => void; canReview?: boolean; canViewRecords?: boolean }) {
+export function HomeView({ active, tasks, seed, system, actorId, imageDraftScope = actorId, onCreated, onOpen, onEditing, onView, onPlay, onRemix, onFeedbackChanged, canReview = false, canViewRecords = true, attentionTasks, attentionDetails = {}, attentionSignatures = {}, onDismissAttention, attentionError = '' }: { active: boolean; tasks: Task[]; seed: RemixSeed | null; system: SystemStatus | null; actorId: string | null; imageDraftScope?: string | null; onCreated: (task: Task, open?: boolean) => void; onOpen: (task: Task) => void; onEditing?: (task: Task, variant: Variant) => void; onView: (view: View) => void; onPlay: (task: Task, variant: Variant) => void; onRemix: (task: Task) => void; onFeedbackChanged: (task: Task) => void; canReview?: boolean; canViewRecords?: boolean; attentionTasks?: Task[]; attentionDetails?: Record<string, string>; attentionSignatures?: Record<string, string>; onDismissAttention?: (task: Task) => void; attentionError?: string }) {
   const [modeSelection, setModeSelection] = useState<{ mode: 'image-to-video' | 'video-remix'; seedId: string | undefined }>({ mode: seed?.deepVideo ? 'video-remix' : 'image-to-video', seedId: seed?.id })
   const productionMode = modeSelection.seedId === seed?.id ? modeSelection.mode : seed?.deepVideo ? 'video-remix' : 'image-to-video'
   const setProductionMode = (mode: 'image-to-video' | 'video-remix') => setModeSelection({ mode, seedId: seed?.id })
-  const actionableTasks = tasks.filter((task) => AWAITING_USER_INPUT_PHASES.has(task.phase) || task.variants.some((variant) => variant.generationStatus === 'UNKNOWN'))
-  const attentionSignatureFor = (task: Task) => [
-    task.phase,
-    task.phaseReasonCode ?? '',
-    ...task.variants.flatMap((variant) => [variant.kind, variant.generationStatus, variant.errorCode ?? '']),
-  ].join(':')
-  const [dismissedAttentionItems, setDismissedAttentionItems] = useState<Record<string, string>>(
-    () => readJsonStorage<Record<string, string>>('local', DISMISSED_ATTENTION_ITEMS_STORAGE_KEY, {}),
-  )
-  const needsAction = actionableTasks
-    .filter((task) => dismissedAttentionItems[task.id] !== attentionSignatureFor(task))
-    .slice(0, 3)
+  const allAttentionTasks = attentionTasks ?? tasks.filter((task) =>
+    AWAITING_USER_INPUT_PHASES.has(task.phase) || task.variants.some(variant => variant.generationStatus === 'UNKNOWN'))
+  const needsAction = allAttentionTasks.slice(0, 3)
   const background = tasks.filter((task) => ACTIVE_PHASES.has(task.phase) && !needsAction.some((item) => item.id === task.id)).slice(0, Math.max(0, 5 - needsAction.length))
   const results = tasks.filter((task) => COMPLETED_PHASES.has(task.phase)).flatMap((task) => task.variants.map((variant) => ({ task, variant }))).filter(({ variant }) => variant.downloadArtifactId).slice(0, 6)
 
-  const attentionSignature = needsAction.map((task) => `${task.id}:${task.phase}:${task.variants.some((variant) => variant.generationStatus === 'UNKNOWN')}`).sort().join('|')
+  const attentionSignature = allAttentionTasks.map(task => `${task.id}:${attentionSignatures[task.id] ?? task.phase}`).sort().join('|')
   const [dismissedAttention, setDismissedAttention] = useState(() => readStorage('session', DISMISSED_ATTENTION_STORAGE_KEY) ?? '')
   const showAttention = Boolean(needsAction.length && attentionSignature !== dismissedAttention)
   const dismissAttention = () => {
     writeStorage('session', DISMISSED_ATTENTION_STORAGE_KEY, attentionSignature)
     setDismissedAttention(attentionSignature)
   }
-  const dismissAttentionItem = (task: Task) => {
-    setDismissedAttentionItems((current) => {
-      const next = { ...current, [task.id]: attentionSignatureFor(task) }
-      writeJsonStorage('local', DISMISSED_ATTENTION_ITEMS_STORAGE_KEY, next)
-      return next
-    })
-  }
+  const dismissAttentionItem = (task: Task) => onDismissAttention?.(task)
   return <div className="home-view" hidden={!active}>
     <div className="home-title"><div><h1>视频制作</h1><p>从图片制作视频，或根据参考视频复刻动作与镜头。</p></div></div>
     <nav className="video-production-tabs" role="tablist" aria-label="视频制作方式" onKeyDown={(event) => {
@@ -117,10 +102,11 @@ export function HomeView({ active, tasks, seed, system, actorId, imageDraftScope
     <div id="video-remix-panel" role="tabpanel" aria-labelledby="video-remix-tab" hidden={productionMode !== 'video-remix'}>
       <VideoRecreationPanel key={`${imageDraftScope ?? actorId}:${seed?.deepVideo ? seed.id : 'new'}`} seed={seed?.deepVideo} imageDraftScope={imageDraftScope} active={active && productionMode === 'video-remix'} actorId={actorId} onCreated={onCreated} />
     </div>
+    {attentionError ? <p className="task-center-refresh-error" role="alert">{attentionError}</p> : null}
     {showAttention ? <section className="attention-panel" aria-label="待处理任务">
-      <SectionHeading title="需要你操作" count={needsAction.length} action={<div className="attention-panel-actions"><button className="text-button" onClick={() => onView('records')}>查看全部<ChevronRight size={15} /></button><button className="icon-button attention-dismiss" onClick={dismissAttention} aria-label="暂时收起待处理任务" title="暂时收起"><X size={18} /></button></div>} />
+      <SectionHeading title="需要你操作" count={allAttentionTasks.length} action={<div className="attention-panel-actions"><button className="text-button" onClick={() => onView('records')}>查看全部<ChevronRight size={15} /></button><button className="icon-button attention-dismiss" onClick={dismissAttention} aria-label="暂时收起待处理任务" title="暂时收起展示，不清除待办数量"><X size={18} /></button></div>} />
       <p>这些是之前创建、目前暂停等待处理的任务，不影响你继续制作新视频。</p>
-      <div className="attention-list">{needsAction.map((task) => <AttentionItem key={task.id} task={task} onOpen={() => onOpen(task)} onDismiss={() => dismissAttentionItem(task)} />)}</div>
+      <div className="attention-list">{needsAction.map((task) => <AttentionItem key={task.id} task={task} onOpen={() => onOpen(task)} onDismiss={() => dismissAttentionItem(task)} reasonOverride={attentionDetails[task.id]} />)}</div>
     </section> : null}
     {background.length ? <section className="home-section background-work"><SectionHeading title="后台处理中" count={background.length} action={<button className="text-button" onClick={() => onView('records')}>查看全部<ChevronRight size={15} /></button>} /><div className="processing-list" aria-live="polite">{background.map((task) => <ProcessingRow key={task.id} task={task} onOpen={() => onOpen(task)} />)}</div></section> : null}
     <section className="home-section"><SectionHeading title="最近完成" action={canViewRecords ? <button className="text-button" onClick={() => onView('records')}>查看全部记录<ChevronRight size={15} /></button> : null} />{results.length ? <div className="results-grid">{results.map(({ task, variant }) => <ResultCard key={variant.id} task={task} variant={variant} onPlay={() => onPlay(task, variant)} onRemix={() => onRemix(task)} onOpen={() => onOpen(task)} onEditing={onEditing ? () => onEditing(task, variant) : undefined} onFeedbackChanged={onFeedbackChanged} canReview={canReview} />)}</div> : <EmptyState icon={<Film size={24} />} title="还没有生成结果" description="完成第一条服装广告视频后，结果会出现在这里。" />}</section>

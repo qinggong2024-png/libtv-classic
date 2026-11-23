@@ -393,7 +393,7 @@ async def test_sol_provider_failure_is_not_retried_or_sent_to_fallback_model():
             )], product_images=[], creative_brief="", duration_seconds=10,
             client=SimpleNamespace(responses=SimpleNamespace(create=create)),
         )
-    assert caught.value.code == "AI_CREATIVE_PROVIDER_ERROR"
+    assert caught.value.code == "AI_CREATIVE_REQUEST_TIMEOUT"
     assert caught.value.request_attempts == 1
     create.assert_awaited_once()
     assert create.call_args.kwargs["model"] == "gpt-6.1-sol"

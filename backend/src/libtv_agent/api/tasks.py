@@ -34,6 +34,7 @@ from libtv_agent.domain.models import (
     GenerationFeedback,
     GenerationVariant,
     ParentTask,
+    TaskAttentionAcknowledgement,
 )
 from libtv_agent.domain.schemas import (
     AnalyzeRequest,
@@ -75,7 +76,6 @@ from libtv_agent.services.idempotency import (
     release_idempotency_claim,
     store_idempotent_response,
 )
-
 from libtv_agent.services.prompt_revision import PromptRevisionTimeoutError, run_prompt_assistant
 from libtv_agent.services.restore import RemoteRestoreInProgressError, restore_remote_output
 from libtv_agent.services.runtime_control import RuntimeControlBlockedError
@@ -93,7 +93,9 @@ from libtv_agent.services.tasks import (
     task_to_read,
     tasks_to_read,
 )
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -416,6 +418,82 @@ async def get_tasks(
         last = tasks[-1]
         response.headers["X-Next-Cursor"] = _encode_task_cursor(last.updated_at, last.id)
     return await tasks_to_read(session, tasks, settings.daily_user_points_limit)
+
+
+
+class TaskAttentionAckRequest(BaseModel):
+    signature: str = Field(pattern=r"^v1-[0-9a-f]{8}$", max_length=96)
+
+
+@router.get("/attention-acknowledgements")
+async def list_task_attention_acknowledgements(
+    actor: Actor, session: Session
+) -> list[dict[str, str]]:
+    """Acknowledgements are per viewer, not a change to the task's actual phase."""
+    rows = await session.scalars(
+        select(TaskAttentionAcknowledgement)
+        .where(TaskAttentionAcknowledgement.user_id == actor.id)
+    )
+    return [
+        {"taskId": str(row.task_id), "signature": row.signature}
+        for row in rows
+    ]
+
+
+@router.put("/{task_id}/attention-acknowledgement", status_code=status.HTTP_204_NO_CONTENT)
+async def put_task_attention_acknowledgement(
+    task_id: uuid.UUID,
+    payload: TaskAttentionAckRequest,
+    actor: Actor,
+    session: Session,
+) -> Response:
+    try:
+        await get_task(session, actor.id, task_id)
+    except TaskNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    row = await session.get(
+        TaskAttentionAcknowledgement, {"user_id": actor.id, "task_id": task_id}
+    )
+    if row is None:
+        session.add(TaskAttentionAcknowledgement(
+            user_id=actor.id, task_id=task_id, signature=payload.signature
+        ))
+    else:
+        row.signature = payload.signature
+    try:
+        await session.commit()
+    except IntegrityError:
+        # Two browser tabs can insert the same acknowledgement concurrently.
+        # This is an idempotent preference write, not a task/CUT operation.
+        await session.rollback()
+        await session.execute(
+            update(TaskAttentionAcknowledgement)
+            .where(
+                TaskAttentionAcknowledgement.user_id == actor.id,
+                TaskAttentionAcknowledgement.task_id == task_id,
+            )
+            .values(signature=payload.signature)
+        )
+        await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/{task_id}/attention-acknowledgement", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_task_attention_acknowledgement(
+    task_id: uuid.UUID, actor: Actor, session: Session
+) -> Response:
+    try:
+        await get_task(session, actor.id, task_id)
+    except TaskNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    await session.execute(
+        delete(TaskAttentionAcknowledgement).where(
+            TaskAttentionAcknowledgement.user_id == actor.id,
+            TaskAttentionAcknowledgement.task_id == task_id,
+        )
+    )
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{task_id}/generation-preview")

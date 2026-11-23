@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { Task } from '../../types'
 import { RecordsView } from './RecordsView'
+import { taskAttentionSignature } from '../../domain/taskAttention'
 import { TaskDatePicker } from './TaskDatePicker'
 import { localDayKey, parseTaskDateRange, taskCreatedOn, taskDateLabel } from './TaskDateRange'
 
@@ -50,6 +51,29 @@ describe('任务中心 V3 日期筛选', () => {
     expect(done).not.toContain('任务failed-1')
     expect(done).not.toContain('任务cancel-1')
   })
+  it('忽略待办后两处统计从同一分类器退出，但全部任务仍然保留记录', () => {
+    const task = create('ACTION_REQUIRED', 'ignored-1')
+    const signature = taskAttentionSignature(task, [])
+    const acknowledged = renderToStaticMarkup(
+      <RecordsView tasks={[task]} initialFilter="attention" hasMore={false} loadingMore={false}
+        lastSyncedAt={null} onLoadMore={noop} onOpen={noop} onPlay={noop}
+        onRemix={noop} onFeedbackChanged={noop} onCreateTask={noop}
+        attentionAcknowledgements={{ [task.id]: signature }} />,
+    )
+    expect(acknowledged).not.toContain('任务ignored-1')
+    expect(acknowledged).toContain('待我处理<span>0</span>')
+
+    const all = renderToStaticMarkup(
+      <RecordsView tasks={[task]} initialFilter="all" hasMore={false} loadingMore={false}
+        lastSyncedAt={null} onLoadMore={noop} onOpen={noop} onPlay={noop}
+        onRemix={noop} onFeedbackChanged={noop} onCreateTask={noop}
+        attentionAcknowledgements={{ [task.id]: signature }} onRestoreAttention={noop} />,
+    )
+    expect(all).toContain('任务ignored-1')
+    expect(all).toContain('已忽略提醒')
+    expect(all).toContain('恢复提醒')
+  })
+
   it('日期弹层仅保留标题、日历和快捷选项，无多余拖动说明', () => {
     const html = renderToStaticMarkup(<TaskDatePicker value={null} onChange={noop} />)
     expect(html).toContain('全部时间')

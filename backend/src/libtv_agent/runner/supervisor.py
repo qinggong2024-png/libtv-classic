@@ -61,6 +61,12 @@ from libtv_agent.services.generation_safety import (
     real_provider_submission_authorized,
     require_paid_generation_authorized,
 )
+from libtv_agent.services.kling_risk_control import (
+    KLING_RISK_CONTROL_ERROR,
+)
+from libtv_agent.services.kling_risk_control import (
+    kling_risk_control_rejected as _kling_risk_control_rejected,
+)
 from libtv_agent.services.media import (
     download_with_retries,
     technical_validate,
@@ -80,14 +86,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 logger = logging.getLogger(__name__)
 
 
-KLING_RISK_CONTROL_ERROR = "KLING_REMOTE_RISK_CONTROL_REJECTED"
 
 
-def _kling_risk_control_rejected(message: str | None) -> bool:
-    return (
-        isinstance(message, str)
-        and "failure to pass the risk control system" in message.casefold()
-    )
+
+
 
 
 def _provider_receipt_confirms_zero_billing(payload: dict) -> bool:
@@ -297,6 +299,24 @@ class RunnerSupervisor:
             adapter = create_kling_adapter_for_provider(self.settings, provider)
             self._kling_adapters[normalized] = adapter
         return adapter
+
+    async def _require_original_api_account(
+        self, attempt: GenerationAttempt, adapter: VideoProviderAdapter,
+    ) -> None:
+        """Original-account fence for read-only official API recovery."""
+        if attempt.provider != self.settings.kling_api_provider_name:
+            return
+        reader = getattr(adapter, "submission_account_id", None)
+        if not attempt.provider_account_id or not callable(reader):
+            raise KlingCliError(
+                "KLING_RECONCILIATION_ACCOUNT_UNVERIFIED",
+                "Original submission account cannot be verified",
+            )
+        if await reader() != attempt.provider_account_id:
+            raise KlingCliError(
+                "KLING_ACCOUNT_CHANGED",
+                "Current account differs from original paid submission account",
+            )
 
     async def _release_capacity_if_charge_classified(
         self,
@@ -586,6 +606,7 @@ class RunnerSupervisor:
                 # CDN URLs can expire while delivery is unavailable. Query the
                 # original paid handle for a fresh URL; never submit a replacement.
                 try:
+                    await self._require_original_api_account(attempt, download_adapter)
                     refreshed = await download_adapter.query(attempt.task_id)
                     if (
                         refreshed.status not in {"succeeded", "partial"}
@@ -644,11 +665,12 @@ class RunnerSupervisor:
         if command is None:
             raise ValueError("generation command is missing")
         if attempt.provider != "libtv":
+            kling_adapter = self._kling_adapter_for(attempt.provider)
+            await self._require_original_api_account(attempt, kling_adapter)
             if not attempt.task_id:
                 await self._recover_history_handle(
-                    session, attempt, self._kling_adapter_for(attempt.provider)
+                    session, attempt, kling_adapter
                 )
-            kling_adapter = self._kling_adapter_for(attempt.provider)
             provider_result = await kling_adapter.query(attempt.task_id)
             if provider_result.credits_consumed is not None:
                 attempt.credits_consumed = provider_result.credits_consumed
@@ -665,6 +687,37 @@ class RunnerSupervisor:
                 project_uuid=attempt.project_uuid or "",
                 node_key=attempt.video_node_key or "",
             )
+        if (
+            attempt.provider == self.settings.kling_api_provider_name
+            and attempt.task_id
+            and result.status in {"RUNNING", "QUEUED", "PENDING", "PROCESSING"}
+        ):
+            # A read-only check of the ORIGINAL cloud ID on the ORIGINAL
+            # account proves acceptance. Never create another paid command.
+            claimed = await session.execute(
+                update(GenerationAttempt).where(
+                    GenerationAttempt.id == attempt.id,
+                    GenerationAttempt.status == AttemptStatus.UNKNOWN_AFTER_SUBMIT,
+                    GenerationAttempt.state_version == attempt.state_version,
+                ).values(
+                    status=AttemptStatus.RUNNING,
+                    provider_status=result.status.lower(),
+                    next_reconciliation_at=None,
+                    last_polled_at=datetime.now(UTC),
+                    state_version=GenerationAttempt.state_version + 1,
+                ).execution_options(synchronize_session=False)
+            )
+            if claimed.rowcount != 1:
+                await session.rollback()
+                return "RECONCILING"
+            if command.status == CommandStatus.UNCERTAIN:
+                command.status = CommandStatus.PROCESS_STARTED
+                command.process_started_at = (
+                    command.process_started_at or datetime.now(UTC)
+                )
+                command.lease_expires_at = None
+            await session.commit()
+            return "RUNNING"
         if result.status in {"SUCCEEDED", "PARTIAL"}:
             variant = await session.get(GenerationVariant, attempt.variant_id)
             if variant is not None and pipeline_state(command).get("stage") == "depth":
@@ -992,6 +1045,11 @@ class RunnerSupervisor:
             request = VideoGenerationRequest(
                 prompt=variant.prompt_text,
                 director_native_profile=variant.generation_config_json.get("directorNativeProfile"),
+                # Reuse the frozen provider hint; never reselect memory during
+                # retries, callback reconciliation or runner restarts.
+                director_memory_kling_hint=(
+                    variant.generation_config_json.get("directorMemoryKlingHint")
+                ),
                 reference_video_path=reference_video_path,
                 model=attempt.provider_model or self.settings.active_kling_model,
                 image_paths=tuple(storyboard_paths),

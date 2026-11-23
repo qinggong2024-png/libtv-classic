@@ -100,6 +100,19 @@ describe('经典版自适应任务详情', () => {
     expect(html).not.toContain('task-flow-journey')
   })
 
+  it('已阻止重复风控的任务不再提供直接原素材重做按钮', () => {
+    const blocked = { ...task, phase: 'ACTION_REQUIRED',
+      phaseReasonCode: 'KLING_PRIOR_RISK_CONTROL_REJECTED',
+      variants: [{ ...variant, generationStatus: 'FAILED', downloadArtifactId: null }],
+      actionCapabilities: { canRegenerate: true, canCancel: false },
+    } as unknown as Task
+    const html = renderDetail(blocked, true)
+    expect(html).toContain('已阻止重复风控提交')
+    expect(html).toContain('至少两次被可灵审核拒绝')
+    expect(html).not.toContain('使用原素材重新制作')
+    expect(html).not.toContain('使用相同素材再制作')
+  })
+
   it('关闭自动送剪的任务只提示主动选择原片，不误认为已提交', () => {
     const manual = { ...task, settings: { ...task.settings, autoSubmitToCutflow: false } } as Task
     const html = renderDetail(manual)
@@ -177,6 +190,26 @@ describe('经典版自适应任务详情', () => {
     expect(section).not.toContain('task-detail-source')
     expect(section.indexOf('参考素材与生成设置')).toBeLessThan(section.indexOf('本次提示词与历史方案'))
     expect(section.indexOf('本次提示词与历史方案')).toBeLessThan(section.indexOf('制作过程与耗时'))
+  })
+
+  it('提示词在视频生成中和失败后均可查看，无需等待生成完成', () => {
+    const generating = { ...task, phase: 'GENERATING',
+      variants: [{ ...variant, generationStatus: 'RUNNING', downloadArtifactId: null, promptText: 'EARLY_SAVED_PROMPT' }],
+    } as unknown as Task
+    const generatingHtml = renderDetail(generating, true)
+    expect(generatingHtml).toContain('EARLY_SAVED_PROMPT')
+    expect(generatingHtml).toContain('1 条提示词已保存')
+    expect(generatingHtml).toContain('id="task-generation-parameters"')
+    expect(generatingHtml).not.toContain('task-a-disclosure" id="task-generation-parameters" open=')
+
+    const failed = { ...task, phase: 'ACTION_REQUIRED',
+      variants: [{ ...variant, generationStatus: 'FAILED', downloadArtifactId: null, promptText: 'REJECTED_TASK_PROMPT' }],
+      actionCapabilities: { canRegenerate: true, canCancel: false },
+    } as unknown as Task
+    const failedHtml = renderDetail(failed, true)
+    expect(failedHtml).toContain('REJECTED_TASK_PROMPT')
+    expect(failedHtml).toContain('查看已保存的')
+    expect(failedHtml).toContain('1 条提示词')
   })
 
   it('自动送剪设置不代表剪辑端已经有接单回执', () => {

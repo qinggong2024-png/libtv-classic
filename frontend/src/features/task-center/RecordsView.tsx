@@ -4,6 +4,7 @@ import type { RecordsFilter as AppRecordsFilter } from '../../app/appTypes'
 import type { Task, Variant } from '../../types'
 import { ACTIVE_PHASES, FAILED_PHASES } from '../../domain/workflowStates'
 import { taskCenterState } from '../../domain/taskCenterState'
+import { isTaskAttentionAcknowledged, taskAttentionGroup, taskAttentionSignature, type TaskAttentionMap } from '../../domain/taskAttention'
 import { hasUnseenCutflowOutput } from '../../domain/cutflowUnread'
 import { DataFreshness } from '../../shared/components/DataFreshness'
 import { EmptyState } from '../../shared/components/Section'
@@ -22,14 +23,28 @@ export type RecordFilter = AppRecordsFilter
 
 const MANUAL_REFRESH_COOLDOWN_MS = 5000
 
-function TaskCenterCard({ task, basket, canWrite, onOpen, onPlay }: {
+function TaskCenterCard({ task, basket, canWrite, acknowledged, onDismissAttention, onRestoreAttention, onCancelTask, onOpen, onPlay }: {
   task: Task
   basket: MultiCutBasketController
   canWrite: boolean
+  acknowledged: boolean
+  onDismissAttention?: () => void
+  onRestoreAttention?: () => void
+  onCancelTask?: () => Promise<void>
   onOpen: () => void
   onPlay: (variant: Variant) => void
 }) {
   const [expanded, setExpanded] = useState(false)
+  const [cancelBusy, setCancelBusy] = useState(false)
+  const [cancelError, setCancelError] = useState('')
+  const cancel = async () => {
+    if (!onCancelTask || !window.confirm('确定取消此任务吗？已提交给生成服务的任务可能无法撤回。')) return
+    setCancelBusy(true)
+    setCancelError('')
+    try { await onCancelTask() }
+    catch { setCancelError('取消失败，任务可能已经进入不可取消阶段，请刷新状态后重试') }
+    finally { setCancelBusy(false) }
+  }
   const ready = task.variants.filter(variant => Boolean(variant.downloadArtifactId))
   const hasUnseenCut = hasUnseenCutflowOutput(basket.relatedMultiSourceTasksForTask(task.id), basket.multiTasksLoaded, Boolean(basket.multiTaskError))
   const state = taskCenterState(task,
@@ -38,6 +53,9 @@ function TaskCenterCard({ task, basket, canWrite, onOpen, onPlay }: {
   )
   // 查询剪辑状态时不要把选片入口隐藏；每条原片仍单独禁用剪辑中的来源。
   // 只有仍在生成原片的任务不开放选片，已完成和已剪过的原片都可再次选择。
+  const needsAttention = taskAttentionGroup(task,
+    basket.relatedMultiSourceTasksForTask(task.id).concat(task.variants.flatMap(variant => basket.singleSourceVersionsFor(variant.id))),
+    { loaded: !basket.enabled || basket.multiTasksLoaded, error: Boolean(basket.multiTaskError), now: basket.multiTasksCheckedAt }) === 'attention'
   const canSelectClips = basket.enabled && canWrite && ready.length > 0
     && !ACTIVE_PHASES.has(task.phase) && task.phase !== 'CANCELLED'
 
@@ -48,7 +66,7 @@ function TaskCenterCard({ task, basket, canWrite, onOpen, onPlay }: {
         <strong>{task.title}</strong>
         <small>{formatTime(task.createdAt)} · {task.assetCount} 张素材 · {task.variants.length} 个结果</small>
         <span className="task-center-card__statuses">
-          <span className={'task-center-card__edit-state' + (state.group === 'active' ? ' is-active' : state.group === 'done' ? ' is-done' : state.group === 'attention' ? ' is-attention' : '')}>{state.label}</span>
+          <span className={'task-center-card__edit-state' + (acknowledged && needsAttention ? '' : state.group === 'active' ? ' is-active' : state.group === 'done' ? ' is-done' : state.group === 'attention' ? ' is-attention' : '')}>{acknowledged && needsAttention ? '已忽略提醒' : state.label}</span>
           {task.phase === 'PARTIALLY_DELIVERABLE' ? <span className="task-center-card__edit-state is-partial">部分完成</span> : null}
           {FAILED_PHASES.has(task.phase) ? <span className="task-center-card__edit-state is-partial">生成失败</span> : null}
           {hasUnseenCut ? <span className="task-center-card__unseen" aria-label="有未看的新成片">未看</span> : null}
@@ -56,10 +74,19 @@ function TaskCenterCard({ task, basket, canWrite, onOpen, onPlay }: {
       </span>
       <span className="task-center-card__progress">
         <strong>{state.group === 'done' ? `成片 ${state.outputs} 条` : `原片 ${ready.length}/${task.variants.length}`}</strong>
-        <small>{state.group === 'done' ? '可查看和下载成片' : state.detail}</small>
+        <small>{acknowledged && needsAttention ? '仍保留在全部任务中，新异常会再次提醒' : state.group === 'done' ? '可查看和下载成片' : state.detail}</small>
       </span>
-      <span className="task-center-card__next">{state.group === 'done' ? '查看成片' : state.group === 'attention' ? '去处理' : '查看进度'} <ChevronRight size={17} aria-hidden="true" /></span>
+      <span className="task-center-card__next">{acknowledged && needsAttention ? '查看详情' : state.group === 'done' ? '查看成片' : needsAttention ? '去处理' : '查看进度'} <ChevronRight size={17} aria-hidden="true" /></span>
     </button>
+    {needsAttention && canWrite ? <div className="task-center-card__attention-actions">
+      {!acknowledged && task.actionCapabilities?.canCancel && onCancelTask
+        ? <button type="button" className="compact-button" disabled={cancelBusy} onClick={() => void cancel()}>{cancelBusy ? '取消中…' : '取消任务'}</button>
+        : null}
+      {acknowledged
+        ? onRestoreAttention ? <button type="button" className="compact-button" onClick={onRestoreAttention}>恢复提醒</button> : null
+        : onDismissAttention ? <button type="button" className="compact-button" onClick={onDismissAttention}>不再提醒</button> : null}
+    </div> : null}
+    {cancelError ? <p role="alert" className="task-center-card__reason">{cancelError}</p> : null}
     {task.phaseReasonCode ? <p className="task-center-card__reason">{taskFailureMessage(task)}</p> : null}
     {canSelectClips ? <div className="task-center-card__bottom">
       <span>{state.manualSelection ? '本任务已关闭自动送剪，可手动选择原片' : '可跨任务合并原片，也可创建新的剪辑版本'}</span>
@@ -107,7 +134,7 @@ function RecordsViewLocal(props: RecordsViewProps) {
   </>
 }
 
-function RecordsViewBody({ tasks, hasMore, loadingMore, lastSyncedAt, syncError = false, onLoadMore, onRefresh, onOpen, onPlay, onCreateTask, canGenerate = true, initialFilter = 'all', initialQuery = '', onStateChange, canWrite = true, basket }: {
+function RecordsViewBody({ tasks, hasMore, loadingMore, lastSyncedAt, syncError = false, onLoadMore, onRefresh, onOpen, onPlay, onCreateTask, canGenerate = true, initialFilter = 'all', initialQuery = '', onStateChange, canWrite = true, basket, attentionAcknowledgements = {}, onDismissAttention, onRestoreAttention, onCancelTask, attentionError = '' }: {
   tasks: Task[]
   hasMore: boolean
   loadingMore: boolean
@@ -130,6 +157,11 @@ function RecordsViewBody({ tasks, hasMore, loadingMore, lastSyncedAt, syncError 
   multiCutReady?: boolean
   storageKey?: string
   basket: MultiCutBasketController
+  attentionAcknowledgements?: TaskAttentionMap
+  onDismissAttention?: (task: Task, signature: string) => void
+  onRestoreAttention?: (task: Task) => void
+  onCancelTask?: (task: Task) => Promise<void>
+  attentionError?: string
 }) {
   const filter = initialFilter
   const query = initialQuery
@@ -168,10 +200,11 @@ function RecordsViewBody({ tasks, hasMore, loadingMore, lastSyncedAt, syncError 
       setRefreshing(false)
     }
   }
-  const stateOf = (task: Task) => taskCenterState(task,
-    basket.relatedMultiSourceTasksForTask(task.id).concat(task.variants.flatMap(variant => basket.singleSourceVersionsFor(variant.id))),
-    { loaded: !basket.enabled || basket.multiTasksLoaded, error: Boolean(basket.multiTaskError), now: basket.multiTasksCheckedAt },
-  )
+  const batchesOf = (task: Task) => basket.relatedMultiSourceTasksForTask(task.id)
+    .concat(task.variants.flatMap(variant => basket.singleSourceVersionsFor(variant.id)))
+  const cutStatus = { loaded: !basket.enabled || basket.multiTasksLoaded, error: Boolean(basket.multiTaskError), now: basket.multiTasksCheckedAt }
+  const signatureOf = (task: Task) => taskAttentionSignature(task, batchesOf(task))
+  const isAcknowledged = (task: Task) => isTaskAttentionAcknowledged(task.id, signatureOf(task), attentionAcknowledgements)
   const [dateRange, setDateRange] = useState<TaskDateRange | null>(() => typeof window === 'undefined' ? null : parseTaskDateRange(window.location.search))
   const [sortAsc, setSortAsc] = useState(false)
   const automaticPages = useRef(0)
@@ -189,10 +222,8 @@ function RecordsViewBody({ tasks, hasMore, loadingMore, lastSyncedAt, syncError 
     window.history.replaceState(null, '', url.pathname + url.search + url.hash)
   }
   const groupOf = (task: Task) => {
-    if (task.phase === 'CANCELLED') return 'cancelled'
-    if (FAILED_PHASES.has(task.phase)) return 'attention'
-    if (task.phase === 'PARTIALLY_DELIVERABLE') return 'done'
-    return stateOf(task).group
+    const group = taskAttentionGroup(task, batchesOf(task), cutStatus)
+    return group === 'attention' && isAcknowledged(task) ? 'ignored' : group
   }
   const groups: Array<{ value: RecordFilter; label: string; test: (task: Task) => boolean }> = [
     { value: 'all', label: '全部任务', test: () => true },
@@ -233,6 +264,7 @@ function RecordsViewBody({ tasks, hasMore, loadingMore, lastSyncedAt, syncError 
         <label className="search-field"><Search size={17} /><input value={query} onChange={event => updateQuery(event.target.value)} placeholder="搜索任务名称、编号或品牌" aria-label="搜索任务名称、编号或品牌" />{keyword ? <button type="button" className="search-field-clear" onClick={() => updateQuery('')} aria-label="清除搜索关键词"><X size={15} /></button> : null}</label>
         <button type="button" className="icon-button" onClick={() => void refreshCurrentStatus()} disabled={refreshing || coolingDown || !onRefresh} aria-label={refreshing ? '正在刷新任务状态' : coolingDown ? '刷新冷却中，请稍后重试' : '刷新任务状态'} title={refreshing ? '正在刷新任务状态' : coolingDown ? '5 秒后可再次刷新' : '刷新任务状态'}>{refreshing ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />}</button>
         {refreshFailed ? <span className="task-center-refresh-error" role="alert">刷新失败，请重试</span> : null}
+        {attentionError ? <span className="task-center-refresh-error" role="alert">{attentionError}</span> : null}
       </div>
     </div>
     <nav className="task-center-filters" aria-label="按任务状态筛选">
@@ -241,16 +273,28 @@ function RecordsViewBody({ tasks, hasMore, loadingMore, lastSyncedAt, syncError 
       </button>)}
       <TaskDatePicker value={dateRange} onChange={onDateChange} />
     </nav>
-    {filter === 'attention' ? <p className="task-center-search-note">待我处理包含生成待确认、状态异常、待送剪与剪辑异常；侧栏数字仅统计需处理的生成任务。</p> : null}
+    {filter === 'attention' ? <p className="task-center-search-note">待我处理与侧栏角标使用同一规则；“不再提醒”仅清除提醒，任务与剪辑记录仍保留在全部任务中。</p> : null}
     {keyword ? <p className="task-center-search-note" role="status">{hasMore ? '仅搜索已加载记录' : '搜索全部已加载记录'}：「{query.trim()}」，当前筛选匹配 {visible.length} 条任务</p> : null}
-    <div className="task-center-resultbar"><span><strong>{visible.length}</strong> 条任务{dateRange ? ' · ' + taskDateLabel(dateRange) : ''}{lookingForHistory ? ' · 正在补齐历史记录' : ''}</span><button type="button" onClick={() => setSortAsc(old => !old)}>创建时间：{sortAsc ? '最早在前 ↑' : '最新在前 ↓'}</button></div>
+    <div className="task-center-resultbar"><span><strong>{visible.length}</strong> 条任务{dateRange ? ' · ' + taskDateLabel(dateRange) : ''}{lookingForHistory ? ' · 正在补齐历史记录' : ''}</span><button type="button" onClick={() => setSortAsc(old => !old)}>创建时间：{sortAsc ? '最早在前 ↑' : '最新在前 ↓'}</button>
+      {effectiveFilter === 'attention' && visible.length > 0 && onDismissAttention && canWrite
+        ? <button type="button" onClick={() => {
+          if (window.confirm(`将已加载的 ${visible.length} 条待处理任务移出提醒？任务与 CUT 剪辑记录不会被取消或删除。`)) {
+            visible.forEach(task => onDismissAttention(task, signatureOf(task)))
+          }
+        }}>本页不再提醒（{visible.length}）</button> : null}
+    </div>
     {visible.length ? <div className="task-center-list" aria-label="任务列表">
       {visible.map((task, index) => {
         const day = localDayKey(new Date(task.createdAt))
         const priorDay = index > 0 ? localDayKey(new Date(visible[index - 1].createdAt)) : null
         return <Fragment key={task.id}>
           {day !== priorDay ? <div className="task-center-day-group"><span>{day === localDayKey(new Date()) ? '今天' : day} · {day.slice(5).replace('-', '/')}</span><small>{dateCounts.get(day)} 条任务</small></div> : null}
-          <TaskCenterCard task={task} basket={basket} canWrite={canWrite} onOpen={() => onOpen(task)} onPlay={variant => onPlay(task, variant)} />
+          <TaskCenterCard task={task} basket={basket} canWrite={canWrite}
+            acknowledged={isAcknowledged(task)}
+            onDismissAttention={onDismissAttention ? () => onDismissAttention(task, signatureOf(task)) : undefined}
+            onRestoreAttention={onRestoreAttention ? () => onRestoreAttention(task) : undefined}
+            onCancelTask={onCancelTask ? () => onCancelTask(task) : undefined}
+            onOpen={() => onOpen(task)} onPlay={variant => onPlay(task, variant)} />
         </Fragment>
       })}
     </div> : <EmptyState icon={<ListVideo size={24} />} title={keyword ? hasMore ? '已加载记录中没有匹配任务' : '没有匹配的任务' : '当前分类暂无任务'} description={keyword ? hasMore ? '还有历史记录未加载，可继续加载并保留当前搜索条件。' : '尝试换个关键词或切换任务分类。' : hasMore ? '还有历史记录未加载，可继续加载查看当前分类。' : '在视频制作中创建任务，完成后会出现在这里。'} action={keyword ? <button type="button" className="secondary-button" onClick={() => updateQuery('')}>清除搜索</button> : canGenerate ? <button type="button" className="primary-button" onClick={onCreateTask}>去创建任务</button> : undefined} />}

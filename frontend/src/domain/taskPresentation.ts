@@ -84,6 +84,7 @@ export function isKlingRiskControlFailure(task: Task): boolean {
 }
 
 export function taskRecoveryHeadline(task: Task): string {
+  if (task.phaseReasonCode === 'KLING_PRIOR_RISK_CONTROL_REJECTED') return '已阻止重复风控提交'
   if (isKlingRiskControlFailure(task)) return '可灵云端风控审核未通过'
   if (isWaveSpeedBalanceFailure(task)) {
     return task.workflowKind === 'DEEP_VIDEO' && task.settings?.deepVideoStage === 'replacement'

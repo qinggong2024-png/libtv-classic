@@ -120,9 +120,11 @@ def main() -> None:
     else:
         if not configured:
             raise SystemExit("Classic CUT is not configured.")
+        from classic_worker_lease import exclusive_classic_worker
         from libtv_agent.runner.cutflow_worker import run
 
-        asyncio.run(run(once=False))
+        with exclusive_classic_worker("cutflow", storage / "runtime"):
+            asyncio.run(run(once=False))
 
 
 if __name__ == "__main__":

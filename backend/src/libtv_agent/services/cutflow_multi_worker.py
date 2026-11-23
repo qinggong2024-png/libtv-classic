@@ -95,7 +95,9 @@ def _http_detail(exc: HTTPError) -> str:
     if not isinstance(payload, dict):
         return ""
     reason = payload.get("reason") or payload.get("error")
-    return reason if isinstance(reason, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,79}", reason) else ""
+    if isinstance(reason, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,79}", reason):
+        return reason
+    return ""
 
 
 def multi_worker_ready(settings: Settings) -> bool:
@@ -346,6 +348,31 @@ async def publish_multi_package(
                         "CUTFLOW_SOURCE_INVALID",
                         "已发布多源素材包缺少文件或校验不匹配",
                     )
+            # The immutable manifest and every source have been verified.
+            # Recreate only a LOST READY marker, never the existing package.
+            # Without READY, CUT's durable scanner cannot discover this task.
+            existing_ready = safe_path(final, "READY")
+            if existing_ready.is_file():
+                try:
+                    ready_marker = json.loads(existing_ready.read_text(encoding="utf-8"))
+                except (OSError, ValueError) as exc:
+                    raise CutflowHandoffError(
+                        "IMMUTABLE_RESULT_CHANGED",
+                        "已发布的 READY 标记损坏，不能猜测其内容",
+                    ) from exc
+                if not isinstance(ready_marker, dict) or ready_marker.get("sha256") != digest:
+                    raise CutflowHandoffError(
+                        "IMMUTABLE_RESULT_CHANGED",
+                        "已发布的 READY 标记与原始任务清单不符",
+                    )
+            elif existing_ready.exists():
+                raise CutflowHandoffError(
+                    "IMMUTABLE_RESULT_CHANGED", "已发布的 READY 路径不是文件",
+                )
+            else:
+                # Same task ID + exact manifest hash + verified media => safe
+                # atomic repair, not a new CUT task or provider submission.
+                write_json_atomic(existing_ready, {"sha256": digest})
             # The exact immutable package was published by an earlier attempt.
             return (
                 {
@@ -679,7 +706,9 @@ async def process_multi_task(
                 # An oversized HTTP wake-up must not erase the published NAS job.
                 notification_too_large = notification.get("httpStatus") == 413
                 waiting_code = (
-                    "CUTFLOW_NOTIFICATION_TOO_LARGE" if notification_too_large else "CUTFLOW_STATUS_MISSING"
+                    "CUTFLOW_NOTIFICATION_TOO_LARGE"
+                    if notification_too_large
+                    else "CUTFLOW_STATUS_MISSING"
                     if waiting_seconds >= max(300, settings.cutflow_nas_scan_seconds * 5)
                     else None
                 )
@@ -716,7 +745,8 @@ async def process_multi_task(
                     "CUT HTTP 接单通知被拒绝（413：请求体过大）。NAS 素材包已发布，"
                     "等待 CUT 扫描接单；请检查 CUT 接口大小限制，无需重新生成或重复送剪。"
                     if notification_too_large else
-                    f"CUT 拒绝接单（{rejected_reason}）；原始任务包已保留，请检查商品图绑定或 CUT 接单规则"
+                    f"CUT 拒绝接单（{rejected_reason}）；原始任务包已保留，"
+                    "请检查商品图绑定或 CUT 接单规则"
                     if permanently_rejected and rejected_reason
                     else "CUT 拒绝当前任务包（HTTP 409）；原始素材未被删除，请检查 CUT 接单日志"
                     if permanently_rejected
