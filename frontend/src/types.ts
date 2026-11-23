@@ -827,6 +827,8 @@ export interface AdminVideoRecord {
   width: number | null
   height: number | null
   variant: string
+  variantId?: string
+  variantIndex?: number | null
   provider: string
   validationStatus: string
   finalApprovalStatus: string
@@ -922,6 +924,35 @@ export interface AdminVideoTrace {
     createdAt: string | null
   }>
   limitations: string[]
+}
+
+export interface AdminCutDeliverable {
+  kind: 'single' | 'multi'
+  batchId: string
+  outputId: string
+  durationSeconds: number | null
+  createdAt: string | null
+  status: string
+}
+export interface AdminVideoTask {
+  taskId: string
+  title: string
+  username: string
+  brandName: string | null
+  createdAt: string | null
+  clips: AdminVideoRecord[]
+  rawClipCount: number
+  severity: AdminVideoSeverity
+  cut: AdminCutDeliverable | null
+  cutStatus: string | null
+}
+export interface AdminVideoTaskPage {
+  total: number
+  limit: number
+  offset: number
+  days: number
+  healthSummary: Record<AdminVideoSeverity, number>
+  items: AdminVideoTask[]
 }
 
 export interface AdminVideoPage {
