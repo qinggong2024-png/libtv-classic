@@ -27,6 +27,7 @@ from libtv_agent.config import Settings
 from libtv_agent.db import Database
 from libtv_agent.domain.models import MultiCutflowTask
 from libtv_agent.services import cutflow_observation
+from libtv_agent.services.account_access import settle_usd
 from libtv_agent.services.cutflow_handoff import (
     CutflowHandoffError,
     configured,
@@ -489,6 +490,22 @@ def read_multi_nas_status(
     return result
 
 
+async def _reconcile_terminal_cutflow_usage(session, task: MultiCutflowTask, values: dict) -> None:
+    """Transition only this CUT operation's reservation after a terminal result.
+
+    A verified and imported video is estimated consumption, not a final invoice.
+    Failed tasks need a billing verdict, so do not silently release their funds.
+    In-flight, missing-receipt and transport errors retain their reservation.
+    The caller MUST run this only after successfully fencing the same task lease,
+    inside the same database transaction as the task status update.
+    """
+    state = values.get("status")
+    if state == "PENDING_REVIEW" and values.get("output_json"):
+        await settle_usd(session, kind="CUTFLOW", operation_id=task.id, status="ESTIMATED")
+    elif state == "FAILED":
+        await settle_usd(session, kind="CUTFLOW", operation_id=task.id, status="UNCERTAIN")
+
+
 async def _write_claimed(
     database: Database,
     task: MultiCutflowTask,
@@ -506,6 +523,8 @@ async def _write_claimed(
             .values(**values, lease_token=None, lease_until=None)
             .execution_options(synchronize_session=False)
         )
+        if written.rowcount == 1:
+            await _reconcile_terminal_cutflow_usage(session, task, values)
         await session.commit()
         return written.rowcount == 1
 
@@ -915,6 +934,8 @@ async def process_multi_task(
             .values(**values, lease_token=None, lease_until=None)
             .execution_options(synchronize_session=False)
         )
+        if written.rowcount == 1:
+            await _reconcile_terminal_cutflow_usage(session, task, values)
         await session.commit()
         if written.rowcount != 1:
             return
