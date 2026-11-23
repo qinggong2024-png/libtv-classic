@@ -7,7 +7,7 @@ from urllib.error import URLError
 
 import pytest
 import test_cutflow_handoff as shared
-from libtv_agent.domain.models import MultiCutflowTask
+from libtv_agent.domain.models import AccountUsage, MultiCutflowTask
 from libtv_agent.runner import cutflow_worker
 from libtv_agent.services import cutflow_handoff
 from libtv_agent.services import cutflow_multi_worker as worker
@@ -524,3 +524,84 @@ def test_post_endpoint_uses_existing_auth_and_multisource_route(handoff_env, mon
         "method": "POST", "auth": f"Bearer {settings.cutflow_service_token}",
         "timeout": settings.cutflow_request_timeout_seconds, "body": payload,
     }
+
+
+async def _reserve_test_cutflow_usage(env, task, *, user_id, amount=150_000):
+    database, _settings, _store, _ids = env
+    async with database.session_factory() as session:
+        session.add(AccountUsage(
+            user_id=user_id, kind="CUTFLOW", pricing_category="CUTFLOW",
+            operation_id=task.id, business_date=datetime.now(UTC).date(),
+            units=1, amount_microusd=amount, status="RESERVED",
+        ))
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_verified_cut_output_estimates_reservation_without_duplicate_charge(
+    handoff_env, monkeypatch,
+):
+    database, settings, store, ids = handoff_env
+    task = await create_multi_task(handoff_env)
+    await _reserve_test_cutflow_usage(handoff_env, task, user_id=ids["user"])
+    response = cut_response(task, status="completed", outputs=[output_payload(task)])
+    monkeypatch.setattr(worker, "cut_multi_status_request", lambda *_: response)
+
+    async def imported(*_args):
+        return [{"id": "output-1", "task_id": str(task.id), "review_status": "PENDING",
+                 "sha256": response["outputs"][0]["sha256"], "size_bytes": 7,
+                 "object_key": "verified/output.mp4", "manifest_sha256": MANIFEST_HASH}]
+
+    monkeypatch.setattr(worker, "import_multi_outputs", imported)
+    await worker.process_multi_task(database, settings, store, task, "lease-token")
+    async with database.session_factory() as session:
+        saved = await session.get(MultiCutflowTask, task.id)
+        row = await session.scalar(select(AccountUsage).where(
+            AccountUsage.kind == "CUTFLOW", AccountUsage.operation_id == task.id,
+        ))
+        assert saved.status == "PENDING_REVIEW"
+        assert row.status == "ESTIMATED"  # not an external invoice
+        assert row.units == 1 and row.amount_microusd == 150_000
+        assert len((await session.scalars(select(AccountUsage).where(
+            AccountUsage.operation_id == task.id,
+        ))).all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_authoritative_cut_failure_preserves_amount_as_uncertain(
+    handoff_env, monkeypatch,
+):
+    database, settings, store, ids = handoff_env
+    task = await create_multi_task(handoff_env)
+    await _reserve_test_cutflow_usage(handoff_env, task, user_id=ids["user"])
+    monkeypatch.setattr(worker, "cut_multi_status_request", lambda *_: cut_response(
+        task, status="failed",
+    ))
+    await worker.process_multi_task(database, settings, store, task, "lease-token")
+    async with database.session_factory() as session:
+        saved = await session.get(MultiCutflowTask, task.id)
+        row = await session.scalar(select(AccountUsage).where(
+            AccountUsage.operation_id == task.id, AccountUsage.kind == "CUTFLOW",
+        ))
+        assert saved.status == "FAILED"
+        assert row.status == "UNCERTAIN"  # never assume the receiver gave a refund
+        assert row.amount_microusd == 150_000
+
+
+@pytest.mark.asyncio
+async def test_transport_uncertainty_keeps_active_cut_reservation(
+    handoff_env, monkeypatch,
+):
+    database, settings, store, ids = handoff_env
+    task = await create_multi_task(handoff_env)
+    await _reserve_test_cutflow_usage(handoff_env, task, user_id=ids["user"])
+    monkeypatch.setattr(worker, "cut_multi_status_request", lambda *_: (_ for _ in ()).throw(
+        URLError("offline fixture"),
+    ))
+    await worker.process_multi_task(database, settings, store, task, "lease-token")
+    async with database.session_factory() as session:
+        row = await session.scalar(select(AccountUsage).where(
+            AccountUsage.operation_id == task.id, AccountUsage.kind == "CUTFLOW",
+        ))
+        assert row.status == "RESERVED"
+        assert (await session.get(MultiCutflowTask, task.id)).status == "EDITING"
