@@ -25,7 +25,7 @@ describe('account page permissions', () => {
 
   it('hides every management section from members, brand admins and other admin names', () => {
     for (const actor of [member, { ...member, isBrandAdmin: true }, { ...member, role: 'ADMIN' as const }, { ...member, username: 'classic-admin' }]) {
-      for (const section of ['overview', 'accounts', 'providers', 'security'] as const) {
+      for (const section of ['overview', 'quality', 'accounts', 'providers', 'security'] as const) {
         const html = renderToStaticMarkup(createElement(AdminCenterView, { actor, system: null, section, onSectionChange() {}, async onKlingChanged() {} }))
         expect(html).toContain('没有管理中心权限')
         expect(html).not.toContain('管理中心导航')
