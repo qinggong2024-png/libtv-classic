@@ -31,6 +31,7 @@ from libtv_agent.services.brand_identity import brand_identity, brand_response
 from libtv_agent.services.kling_cli_cost import credits_to_microusd, estimate_cli_credits
 from libtv_agent.services.page_access import PagePermission
 from libtv_agent.services.points import SHANGHAI, business_date
+from libtv_agent.services.prompt_presets import DEFAULT_PROMPT_PRESET_SPECS
 from libtv_agent.services.runtime_control import get_runtime_config, update_runtime_config
 from libtv_agent.services.usage_pricing import PRICE_COLUMNS, PRICING_KEY, global_usage_prices
 from libtv_agent.services.usage_reports import aggregate_usage, display_totals, empty_totals
@@ -286,11 +287,23 @@ async def patch_policy(
                 (CatalogEntry, CatalogEntry.updated_by),
                 (AccountUsage, AccountUsage.user_id),
                 (StagedUpload, StagedUpload.user_id),
-                (PromptPreset, PromptPreset.user_id),
                 (SubjectElementJob, SubjectElementJob.user_id),
             ):
                 if await session.scalar(select(model.id).where(owner == user.id).limit(1)):
                     raise HTTPException(409, "账号已有品牌数据，请停用旧账号并创建新品牌账号")
+            presets = (
+                await session.execute(
+                    select(PromptPreset.scope, PromptPreset.name, PromptPreset.content)
+                    .where(PromptPreset.user_id == user.id)
+                )
+            ).all()
+            # Creating an account seeds four generic presets automatically.
+            # They are not brand-owned assets and must not lock a mistaken
+            # brand assignment. Customized/new presets still block reassignment.
+            if len(presets) != len(set(presets)) or any(
+                tuple(preset) not in DEFAULT_PROMPT_PRESET_SPECS for preset in presets
+            ):
+                raise HTTPException(409, "账号已有自定义提示词或品牌数据，请创建新品牌账号")
         if payload.brandId is not None and await session.get(Brand, payload.brandId) is None:
             raise HTTPException(404, "品牌不存在")
         user.brand_id = payload.brandId

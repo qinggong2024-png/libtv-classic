@@ -17,6 +17,7 @@ from libtv_agent.domain.models import (
     Brand,
     GenerationVariant,
     ParentTask,
+    PromptPreset,
     User,
 )
 from libtv_agent.services.account_access import reserve_usd, settle_usd
@@ -166,6 +167,72 @@ async def test_new_accounts_default_to_five_dollar_daily_budget(account_app, rol
     policies = {user["username"]: user["dailyBudgetUsd"] for user in users.json()}
     assert policies["budget-default"] == 5
     assert policies["member"] is None
+
+
+async def test_brand_can_be_corrected_when_only_auto_seeded_presets_exist(account_app):
+    app, client, ids = account_app
+    admin = actor(ids, "root")
+    created = await client.post(
+        "/api/v1/admin/users", headers=admin,
+        json={
+            "username": "Y2K", "password": "test-password-only-123",
+            "brandId": str(ids["a"]),
+        },
+    )
+    assert created.status_code == 201, created.text
+    user_id = uuid.UUID(created.json()["id"])
+    async with app.state.database.session_factory() as session:
+        presets = list(await session.scalars(
+            select(PromptPreset).where(PromptPreset.user_id == user_id)
+        ))
+        assert len(presets) == 4
+    response = await client.patch(
+        f"/api/v1/admin/users/{user_id}/policy", headers=admin,
+        json={"brandId": str(ids["b"]), "dailyBudgetUsd": 50},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["brandId"] == str(ids["b"])
+    assert response.json()["dailyBudgetUsd"] == 50
+    async with app.state.database.session_factory() as session:
+        assert len(list(await session.scalars(
+            select(PromptPreset).where(PromptPreset.user_id == user_id)
+        ))) == 4
+
+
+async def test_brand_change_still_denied_for_custom_preset_or_paid_usage(account_app):
+    app, client, ids = account_app
+    admin = actor(ids, "root")
+    for suffix, business in (("custom", False), ("usage", True)):
+        created = await client.post(
+            "/api/v1/admin/users", headers=admin,
+            json={
+                "username": "wrong-brand-" + suffix,
+                "password": "test-password-only-123", "brandId": str(ids["a"]),
+            },
+        )
+        assert created.status_code == 201, created.text
+        user_id = uuid.UUID(created.json()["id"])
+        async with app.state.database.session_factory() as session:
+            if business:
+                user = await session.get(User, user_id)
+                user.image_price_microusd = 100_000
+                await reserve_usd(
+                    session, user_id=user_id, kind="IMAGE",
+                    operation_id=uuid.uuid4(), units=1,
+                )
+            else:
+                session.add(PromptPreset(
+                    user_id=user_id, scope="video", name="custom",
+                    content="Custom brand-dependent user instructions", sort_order=1,
+                ))
+            await session.commit()
+        blocked = await client.patch(
+            f"/api/v1/admin/users/{user_id}/policy",
+            headers=admin, json={"brandId": str(ids["b"])},
+        )
+        assert blocked.status_code == 409, blocked.text
+        async with app.state.database.session_factory() as session:
+            assert (await session.get(User, user_id)).brand_id == ids["a"]
 
 
 async def test_usage_scope_and_account_policy(account_app):
