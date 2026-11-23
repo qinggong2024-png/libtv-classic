@@ -29,6 +29,7 @@ from libtv_agent.services.bach_config import (
     bach_admin_config_signature,
     load_bach_admin_config,
 )
+from libtv_agent.services.classic_api_active_role import api_owns_background_recovery
 from libtv_agent.services.confirmation_recovery import (
     recover_stale_batch_confirmation_claims,
     recover_stale_confirmation_claims,
@@ -104,7 +105,8 @@ async def _recover_stale_confirmation_claims(app: FastAPI) -> None:
 async def _analysis_recovery_loop(app: FastAPI) -> None:
     while True:
         await asyncio.sleep(app.state.settings.analysis_recovery_poll_seconds)
-        await _recover_stale_analyses(app)
+        if api_owns_background_recovery(app.state.settings):
+            await _recover_stale_analyses(app)
 
 
 async def _refresh_active_image_generation_batches(app: FastAPI) -> int:
@@ -127,7 +129,8 @@ async def _refresh_active_image_generation_batches(app: FastAPI) -> int:
 async def _image_generation_recovery_loop(app: FastAPI) -> None:
     while True:
         await asyncio.sleep(app.state.settings.wavespeed_video_poll_interval_seconds)
-        await _refresh_active_image_generation_batches(app)
+        if api_owns_background_recovery(app.state.settings):
+            await _refresh_active_image_generation_batches(app)
 
 
 async def _shutdown_analysis_jobs(app: FastAPI) -> None:
@@ -248,11 +251,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.database = Database(app_settings.database_url)
-        await _recover_stale_analyses(app)
-        await _recover_stale_materialization_tasks(app)
-        await _recover_stale_confirmation_claims(app)
+        if api_owns_background_recovery(app_settings):
+            await _recover_stale_analyses(app)
+            await _recover_stale_materialization_tasks(app)
+            await _recover_stale_confirmation_claims(app)
         try:
-            recovered_subject_jobs = await recover_subject_element_jobs(app)
+            recovered_subject_jobs = (
+                await recover_subject_element_jobs(app)
+                if api_owns_background_recovery(app_settings) else 0
+            )
             if recovered_subject_jobs:
                 logger.warning(
                     "recovered reusable Kling subject jobs",
@@ -262,7 +269,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Database readiness remains the health endpoint's responsibility.
             logger.exception("reusable Kling subject job recovery failed")
         try:
-            recovered_feedback_jobs = await recover_feedback_learning_jobs(app)
+            recovered_feedback_jobs = (
+                await recover_feedback_learning_jobs(app)
+                if api_owns_background_recovery(app_settings) else 0
+            )
             if recovered_feedback_jobs:
                 logger.info(
                     "recovered feedback learning jobs",
@@ -287,7 +297,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "WaveSpeed read-only verification failed at startup: %s",
                     availability.status,
                 )
-        recovered_image_batches = await _refresh_active_image_generation_batches(app)
+        recovered_image_batches = (
+            await _refresh_active_image_generation_batches(app)
+            if api_owns_background_recovery(app_settings) else 0
+        )
         if recovered_image_batches:
             logger.warning(
                 "refreshed persisted WaveSpeed image batches",

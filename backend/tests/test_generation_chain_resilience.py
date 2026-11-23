@@ -177,6 +177,62 @@ async def test_delivery_refresh_failure_keeps_original_handle_and_cooldown(
     query.assert_awaited_once_with("original-paid-task")
 
 
+@pytest.mark.parametrize("account_state", ["mismatch", "matched"])
+async def test_official_api_download_refresh_requires_original_paid_account(
+    world,  # noqa: F811
+    monkeypatch, account_state,
+):
+    app, factory, _, _ = world
+    provider = app.state.settings.kling_api_provider_name
+    async with factory() as session:
+        _, variant, attempt, _, _ = await _stranded_command(
+            session, provider=provider, lease_expires_at=None,
+        )
+        attempt.provider_account_id = "original-account"
+        attempt.status = AttemptStatus.SUCCEEDED
+        attempt.task_id = "original-cloud-handle"
+        attempt.output_url = "https://synthetic.invalid/expired.mp4"
+        attempt.last_error_code = "DOWNLOAD_RETRYABLE"
+        variant.download_status = DownloadStatus.FAILED
+        await session.commit()
+        await session.execute(
+            update(GenerationAttempt).where(
+                GenerationAttempt.id == attempt.id,
+            ).values(updated_at=datetime.now(UTC) - timedelta(minutes=2))
+        )
+        await session.commit()
+        attempt_id = attempt.id
+    adapter = SimpleNamespace(
+        submission_account_id=AsyncMock(return_value=(
+            "wrong-account" if account_state == "mismatch" else "original-account"
+        )),
+        query=AsyncMock(return_value=ProviderTaskResult(
+            "succeeded", "COMPLETED",
+            (ProviderOutput("https://synthetic.invalid/refreshed.mp4"),), {},
+        )),
+        submit=AsyncMock(),
+    )
+    supervisor = RunnerSupervisor(object(), object(), app.state.settings)
+    supervisor._kling_adapters[provider] = adapter
+    delivery = AsyncMock()
+    monkeypatch.setattr(supervisor, "_handle_success", delivery)
+    async with factory() as session:
+        processed = await supervisor.resume_incomplete_downloads(session)
+    assert processed == (0 if account_state == "mismatch" else 1)
+    async with factory() as session:
+        original = await session.get(GenerationAttempt, attempt_id)
+        assert original.task_id == "original-cloud-handle"
+        assert original.status == AttemptStatus.SUCCEEDED
+        assert original.charge_status is not None
+    if account_state == "mismatch":
+        adapter.query.assert_not_awaited()
+        delivery.assert_not_awaited()
+    else:
+        adapter.query.assert_awaited_once_with("original-cloud-handle")
+        delivery.assert_awaited_once()
+    adapter.submit.assert_not_awaited()
+
+
 async def test_cancelled_task_is_excluded_from_delivery_recovery(world, monkeypatch):  # noqa: F811
     app, factory, _, _ = world
     async with factory() as session:

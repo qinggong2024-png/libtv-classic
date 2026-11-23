@@ -6,8 +6,10 @@ format is derived only when its shot timing is unambiguous and lossless.
 from __future__ import annotations
 
 import logging
+import os
 import re
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from pathlib import Path
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from libtv_agent.adapters.video_provider import VideoGenerationRequest
 
@@ -266,6 +268,19 @@ def _normalize_image_refs_if_safe(prompt: str, request: VideoGenerationRequest) 
         return prompt
 
 
+def _translator_lite_enabled() -> bool:
+    """Production opt-in with a live, no-restart rollback marker."""
+    if os.environ.get("ALLWE_KLING_TRANSLATOR_LITE_ENABLED") != "1":
+        return False
+    marker = os.environ.get("ALLWE_KLING_TRANSLATOR_LITE_DISABLE_FILE", "")
+    if not marker:
+        return False
+    try:
+        return not Path(marker).is_file()
+    except OSError:
+        return False
+
+
 def api_ootd_prompt(request: VideoGenerationRequest) -> str:
     """Independently, optionally format image aliases and native shot timing.
 
@@ -286,6 +301,16 @@ def api_ootd_prompt(request: VideoGenerationRequest) -> str:
         if len(prompt) > 3072:
             # An optional image-role header must not cause a new input error.
             prompt = original
+        # Only the provider-facing prompt receives execution memory. The
+        # stored Sol original, product artwork and shot plan stay unchanged.
+        hint = request.director_memory_kling_hint
+        if (is_ootd and isinstance(hint, str)
+                and 12 <= len(hint) <= 520
+                and "\n" not in hint and "\r" not in hint
+                and len(hint) + 1 + len(prompt) <= 3072):
+            # Frozen at task preparation, identical for validation, submit
+            # and duplicate/unknown-result reconciliation.
+            prompt = hint + "\n" + prompt
     except Exception as exc:
         _LOG.warning("KLING_IMAGE_ROLE_HEADER_FALLBACK: %s", type(exc).__name__)
         prompt = original
@@ -298,6 +323,29 @@ def api_ootd_prompt(request: VideoGenerationRequest) -> str:
         _LOG.warning("KLING_IMAGE_REFERENCE_NORMALIZE_FALLBACK: %s", type(exc).__name__)
     if not is_ootd or request.multi_shot is False:
         return prompt
+
+    if _translator_lite_enabled():
+        try:
+            # Import lazily: Lite reuses the existing parser's Sol headings.
+            from libtv_agent.adapters.kling_prompt_translator_lite import (
+                translate_sol_shots,
+            )
+            result = translate_sol_shots(prompt, request.duration)
+            if len(result.kling_prompt) > 3072:
+                raise ValueError("Kling V3 Lite prompt exceeds 3072 characters")
+            # Unparseable prompts remain untouched; do not pass them through
+            # a second formatter with a different cut-rounding policy.
+            _LOG.info(
+                "KLING_TRANSLATOR_LITE mode=%s reason=%s shots=%s "
+                "integer_durations=%s cut_adjustments=%s",
+                result.mode, result.reason, result.shot_count,
+                result.integer_shot_durations, result.cut_adjustments,
+            )
+            return result.kling_prompt
+        except Exception as exc:
+            _LOG.warning("KLING_TRANSLATOR_LITE_FALLBACK: %s", type(exc).__name__)
+            return prompt
+
     try:
         formatted = _native_shots_if_safe(prompt, request.duration)
         if len(formatted) > 3072:

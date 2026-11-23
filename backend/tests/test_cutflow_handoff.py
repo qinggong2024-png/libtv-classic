@@ -450,7 +450,7 @@ def test_cutflow_migration_has_single_head_and_upgrades_existing_schema(tmp_path
         database_url=f"sqlite+aiosqlite:///{(tmp_path / 'migration.db').as_posix()}",
     )
     monkeypatch.setattr(config_module, "get_settings", lambda: settings)
-    assert ScriptDirectory.from_config(configuration).get_heads() == ["e7b9c6a13240"]
+    assert ScriptDirectory.from_config(configuration).get_heads() == ["a4c8d1e90b26"]
     command.upgrade(configuration, "f6a12c9e408b")
     engine = create_engine(f"sqlite:///{(tmp_path / 'migration.db').as_posix()}")
     with engine.begin() as connection:
@@ -464,16 +464,19 @@ def test_cutflow_migration_has_single_head_and_upgrades_existing_schema(tmp_path
     with engine.connect() as connection:
         assert "cutflow_handoff" in inspect(connection).get_table_names()
         assert "multi_cutflow_task" in inspect(connection).get_table_names()
+        assert "task_attention_acknowledgement" in inspect(connection).get_table_names()
         assert connection.execute(text("SELECT username FROM app_user")).scalar() == "preserved"
         indexes = {entry["name"] for entry in inspect(connection).get_indexes("cutflow_handoff")}
         assert "ix_cutflow_handoff_status" in indexes
     command.downgrade(configuration, "c9e3f4a5b6d7")
     with engine.connect() as connection:
         assert "multi_cutflow_task" not in inspect(connection).get_table_names()
+        assert "task_attention_acknowledgement" not in inspect(connection).get_table_names()
         assert "cutflow_handoff" in inspect(connection).get_table_names()
         assert connection.execute(text("SELECT username FROM app_user")).scalar() == "preserved"
     command.upgrade(configuration, "head")
     with engine.connect() as connection:
         assert "multi_cutflow_task" in inspect(connection).get_table_names()
+        assert "task_attention_acknowledgement" in inspect(connection).get_table_names()
         assert connection.execute(text("SELECT username FROM app_user")).scalar() == "preserved"
     engine.dispose()

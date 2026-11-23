@@ -3,6 +3,12 @@ import { ApiError } from './api'
 import { errorMessage, plainText, userFacingError, validationMessage } from './errorPresentation'
 
 describe('plain-language errors', () => {
+  it('explains the classic new-task maintenance freeze without implying existing tasks stopped', () => {
+    const message = userFacingError({ code: 'CLASSIC_NEW_VIDEO_TASKS_PAUSED', status: 503 })
+    expect(message).toContain('暂停新建视频任务')
+    expect(message).toContain('已提交任务')
+  })
+
   it('explains how to recover from login, permissions, budget and unavailable generation', () => {
     expect(userFacingError({ code: 'CSRF_REJECTED' })).toContain('刷新页面')
     expect(userFacingError({ code: 'PAGE_ACCESS_DENIED' })).toContain('联系管理员')

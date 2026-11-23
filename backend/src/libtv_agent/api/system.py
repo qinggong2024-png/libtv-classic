@@ -11,13 +11,26 @@ from libtv_agent.services.ai_creative_planner import (
     V25_EXPERIMENTAL_VERSION,
     production_v25_enabled,
 )
+from libtv_agent.services.classic_admission_gate import new_video_admission_paused
 from libtv_agent.services.cutflow_multi_worker import multi_worker_ready
 from libtv_agent.services.cutflow_protocol import JOB_CONTRACT
 from libtv_agent.services.database_schema import inspect_database_schema
-from libtv_agent.services.ootd_simple import PROFILE as OOTD_PROFILE
 from libtv_agent.services.generation_safety import paid_generation_authorized
+from libtv_agent.services.ootd_simple import PROFILE as OOTD_PROFILE
 
 router = APIRouter(prefix="/system", tags=["system"])
+
+@router.get("/classic-new-video-admission")
+async def classic_new_video_admission_status(request: Request) -> dict[str, object]:
+    """Safe read-only handshake for the local intake operator utility."""
+    settings = request.app.state.settings
+    return {
+        "gateVersion": 1,
+        "deploymentId": settings.deployment_id,
+        "configured": settings.classic_new_video_pause_file is not None,
+        "newVideoAdmissionsPaused": new_video_admission_paused(settings),
+        "scope": "new-video-create-only",
+    }
 
 
 def _runtime_version() -> str:

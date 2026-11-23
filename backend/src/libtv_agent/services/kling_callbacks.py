@@ -8,6 +8,10 @@ from typing import Any
 
 from libtv_agent.domain.enums import AttemptStatus, GenerationStatus
 from libtv_agent.domain.models import GenerationAttempt, GenerationVariant
+from libtv_agent.services.kling_risk_control import (
+    KLING_RISK_CONTROL_ERROR,
+    kling_risk_control_rejected,
+)
 from libtv_agent.services.provider_errors import clear_provider_error, record_provider_error
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -155,8 +159,10 @@ async def process_kling_callback(
     if verified.status == "failed":
         record_provider_error(
             attempt,
-            code="KLING_REMOTE_TASK_FAILED",
-            message=observation.message or "Kling remote generation failed",
+            code=(KLING_RISK_CONTROL_ERROR if kling_risk_control_rejected(
+                verified.message or verified.raw_response.get("message")
+            ) else "KLING_REMOTE_TASK_FAILED"),
+            message=verified.message or observation.message or "Kling remote generation failed",
             details={
                 "providerTaskId": observation.provider_task_id,
                 "providerStatus": observation.status,

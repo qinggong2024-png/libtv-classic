@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     shared_authentication_enabled: bool = False
 
     database_url: str = "postgresql+asyncpg://libtv_agent:libtv_agent@localhost:5432/libtv_agent"
+    # Classic 5176 only: optional runtime file to reject *new* video creation.
+    # No file and no configured path mean normal unrestricted behavior.
+    classic_new_video_pause_file: Path | None = None
+    # Cooperative owner for Classic LAN API background recovery, 8002/8003.
+    # Unconfigured for every other deployment.
+    classic_api_route_file: Path | None = None
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "libtv_agent"
     minio_secret_key: str = "change-me-before-shared-use"

@@ -82,6 +82,28 @@ def runner_ready(state: dict) -> bool:
         return False
 
 
+def supervised_green_recovery_pending() -> bool:
+    """Permit the independent monitor to recover a pinned green after reboot.
+
+    Never report the site fully healthy here: the 5176 HTTP health endpoint
+    remains 502 until the SAME green API is actually restored. A manual
+    classic_lan start does not get this degraded-supervised exception.
+    """
+    if os.environ.get("CLASSIC_MANAGED_GREEN_RECOVERY") != "1":
+        return False
+    try:
+        from classic_green_api import green_process, read_manifest, web_route
+
+        manifest = read_manifest()
+        return bool(
+            manifest
+            and green_process(manifest) is None
+            and web_route().get("activeApiPort") == 8003
+        )
+    except Exception:
+        return False
+
+
 def protect_runtime() -> None:
     STATE.parent.mkdir(parents=True, exist_ok=True)
     if os.name != "nt":
@@ -123,6 +145,13 @@ def lan_environment(api_port: int, web_port: int, lan_ip: str) -> dict[str, str]
             "OBJECT_STORE_PREFIX": "classic-lan-0e3d1c8",
             "ARTIFACT_ROOT": str(STORAGE / "artifacts"),
             "RUNNER_ROOT": str(STORAGE / "runner"),
+            # Existing tasks continue during a maintenance intake freeze.
+            # The classic API checks this file on each *new* video create.
+            "CLASSIC_NEW_VIDEO_PAUSE_FILE": str(
+                STORAGE / "runtime" / "pause-new-video-tasks.flag"
+            ),
+            "CLASSIC_API_ROUTE_FILE": str(STORAGE / "runtime" / "api-routing.json"),
+            "CLASSIC_WORKER_LEASE_DIR": str(STORAGE / "runtime"),
             "LIBTV_CONFIG_DIR": str(STORAGE / "runtime" / "libtv"),
             "SHARED_AUTHENTICATION_ENABLED": "true",
             "SESSION_SECRET": SECRET_FILE.read_text(encoding="utf-8").strip(),
@@ -146,6 +175,13 @@ def lan_environment(api_port: int, web_port: int, lan_ip: str) -> dict[str, str]
             "ALLWE_OOTD_SUBMISSION_AUDIT_ENABLED": "1" if (
                 STORAGE / "runtime" / "enable-ootd-wire-audit.flag"
             ).exists() else "0",
+            # Kling 3.0 Omni OOTD Sol -> camera-language Lite.
+            # Disable instantly for new prompts by creating the marker
+            # file below; the running Runner/API check it for each prompt.
+            "ALLWE_KLING_TRANSLATOR_LITE_ENABLED": "1",
+            "ALLWE_KLING_TRANSLATOR_LITE_DISABLE_FILE": str(
+                STORAGE / "runtime" / "disable-kling-translator-lite.flag"
+            ),
             # USP/V3.4 and prior pacing are OFF for new automatic jobs.
             "AI_CREATIVE_V25_ENABLED": "false",
             "FASTCUT_UGC_PACING_V1_ENABLED": "false",
@@ -234,6 +270,8 @@ def launch_commands(
                 node, str(ROOT / "scripts" / "classic_web_server.mjs"),
                 "--root", str(ROOT / "frontend" / "dist"), "--host", lan_ip,
                 "--port", str(web_port), "--api-port", str(api_port),
+                "--alternate-api-port", str(api_port + 1),
+                "--api-route-file", str(STORAGE / "runtime" / "api-routing.json"),
             ],
         ),
     ]
@@ -282,6 +320,10 @@ def main() -> None:
     args = parser.parse_args()
     state = json.loads(STATE.read_text()) if STATE.exists() else {}
     if args.action == "stop":
+        # Never orphan a green API that is still serving 5176.
+        from classic_green_api import stop_green
+
+        stop_green()
         STOP_FILE.parent.mkdir(parents=True, exist_ok=True)
         STOP_FILE.touch()
         stop_stack(state, STATE)
@@ -392,10 +434,19 @@ def main() -> None:
         while time.monotonic() < deadline:
             if (
                 ready(args.web_port)
-                and ready(args.web_port, "/api/v1/health/ready")
+                and (
+                    ready(args.web_port, "/api/v1/health/ready")
+                    or supervised_green_recovery_pending()
+                )
                 and (not authorized or runner_ready(state))
             ):
-                print(f"Classic LAN ready: {state['url']}")
+                if ready(args.web_port, "/api/v1/health/ready"):
+                    print(f"Classic LAN ready: {state['url']}")
+                else:
+                    print(
+                        "Classic LAN web started; pinned green API is still unavailable. "
+                        "Supervised recovery pending; HTTP readiness remains unhealthy."
+                    )
                 print(f"Initial administrator credentials (local only): {LOGIN_FILE}")
                 return
             if not all(owned_process(p) for p in state["processes"]):

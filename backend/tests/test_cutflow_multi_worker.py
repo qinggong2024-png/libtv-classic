@@ -441,6 +441,62 @@ async def test_publish_multi_package_copies_sources_then_publishes_ready_last(ha
     assert descriptor["sources"][0]["relative_path"] == "sources/01.mp4"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("damage", ["missing_ready", "wrong_ready", "changed_source"])
+async def test_existing_cut_package_repairs_only_a_missing_ready_after_media_check(
+    handoff_env, damage,
+):
+    _database, settings, store, ids = handoff_env
+    task_id = uuid.uuid4()
+    source_path = settings.artifact_root / "ready-recovery-source.mp4"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_bytes(b"recovery media fixture")
+    object_key = await store.put_file(
+        source_path, "multi/ready-recovery-source.mp4", "video/mp4",
+    )
+    source_digest = hashlib.sha256(b"recovery media fixture").hexdigest()
+    task = SimpleNamespace(
+        id=task_id, user_id=ids["user"], created_at=datetime.now(UTC),
+        sources_json=[{
+            "clipId": "clip-1", "order": 1, "relativePath": "sources/01.mp4",
+            "sha256": source_digest, "sizeBytes": len(b"recovery media fixture"),
+            "durationSeconds": 2.0, "userId": str(ids["user"]),
+            "taskId": "original-parent", "variantId": "original-variant",
+            "artifactId": "original-artifact", "attemptId": "original-attempt",
+            "objectKey": object_key,
+        }],
+    )
+    first, original_hash = await worker.publish_multi_package(task, settings, store)
+    final = settings.cutflow_handoff_root / "inbox" / f"multi-{task_id}"
+    original_manifest = (final / "manifest.json").read_bytes()
+    ready = final / "READY"
+    if damage == "missing_ready":
+        ready.unlink()
+        restored, restored_hash = await worker.publish_multi_package(
+            task, settings, store,
+        )
+        assert restored_hash == original_hash
+        assert restored == first
+        assert json.loads(ready.read_text(encoding="utf-8")) == {
+            "sha256": original_hash,
+        }
+    else:
+        if damage == "wrong_ready":
+            ready.write_text('{"sha256":"tampered"}', encoding="utf-8")
+        else:
+            ready.unlink()
+            (final / "sources" / "01.mp4").write_bytes(b"altered media")
+        with pytest.raises(CutflowHandoffError) as caught:
+            await worker.publish_multi_package(task, settings, store)
+        assert caught.value.code == (
+            "IMMUTABLE_RESULT_CHANGED" if damage == "wrong_ready"
+            else "CUTFLOW_SOURCE_INVALID"
+        )
+        if damage == "changed_source":
+            assert not ready.exists(), "never publish READY for corrupted media"
+    assert (final / "manifest.json").read_bytes() == original_manifest
+
+
 def test_post_endpoint_uses_existing_auth_and_multisource_route(handoff_env, monkeypatch):
     _database, settings, _store, _ids = handoff_env
     seen = {}

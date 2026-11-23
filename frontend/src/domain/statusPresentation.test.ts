@@ -43,6 +43,17 @@ describe('status presentation', () => {
     })
   })
 
+  it('keeps durable Sol retries in processing rather than paid generation failure', () => {
+    expect(taskStatusPresentation(task('ANALYZING', {
+      phaseReasonCode: 'AI_CREATIVE_RETRY_SCHEDULED',
+    }))).toMatchObject({
+      semantic: 'processing',
+      tone: 'active',
+      label: 'AI 编排等待自动重试',
+      primaryAction: null,
+    })
+  })
+
   it('maps analysis failures to a retry-aware failed presentation', () => {
     expect(taskStatusPresentation(task('ACTION_REQUIRED', {
       phaseReasonCode: 'ANALYSIS_TIMEOUT',

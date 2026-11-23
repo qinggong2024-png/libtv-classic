@@ -4,14 +4,19 @@ import { realpath, stat } from 'node:fs/promises'
 import { extname, isAbsolute, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
+import { activeClassicApiPort, validClassicPorts } from './classic_api_routing.mjs'
 
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.json': 'application/json' }
 const csp = "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'"
 
-export async function startClassicServer({ root, hosts, port, apiPort }) {
+export async function startClassicServer({ root, hosts, port, apiPort, alternateApiPort, apiRouteFile }) {
+  const allowedApiPorts = validClassicPorts(apiPort, alternateApiPort)
+  if (apiRouteFile && !alternateApiPort) throw new Error('Hot API routing requires an alternate API port')
+  const route = () => activeClassicApiPort({ routeFile: apiRouteFile, primaryPort: apiPort, alternatePort: alternateApiPort })
   const dist = await realpath(root)
   await stat(resolve(dist, 'index.html'))
   const servers = []
+  const inFlightByPort = new Map(allowedApiPorts.map(value => [value, 0]))
   const handler = async (request, response) => {
     response.setHeader('X-Content-Type-Options', 'nosniff')
     response.setHeader('Referrer-Policy', 'same-origin')
@@ -20,8 +25,42 @@ export async function startClassicServer({ root, hosts, port, apiPort }) {
     const allowed = hosts.some(host => requestHost === `${host}:${port}`)
       || requestHost === `localhost:${port}`
     if (!allowed) { response.writeHead(403); response.end('Host not allowed'); return }
+    if (request.url === '/__classic_api_route/status') {
+      if (request.method !== 'GET' || !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(request.socket.remoteAddress)) {
+        response.writeHead(403); response.end(); return
+      }
+      try {
+        const activeApiPort = await route()
+        response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+        response.end(JSON.stringify({ hotRouteVersion: apiRouteFile ? 1 : 0,
+          activeApiPort, allowedApiPorts, configured: Boolean(apiRouteFile),
+          inFlightByPort: Object.fromEntries(inFlightByPort) }))
+      } catch {
+        response.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+        response.end('{"code":"CLASSIC_API_ROUTE_INVALID"}')
+      }
+      return
+    }
     if (request.url === '/api' || request.url.startsWith('/api/')) {
-      const upstream = http.request({ hostname: '127.0.0.1', port: apiPort, method: request.method,
+      let targetPort
+      try { targetPort = await route() } catch {
+        response.writeHead(503, { 'Content-Type': 'application/json' })
+        response.end('{"detail":"Classic API routing configuration unavailable"}')
+        return
+      }
+      if (request.destroyed) return
+      // Once a request chooses its upstream, a later route switch never moves
+      // this in-flight request to a different backend.
+      inFlightByPort.set(targetPort, inFlightByPort.get(targetPort) + 1)
+      let accounted = false
+      const finish = () => {
+        if (accounted) return
+        accounted = true
+        inFlightByPort.set(targetPort, inFlightByPort.get(targetPort) - 1)
+      }
+      response.once('finish', finish)
+      response.once('close', finish)
+      const upstream = http.request({ hostname: '127.0.0.1', port: targetPort, method: request.method,
         path: request.url, headers: { ...request.headers, 'x-forwarded-host': request.headers.host,
           'x-forwarded-proto': 'http' } }, incoming => {
         response.writeHead(incoming.statusCode, incoming.headers)
@@ -85,10 +124,13 @@ export async function startClassicServer({ root, hosts, port, apiPort }) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { values } = parseArgs({ options: { root: { type: 'string' }, host: { type: 'string' },
-    port: { type: 'string' }, 'api-port': { type: 'string' } } })
+    port: { type: 'string' }, 'api-port': { type: 'string' },
+    'alternate-api-port': { type: 'string' }, 'api-route-file': { type: 'string' } } })
   if (!values.root || !values.host || !values.port || !values['api-port']) throw new Error('Missing server arguments')
   const service = await startClassicServer({ root: values.root,
-    hosts: [...new Set([values.host, '127.0.0.1'])], port: Number(values.port), apiPort: Number(values['api-port']) })
+    hosts: [...new Set([values.host, '127.0.0.1'])], port: Number(values.port), apiPort: Number(values['api-port']),
+    alternateApiPort: values['alternate-api-port'] ? Number(values['alternate-api-port']) : undefined,
+    apiRouteFile: values['api-route-file'] })
   console.log(`Classic build ready: http://${values.host}:${service.port}/`)
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => {
     await service.close(); process.exit(0)

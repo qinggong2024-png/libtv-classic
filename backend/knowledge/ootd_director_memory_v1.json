@@ -1,0 +1,133 @@
+{
+  "schema": "allwe-director-memory-v1",
+  "rules": [
+    {
+      "rule_id": "pw.brand.ugc",
+      "revision": 1,
+      "state": "ACTIVE",
+      "kind": "BRAND",
+      "destination": "SOL",
+      "brand": "pagewings",
+      "text": "Keep the feeling of a real American reader's everyday outfit. Let the bookish identity create a natural reason to wear it; show the garment clearly, without explaining the printed joke.",
+      "origin": "CURATED",
+      "evidence_ids": [
+        "user-approved:brand-pagewings-v3.1"
+      ],
+      "garment_category": null,
+      "director_mode": null,
+      "priority": 30
+    },
+    {
+      "rule_id": "nw.brand.young",
+      "revision": 1,
+      "state": "ACTIVE",
+      "kind": "BRAND",
+      "destination": "SOL",
+      "brand": "nerdywave",
+      "text": "Keep the wearer visually youthful and casually alternative, with believable house-party or everyday energy. Avoid staged gothic cosplay or exaggerated reactions; let the actual print set the tone.",
+      "origin": "CURATED",
+      "evidence_ids": [
+        "user-approved:brand-nerdywave-v3.1"
+      ],
+      "garment_category": null,
+      "director_mode": null,
+      "priority": 30
+    },
+    {
+      "rule_id": "gk.brand.workplace",
+      "revision": 1,
+      "state": "ACTIVE",
+      "kind": "BRAND",
+      "destination": "SOL",
+      "brand": "geeksoutfit",
+      "text": "Make geek humor feel like ordinary American workplace or friend-group self-expression. Favor believable coworker timing and natural understated reactions; keep the actual graphic visible.",
+      "origin": "CURATED",
+      "evidence_ids": [
+        "user-approved:brand-geeksoutfit-v3.1"
+      ],
+      "garment_category": null,
+      "director_mode": null,
+      "priority": 30
+    },
+    {
+      "rule_id": "pw.sweater.drape",
+      "revision": 1,
+      "state": "ACTIVE",
+      "kind": "FIT_MATERIAL",
+      "destination": "KLING",
+      "brand": "pagewings",
+      "text": "For sweater-category references, preserve the silhouette, hem construction and visible short surface texture actually present in THIS original image; do not impose generic ribbing or invent fiber content.",
+      "origin": "CURATED",
+      "evidence_ids": [
+        "user-approved:garment-consistency-pagewings"
+      ],
+      "garment_category": "sweater",
+      "director_mode": null,
+      "priority": 20
+    },
+    {
+      "rule_id": "nw.tee.drape",
+      "revision": 1,
+      "state": "ACTIVE",
+      "kind": "FIT_MATERIAL",
+      "destination": "KLING",
+      "brand": "nerdywave",
+      "text": "For tee-category references, preserve the actual T-shirt cut and original fabric drape. Do not tighten the torso or change the neckline merely to emphasize the changing print.",
+      "origin": "CURATED",
+      "evidence_ids": [
+        "user-approved:generic-fit-consistency"
+      ],
+      "garment_category": "tee",
+      "director_mode": null,
+      "priority": 10
+    },
+    {
+      "rule_id": "pagewings.all.fit",
+      "revision": 1,
+      "state": "ACTIVE",
+      "kind": "FIT_MATERIAL",
+      "destination": "KLING",
+      "brand": "pagewings",
+      "text": "Keep the garment silhouette, neckline, hem, visible fabric surface and natural drape consistent with THIS original product image. Never invent fiber composition, print lettering or unseen construction.",
+      "origin": "CURATED",
+      "evidence_ids": [
+        "user-approved:shared-ootd-garment-consistency"
+      ],
+      "garment_category": null,
+      "director_mode": null,
+      "priority": 5
+    },
+    {
+      "rule_id": "nerdywave.all.fit",
+      "revision": 1,
+      "state": "ACTIVE",
+      "kind": "FIT_MATERIAL",
+      "destination": "KLING",
+      "brand": "nerdywave",
+      "text": "Keep the garment silhouette, neckline, hem, visible fabric surface and natural drape consistent with THIS original product image. Never invent fiber composition, print lettering or unseen construction.",
+      "origin": "CURATED",
+      "evidence_ids": [
+        "user-approved:shared-ootd-garment-consistency"
+      ],
+      "garment_category": null,
+      "director_mode": null,
+      "priority": 5
+    },
+    {
+      "rule_id": "geeksoutfit.all.fit",
+      "revision": 1,
+      "state": "ACTIVE",
+      "kind": "FIT_MATERIAL",
+      "destination": "KLING",
+      "brand": "geeksoutfit",
+      "text": "Keep the garment silhouette, neckline, hem, visible fabric surface and natural drape consistent with THIS original product image. Never invent fiber composition, print lettering or unseen construction.",
+      "origin": "CURATED",
+      "evidence_ids": [
+        "user-approved:shared-ootd-garment-consistency"
+      ],
+      "garment_category": null,
+      "director_mode": null,
+      "priority": 5
+    }
+  ]
+}

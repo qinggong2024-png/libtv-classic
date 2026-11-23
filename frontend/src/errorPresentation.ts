@@ -13,6 +13,8 @@ function register(codes: string, message: string) {
   for (const code of codes.split(' ')) messages[code] = message
 }
 
+register('CLASSIC_NEW_VIDEO_TASKS_PAUSED', '系统正在安全维护，暂时暂停新建视频任务。已提交任务、下载和剪辑不受影响，请稍后再试。')
+
 register('AUTH_REQUIRED UNAUTHENTICATED SESSION_EXPIRED', '登录已过期，请重新登录后继续。')
 register('INVALID_CREDENTIALS LOGIN_FAILED AUTHENTICATION_FAILED', '账号或密码不正确，请检查后重新登录。')
 register('ACCOUNT_DISABLED ACCOUNT_INACTIVE', '这个账号已停用，请联系管理员。')
@@ -37,6 +39,7 @@ register('KLING_API_AUTHENTICATION_FAILED KLING_CLI_NOT_AUTHENTICATED LIBTV_AUTH
 register('KLING_API_VERIFICATION_FAILED KLING_API_SERVER_ERROR KLING_API_RESPONSE_ERROR WAVESPEED_SERVICE_UNAVAILABLE WAVESPEED_RESPONSE_ERROR WAVESPEED_RESPONSE_INVALID', '生成服务暂时没有正常回应，请稍后查看任务状态；仍有问题时请联系管理员。')
 register('KLING_API_VALIDATION_FAILED WAVESPEED_VALIDATION_FAILED', '生成服务无法使用当前素材或设置，请检查图片、提示词和生成选项。')
 register('KLING_REMOTE_TASK_FAILED IMAGE_GENERATION_FAILED GENERATION_TERMINAL_FAILED', '这次没有生成成功，请检查素材和设置；如果仍然失败，请联系管理员。')
+register('KLING_PRIOR_RISK_CONTROL_REJECTED', '同一组商品参考图近期至少两次被可灵审核拒绝，且没有成功回执。已暂停本次自动付费提交；请先核对参考图和商品印花，必要时联系管理员处理。')
 register('KLING_REMOTE_RISK_CONTROL_REJECTED', '可灵已受理任务，但云端内容风控审核未通过。服务未说明具体触发素材或词句；请先核对素材和提示词，暂勿直接重试，扣费以可灵回执为准。')
 register('WRITE_UNCERTAIN WAVESPEED_SUBMISSION_UNCERTAIN PAID_STATE_UNCERTAIN RECONCILE_BEFORE_RETRY KLING_REMOTE_STATUS_UNKNOWN', '暂时无法确认任务是否已提交或扣费。请先核对任务状态，确认前不要重新生成，以免重复扣费。')
 register('IDEMPOTENCY_REQUEST_IN_PROGRESS', '上一次提交还在处理中，请先查看任务记录，不要重复提交。')
@@ -48,6 +51,7 @@ register('CONFIRMATION_CANCELLED CONFIRMATION_BACKGROUND_FAILED CONFIRMATION_PRO
 register('PROMPT_LOCKED', '提示词已经确认，当前不能修改。需要调整时请另建任务。')
 register('CUSTOM_PROMPT_TOO_LONG COMPILED_PROMPT_TOO_LONG', '提示词太长，请删减一些内容后再提交。')
 register('AI_CREATIVE_INTERRUPTED', 'AI 编排任务因后台服务中断而未能完成。请联系管理员核对原任务的生成提交记录后恢复，暂不建议重复创建任务。')
+register('AI_CREATIVE_RETRY_SCHEDULED', 'AI 编排遇到临时网络错误、超时或限流，已安排后台有限次数自动重试，不需要重复提交，本次未提交可灵付费生成。')
 register('AI_CREATIVE_PLAN_UNAVAILABLE', 'AI创意编排未能完成，可能是编排服务未配置或响应异常。本次未提交视频生成，请检查AI配置后重试。')
 register('AI_CREATIVE_NOT_CONFIGURED', '经典版未正确配置AI编排服务。请检查模型、Base URL及API密钥，本次未提交视频生成。')
 register('AI_CREATIVE_PLAN_INVALID', 'AI已返回创意方案，但未通过本地参考图或结构校验。系统已记录具体校验规则，建议联系管理员排查；本次未提交视频生成。')

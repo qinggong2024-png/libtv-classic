@@ -162,6 +162,22 @@ class CatalogEntry(Base):
     )
 
 
+class TaskAttentionAcknowledgement(Base):
+    """A presentation-only acknowledgement; generation and CUT state stay intact."""
+
+    __tablename__ = "task_attention_acknowledgement"
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("app_user.id", ondelete="CASCADE"), primary_key=True
+    )
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("parent_task.id", ondelete="CASCADE"), primary_key=True
+    )
+    signature: Mapped[str] = mapped_column(String(96))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class ParentTask(Base):
     __tablename__ = "parent_task"
     __table_args__ = (

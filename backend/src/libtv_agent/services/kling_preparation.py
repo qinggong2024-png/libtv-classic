@@ -14,6 +14,11 @@ from libtv_agent.config import Settings
 from libtv_agent.domain.contracts import sha256_json
 from libtv_agent.domain.enums import AttemptStatus, ParentTaskPhase
 from libtv_agent.domain.models import GenerationAttempt, ParentTask
+from libtv_agent.services.ootd_director_memory import (
+    MemoryDestination,
+    memory_hint_text,
+    runtime_memory,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -143,6 +148,7 @@ async def prepare_kling_task(
 
     attempts: list[GenerationAttempt] = []
     provider_name = adapter.get_provider_name()
+    task_settings = task.settings_json if isinstance(task.settings_json, dict) else {}
     for variant in sorted(
         task.variants,
         key=lambda item: item.variant_index or (1 if item.variant_type.value == "STABLE" else 2),
@@ -162,9 +168,54 @@ async def prepare_kling_task(
             or settings.active_video_audio
         )
         element_references = _resolve_element_references(variant.generation_config_json)
+        # Freeze reusable execution memory BEFORE validation and persist the
+        # result with this variant. Later file updates cannot silently change
+        # the provider prompt during retries or unknown-result reconciliation.
+        saved_hint = variant.generation_config_json.get("directorMemoryKlingHint")
+        pending = latest_by_variant.get(variant.id)
+        is_existing_submission = pending is not None and pending.status in {
+            AttemptStatus.PREPARED, AttemptStatus.DISPATCH_PENDING,
+            AttemptStatus.LAUNCHING, AttemptStatus.RUNNING,
+            AttemptStatus.RECONCILING, AttemptStatus.UNKNOWN_AFTER_SUBMIT,
+            AttemptStatus.SUCCEEDED,
+        }
+        memory_hint = ""
+        if isinstance(saved_hint, str):
+            memory_hint = saved_hint
+        elif (not is_existing_submission
+              and settings.kling_provider_backend == "api"
+              and settings.active_kling_model == "kling-3.0-omni"
+              and task.workflow_kind != "DEEP_VIDEO"
+              and str(variant.generation_config_json.get("directorNativeProfile", "")).startswith(
+                  "allwe-ootd-sol-"
+              )):
+            selection = runtime_memory(
+                brand=(str(task_settings.get("directorMemoryBrand") or
+                           task.site_profile_id or "").lower()),
+                destination=MemoryDestination.KLING,
+                director_mode=(
+                    "reference_guided" if
+                    variant.generation_config_json.get("directorNativeProfile")
+                    == "allwe-ootd-sol-simple-v1" else "cross_scene_v2"
+                ),
+                garment_category=(
+                    task_settings.get("garmentCategory")
+                    if isinstance(task_settings.get("garmentCategory"), str)
+                    else None
+                ),
+            )
+            memory_hint = memory_hint_text(selection, destination=MemoryDestination.KLING)
         request = VideoGenerationRequest(
             prompt=variant.prompt_text,
             director_native_profile=variant.generation_config_json.get("directorNativeProfile"),
+            director_memory_brand=(str(task_settings.get("directorMemoryBrand") or
+                                        task.site_profile_id or "").lower()),
+            director_memory_garment_category=(
+                task_settings.get("garmentCategory")
+                if isinstance(task_settings.get("garmentCategory"), str)
+                else None
+            ),
+            director_memory_kling_hint=(memory_hint or None),
             model=(variant.generation_config_json.get("model")
                    if task.workflow_kind == "DEEP_VIDEO" else settings.active_kling_model),
             image_paths=tuple(storyboard_paths),
@@ -202,6 +253,8 @@ async def prepare_kling_task(
                     }
                 ),
                 "promptHash": variant.prompt_hash,
+                **({"directorMemoryKlingHintSha256": sha256_json(memory_hint)}
+                   if memory_hint else {}),
                 "duration": duration,
                 "aspectRatio": aspect_ratio,
                 "resolution": settings.kling_api_resolution,
@@ -258,6 +311,8 @@ async def prepare_kling_task(
             "storyboardImageCount": len(storyboard_assets),
             "productReferenceImageCount": len(product_reference_assets),
             "imageRolePolicy": "storyboard_ordered_product_primary_supplementary",
+            **({"directorMemoryKlingHint": memory_hint}
+               if memory_hint else {}),
             "referenceImageBindings": [
                 {
                     "imageId": f"image_{index}",

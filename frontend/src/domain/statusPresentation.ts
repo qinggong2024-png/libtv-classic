@@ -238,6 +238,14 @@ export function taskStatusPresentation(task: Task): StatusPresentation {
     canDownload: task.actionCapabilities.canDownload,
   })
 
+  if (task.phase === 'ANALYZING' && task.phaseReasonCode === 'AI_CREATIVE_RETRY_SCHEDULED') {
+    return {
+      ...PROCESSING,
+      label: 'AI 编排等待自动重试',
+      description: '编排服务暂时不可用或限流，后台会在冷却后恢复；不用重新提交任务，视频生成尚未开始。',
+    }
+  }
+
   if (task.phase === 'ACTION_REQUIRED' && task.phaseReasonCode === 'AI_CREATIVE_INTERRUPTED') {
     return {
       ...MANUAL,
