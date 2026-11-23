@@ -6,6 +6,7 @@ import { errorMessage } from '../../errorPresentation'
 import { formatTime } from '../../domain/taskPresentation'
 import { shanghaiToday, usageDateRange, type UsagePeriod } from './usagePeriod'
 import { ReportPagination } from './ReportPagination'
+import { equivalentBrandIds, selectableBrands } from '../admin/brandOptions'
 import './accountUsage.css'
 
 const accountActions: Record<string, string> = { LOGIN: '登录', LOGOUT: '退出登录', CREATE_USER: '创建账号', CREATE_BRAND: '创建品牌', UPDATE_ACCOUNT_POLICY: '调整权限或预算', RESET_USER_PASSWORD: '重置密码', DEACTIVATE_USER: '停用账号', CHANGE_PASSWORD: '修改密码' }
@@ -37,11 +38,12 @@ export function AccountEventsPanel({ actorId, users, brands }: { actorId: string
     return () => { active = false }
   }, [actorId, userId, brandId, action, startDate, endDate, offset, limit, key, invalid])
   const filter = (change: () => void) => { change(); setOffset(0) }
+  const matchingBrandIds = brandId ? equivalentBrandIds(brands, brandId) : []
   return <section className="settings-section account-events-section" aria-label="账号操作记录">
     <div className="settings-section-heading"><div><h2>操作记录</h2><p>北京时间</p></div><button type="button" className="secondary-button" disabled={busy || invalid} onClick={() => setRefresh((v) => v + 1)}><RefreshCw size={16} />刷新记录</button></div>
     <div className="account-policy-fields usage-filters">
-      <label>品牌<select aria-label="品牌" value={brandId} onChange={(e) => filter(() => { setBrandId(e.target.value); setUserId('') })}><option value="">所有可访问品牌</option>{brands.map((b) => <option value={b.id} key={b.id}>{b.displayName ?? b.name}</option>)}</select></label>
-      <label>操作账号<select aria-label="操作账号" value={userId} onChange={(e) => filter(() => setUserId(e.target.value))}><option value="">所有可访问账号</option>{users.filter((u) => !brandId || u.brandId === brandId).map((u) => <option key={u.id} value={u.id}>{u.username}</option>)}</select></label>
+      <label>品牌<select aria-label="品牌" value={brandId} onChange={(e) => filter(() => { setBrandId(e.target.value); setUserId('') })}><option value="">所有可访问品牌</option>{selectableBrands(brands).map((b) => <option value={b.id} key={b.id}>{b.displayName ?? b.name}</option>)}</select></label>
+      <label>操作账号<select aria-label="操作账号" value={userId} onChange={(e) => filter(() => setUserId(e.target.value))}><option value="">所有可访问账号</option>{users.filter((u) => !brandId || (u.brandId != null && matchingBrandIds.includes(u.brandId))).map((u) => <option key={u.id} value={u.id}>{u.username}</option>)}</select></label>
       <label>操作类型<select aria-label="操作类型" value={action} onChange={(e) => filter(() => setAction(e.target.value))}><option value="">全部类型</option>{Object.entries(accountActions).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select></label>
       <label>统计范围<select aria-label="统计范围" value={period} onChange={(e) => filter(() => setPeriod(e.target.value as UsagePeriod))}><option value="today">今天</option><option value="week">本周</option><option value="month">本月</option><option value="custom">自定义区间</option></select></label>
       <label>开始日期<input type="date" max="9999-12-30" value={startDate} readOnly={period !== 'custom'} onChange={(e) => filter(() => setCustomStart(e.target.value))} /></label>

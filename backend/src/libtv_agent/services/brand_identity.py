@@ -12,12 +12,17 @@ class BrandIdentity:
 
     @property
     def label(self) -> str:
+        if self.profile_id == "cherrykitten":
+            return f"{self.short_name}/{self.full_name}"
         return f"{self.short_name} / {self.full_name}"
 
 
 # NW/PW/GK/TSG/PPH: user-supplied v1.13.8 Actual_Brand_Cards.md.
 # IP/TT and the remaining abbreviations: user confirmations/screenshots, 2026-10-21.
 BRAND_IDENTITIES = (
+    BrandIdentity("cherrykitten", "CherryKitten", "y2k", (
+        "Y2K / CherryKitten", "y2k/CherryKitten", "CK",
+    )),
     BrandIdentity("nerdywave", "NerdyWave", "NW", ("暗黑", "暗黑品牌")),
     BrandIdentity("pagewings", "PageWings", "PW", ("泛读书",)),
     BrandIdentity("ironpandafit", "IronPandaFit", "IP", ("健身",)),

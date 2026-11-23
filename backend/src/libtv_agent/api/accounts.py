@@ -27,7 +27,7 @@ from libtv_agent.domain.models import (
     User,
 )
 from libtv_agent.services.account_access import platform_admin, visible_users
-from libtv_agent.services.brand_identity import brand_response
+from libtv_agent.services.brand_identity import brand_identity, brand_response
 from libtv_agent.services.kling_cli_cost import credits_to_microusd, estimate_cli_credits
 from libtv_agent.services.page_access import PagePermission
 from libtv_agent.services.points import SHANGHAI, business_date
@@ -54,7 +54,20 @@ async def account_report_scope(session, actor, user_id, brand_id, search=None):
     if brand_id is not None:
         if not platform_admin(actor) and actor.brand_id != brand_id:
             raise HTTPException(404, "品牌不存在")
-        scope = scope.where(User.brand_id == brand_id)
+        # Platform-wide reports group historical brand aliases by the same
+        # verified site identity. Do not rewrite account or ledger brand UUIDs.
+        aliases = [brand_id]
+        if platform_admin(actor):
+            selected = await session.get(Brand, brand_id)
+            identity = brand_identity(selected.name) if selected else None
+            if identity:
+                names = (await session.execute(select(Brand.id, Brand.name))).all()
+                aliases = [
+                    candidate_id for candidate_id, name in names
+                    if (resolved := brand_identity(name))
+                    and resolved.profile_id == identity.profile_id
+                ]
+        scope = scope.where(User.brand_id.in_(aliases))
     if search:
         scope = scope.where(User.username.icontains(search, autoescape=True))
     return scope
@@ -159,6 +172,12 @@ async def list_brands(actor: Actor, session: Session) -> list[dict]:
 async def create_brand(payload: BrandCreate, actor: Actor, session: Session) -> dict:
     if not platform_admin(actor):
         raise HTTPException(403, "仅平台管理员可以创建品牌")
+    identity = brand_identity(payload.name)
+    if identity:
+        for existing in await session.scalars(select(Brand)):
+            prior = brand_identity(existing.name)
+            if prior and prior.profile_id == identity.profile_id:
+                raise HTTPException(409, "同一品牌已存在，请选择现有品牌而不是重复创建别名")
     brand = Brand(name=payload.name)
     session.add(brand)
     try:

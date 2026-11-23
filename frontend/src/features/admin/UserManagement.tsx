@@ -5,6 +5,7 @@ import { type FormEvent, useCallback, useEffect, useState } from 'react'
 import { ApiError, changePassword, createAccountBrand, createAdminUser, deactivateAdminUser, getAccountBrands, getAdminUsers, resetAdminUserPassword } from '../../api'
 import { type AccountBrand, type AdminUser, type AuthUser } from '../../types'
 import { AccountPolicyForm } from './AccountPolicyForm'
+import { equivalentBrandIds, selectableBrands } from './brandOptions'
 import { GlobalUsagePricingForm } from './GlobalUsagePricingForm'
 import { accountRoleLabels } from '../../accountRoleLabels'
 import { AdminUsagePanel } from './AdminUsagePanel'
@@ -169,8 +170,11 @@ function ManagedAccounts({ adminId, actor, sharedAuthentication, platform = true
     finally { setBusy(null) }
   }
 
+  const brandChoices = selectableBrands(brands)
+  const filterBrandIds = filterBrand && filterBrand !== 'unassigned'
+    ? equivalentBrandIds(brands, filterBrand) : []
   const filtered = users.filter((user) => user.username.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())
-    && (!filterBrand || (filterBrand === 'unassigned' ? !user.brandId : user.brandId === filterBrand))
+    && (!filterBrand || (filterBrand === 'unassigned' ? !user.brandId : user.brandId != null && filterBrandIds.includes(user.brandId)))
     && (!filterState || user.isActive === (filterState === 'active')))
   const pageOffset = Math.min(offset, Math.max(0, Math.ceil(filtered.length / limit) - 1) * limit)
   const openCreate = (kind: 'account' | 'brand') => { setNotice(''); setError(''); setCreateOpen(kind) }
@@ -188,19 +192,19 @@ function ManagedAccounts({ adminId, actor, sharedAuthentication, platform = true
     {tab === 'events' ? <AccountEventsPanel actorId={adminId} users={users} brands={brands} /> : null}
     {tab === 'accounts' ? <section className="settings-section account-management-section">
     <div className="settings-section-heading">
-      <div><h2>账号管理</h2><p>共 {users.length} 个账号 · {brands.length} 个品牌</p></div>
+      <div><h2>账号管理</h2><p>共 {users.length} 个账号 · {brandChoices.length} 个品牌</p></div>
       <div className="account-toolbar-actions"><button className="icon-button" type="button" aria-label="刷新列表" title="刷新列表" disabled={busy !== null} onClick={() => void load()}><RefreshCw className={busy === 'load' ? 'spin' : ''} size={16} /></button>{platform ? <button type="button" className="secondary-button" disabled={busy !== null} onClick={() => openCreate('brand')}><Plus size={16} />创建品牌</button> : null}<button className="primary-button" type="button" disabled={busy !== null} onClick={() => openCreate('account')}><Plus size={16} />创建账号</button></div>
     </div>
     <div className="account-policy-fields account-list-filters">
       <label>搜索账号<input type="search" value={search} placeholder="输入账号名称" onChange={(e) => { setSearch(e.target.value); setOffset(0) }} /></label>
-      <label>品牌<select value={filterBrand} onChange={(e) => { setFilterBrand(e.target.value); setOffset(0) }}><option value="">全部品牌</option><option value="unassigned">未分配品牌</option>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.displayName ?? brand.name}</option>)}</select></label>
+      <label>品牌<select value={filterBrand} onChange={(e) => { setFilterBrand(e.target.value); setOffset(0) }}><option value="">全部品牌</option><option value="unassigned">未分配品牌</option>{brandChoices.map((brand) => <option key={brand.id} value={brand.id}>{brand.displayName ?? brand.name}</option>)}</select></label>
       <label>账号状态<select value={filterState} onChange={(e) => { setFilterState(e.target.value); setOffset(0) }}><option value="">全部状态</option><option value="active">正常</option><option value="inactive">已停用</option></select></label>
     </div>
     <FoundationDrawer open={createOpen !== null} title={createOpen === 'brand' ? '创建品牌' : '创建账号'} onClose={closeCreate}>
     {createOpen === 'brand' ? <form className="brand-create-form" onSubmit={(event) => void addBrand(event)}><label htmlFor="new-brand-name">新品牌名称<input id="new-brand-name" value={brandName} onChange={(e) => setBrandName(e.target.value)} maxLength={80} required /></label><button type="submit" className="primary-button" disabled={busy !== null || !brandName.trim()}>创建品牌</button></form> : <form className="account-create-form" onSubmit={(event) => void create(event)}>
       <label htmlFor="new-account-username"><span>登录账号</span><input id="new-account-username" name="username" value={username} onChange={(event) => setUsername(event.target.value)} minLength={1} maxLength={80} autoComplete="off" spellCheck={false} placeholder="例如：designer-01" required /><small>不能包含空格，创建后不可修改</small></label>
       <label htmlFor="new-account-password"><span>临时密码</span><input id="new-account-password" name="new-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={12} maxLength={512} autoComplete="new-password" placeholder="至少 12 个字符" required /><small>请通过可信方式交给成员</small></label>
-      {platform ? <label>所属品牌<select value={brandId} onChange={(e) => setBrandId(e.target.value)}><option value="">未分配（个人隔离）</option>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.displayName ?? brand.name}</option>)}</select><small>作为生图、生视频和剪辑交接的品牌参考</small></label> : null}
+      {platform ? <label>所属品牌<select value={brandId} onChange={(e) => setBrandId(e.target.value)}><option value="">未分配（个人隔离）</option>{brandChoices.map((brand) => <option key={brand.id} value={brand.id}>{brand.displayName ?? brand.name}</option>)}</select><small>作为生图、生视频和剪辑交接的品牌参考</small></label> : null}
       <label>角色<select value={role} onChange={(e) => setRole(e.target.value as AdminUser['role'])}>{Object.entries(accountRoleLabels).filter(([key]) => key !== 'ADMIN').map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
       {platform ? <label className="account-brand-admin-check"><input type="checkbox" checked={brandAdmin} onChange={(e) => setBrandAdmin(e.target.checked)} />品牌管理员</label> : null}
       <button className="primary-button" type="submit" disabled={busy !== null || !username.trim() || password.length < 12}>{busy === 'create' ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}{busy === 'create' ? '正在创建…' : '创建账号'}</button>

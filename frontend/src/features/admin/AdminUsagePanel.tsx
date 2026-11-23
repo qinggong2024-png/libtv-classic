@@ -7,6 +7,7 @@ import { isManagementAdmin } from '../../pageAccess'
 import { EmptyState } from '../../shared/components/Section'
 import { FoundationDrawer } from '../../shared/components/ui'
 import type { AccountBrand, AccountUsageReport, AdminUser, AuthUser } from '../../types'
+import { selectableBrands } from './brandOptions'
 import { ReportPagination } from '../settings/ReportPagination'
 import { shanghaiToday, usageDateRange, type UsagePeriod } from '../settings/usagePeriod'
 import { usagePresentation } from '../settings/usagePresentation'
@@ -64,7 +65,7 @@ function AdminUsageWorkspace({ actor, users, brands }: { actor: AuthUser; users:
     <div className="settings-section-heading"><div><h2>用量与费用</h2><p>北京时间 · USD · 按所选日期统计</p></div><button className="secondary-button" type="button" disabled={busy} onClick={() => { setToday(shanghaiToday()); setRefresh((value) => value + 1) }}><RefreshCw size={16} aria-hidden="true" />刷新记录</button></div>
     <div className="admin-usage-toolbar">
       <div className="admin-usage-periods" role="group" aria-label="统计范围">{periods.map((item) => <button type="button" key={item.value} aria-pressed={period === item.value} onClick={() => change(() => setPeriod(item.value))}>{item.label}</button>)}</div>
-      <label className="admin-usage-brand"><span className="sr-only">品牌</span><select aria-label="品牌" value={brandId} onChange={(event) => change(() => setBrandId(event.target.value))}><option value="">全部品牌</option>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.displayName ?? brand.name}</option>)}</select></label>
+      <label className="admin-usage-brand"><span className="sr-only">品牌</span><select aria-label="品牌" value={brandId} onChange={(event) => change(() => setBrandId(event.target.value))}><option value="">全部品牌</option>{selectableBrands(brands).map((brand) => <option key={brand.id} value={brand.id}>{brand.displayName ?? brand.name}</option>)}</select></label>
       <label className="admin-usage-search"><Search size={16} aria-hidden="true" /><span className="sr-only">搜索账号</span><input type="search" value={search} maxLength={80} placeholder="搜索账号" onChange={(event) => change(() => setSearch(event.target.value))} /></label>
     </div>
     {period === 'custom' ? <div className="admin-usage-dates"><label>开始日期<input type="date" max="9999-12-30" value={customStart} onChange={(event) => change(() => setCustomStart(event.target.value))} /></label><span aria-hidden="true">至</span><label>结束日期<input type="date" max="9999-12-30" value={customEnd} onChange={(event) => change(() => setCustomEnd(event.target.value))} /></label></div> : null}

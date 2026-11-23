@@ -98,6 +98,40 @@ _RETRIEVED_AT = "2026-07-30"
 
 
 SITE_STYLE_PROFILES: dict[str, SiteStyleProfile] = {
+    "cherrykitten": SiteStyleProfile(
+        id="cherrykitten",
+        version="1.0.0",
+        status="active",
+        name="y2k/CherryKitten",
+        site_url="https://www.cherrykitten.com/",
+        source_urls=("https://www.cherrykitten.com/",),
+        retrieved_at="2026-11-23",
+        evidence_level="verified_site",
+        tone="俏皮、年轻、带一点反讽与复古街头感的日常 Y2K 穿搭",
+        audience="偏好 Baby Tees、Slogan Tees、短款上装和 Y2K 怀旧风格的消费者",
+        palette=("pink", "cherry red", "washed gray", "black", "white"),
+        typography="以实际商品原始印字、图案和字形为准，不重设计印花",
+        camera_language="自然手机抓拍，眼平正面中景与清晰印花近景，避免华丽特效",
+        opening_rule="真实场合或穿搭选择引发的短促开场，让原始商品正面可见",
+        middle_rule="按单件商品真实特点展示完整图案、衣长和版型，不强制舞蹈或侧转",
+        ending_rule="自然展示完整穿搭和商品正面，购买动机由真实场景支持",
+        preferred_shots=("自然正面中景", "完整商品中景", "印花稳定近景"),
+        preferred_actions=("stance_shift", "controlled_gaze", "print_detail_pause"),
+        pacing="自然偏快，关键印花信息有充分可读时间",
+        product_priorities=("原图版型", "真实衣长", "原始印花和文字", "可验证的穿搭卖点"),
+        forbidden_mismatches=(
+            "没有参考图却新增胸前文案",
+            "把普通版型改成短款或露肩",
+            "以滤镜、手部动作或镜头特效遮挡印花",
+            "虚构折扣或商品性能",
+        ),
+        research_note=(
+            "2026-11-23 官网公开分类含 Baby Tees、Off Shoulder Tees、"
+            "Washed Tees、Crop Tanks、Jerseys；品牌创意为待测试假设，"
+            "具体商品结构及承诺仅以商品参考图和可验证信息为准。"
+        ),
+        expression_language="像朋友分享一件新发现的衣服，轻快自信不过度表演",
+    ),
     "geeksoutfit": SiteStyleProfile(
         id="geeksoutfit",
         version="1.2.1",

@@ -4,6 +4,7 @@ import { updateAccountPolicy } from '../../api'
 import type { AccountBrand, AccountPolicy, AdminUser, PagePermission } from '../../types'
 import { accountRoleLabels } from '../../accountRoleLabels'
 import { memberPages, pageLabels } from '../../pageAccess'
+import { accountBrandOptions } from './brandOptions'
 
 export function AccountPolicyForm({ user, actorId, platform, brands, onSaved, onClose }: {
   user: AdminUser; actorId: string; platform: boolean; brands: AccountBrand[]
@@ -31,7 +32,7 @@ export function AccountPolicyForm({ user, actorId, platform, brands, onSaved, on
     <h3>权限与美元预算 · {user.username}</h3>
     <div className="account-policy-fields">
       <label>账号角色<select value={role} onChange={(event) => setRole(event.target.value as AdminUser['role'])}>{Object.entries(accountRoleLabels).filter(([key]) => key !== 'ADMIN').map(([key, name]) => <option value={key} key={key}>{name}</option>)}</select></label>
-      {platform ? <label>所属品牌<select value={brandId} onChange={(event) => setBrandId(event.target.value)}><option value="">未分配（个人隔离）</option>{brands.map((b) => <option value={b.id} key={b.id}>{b.displayName ?? b.name}</option>)}</select></label> : null}
+      {platform ? <label>所属品牌<select value={brandId} onChange={(event) => setBrandId(event.target.value)}><option value="">未分配（个人隔离）</option>{accountBrandOptions(brands, brandId).map((b) => <option value={b.id} key={b.id}>{b.displayName ?? b.name}{b.id === brandId && !accountBrandOptions(brands).some((item) => item.id === b.id) ? '（历史归属）' : ''}</option>)}</select></label> : null}
       <label>每日预算（USD）<input type="number" min="0" max="1000000" step="0.000001" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="留空为不限额" /></label>
     </div>
     <div role="group" aria-label="页面权限"><h4>页面权限</h4><div className="account-policy-checks">
