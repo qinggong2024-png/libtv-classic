@@ -6,6 +6,14 @@ afterEach(() => {
 })
 
 describe('records navigation state', () => {
+  it.each(['overview', 'quality', 'accounts', 'usage', 'events', 'providers', 'security'])('opens the %s management section from a direct link', (section) => {
+    vi.stubGlobal('window', { location: { search: `?view=admin&section=${section}` } })
+    expect(readAppLocation()).toMatchObject({ view: 'admin', adminSection: section })
+  })
+  it('falls back to overview for an unknown management section', () => {
+    vi.stubGlobal('window', { location: { search: '?view=admin&section=missing' } })
+    expect(readAppLocation()).toMatchObject({ view: 'admin', adminSection: 'overview' })
+  })
   it.each(['cutflow-ready', 'cutflow-editing', 'cutflow-finished'])('opens legacy %s links in the task list', (filter) => {
     vi.stubGlobal('window', { location: { search: `?view=records&filter=${filter}&q=shirt` } })
     expect(readAppLocation()).toMatchObject({ view: 'records', recordsFilter: 'all', recordsQuery: 'shirt' })

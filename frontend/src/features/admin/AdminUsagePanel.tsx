@@ -62,7 +62,7 @@ function AdminUsageWorkspace({ actor, users, brands }: { actor: AuthUser; users:
   const change = (update: () => void) => { update(); setOffset(0); setSelection(null) }
   const open = (status = '', userId?: string, username?: string) => setSelection({ status, userId, username })
   return <section className="settings-section account-usage-section admin-usage" aria-label="账号使用记录">
-    <div className="settings-section-heading"><div><h2>用量与费用</h2><p>北京时间 · USD · 按所选日期统计</p></div><button className="secondary-button" type="button" disabled={busy} onClick={() => { setToday(shanghaiToday()); setRefresh((value) => value + 1) }}><RefreshCw size={16} aria-hidden="true" />刷新记录</button></div>
+    <div className="settings-section-heading"><div className="admin-usage-timezone">北京时间 · USD</div><button className="secondary-button" type="button" disabled={busy} onClick={() => { setToday(shanghaiToday()); setRefresh((value) => value + 1) }}><RefreshCw size={16} aria-hidden="true" />刷新记录</button></div>
     <div className="admin-usage-toolbar">
       <div className="admin-usage-periods" role="group" aria-label="统计范围">{periods.map((item) => <button type="button" key={item.value} aria-pressed={period === item.value} onClick={() => change(() => setPeriod(item.value))}>{item.label}</button>)}</div>
       <label className="admin-usage-brand"><span className="sr-only">品牌</span><select aria-label="品牌" value={brandId} onChange={(event) => change(() => setBrandId(event.target.value))}><option value="">全部品牌</option>{selectableBrands(brands).map((brand) => <option key={brand.id} value={brand.id}>{brand.displayName ?? brand.name}</option>)}</select></label>
@@ -86,7 +86,7 @@ function AdminUsageWorkspace({ actor, users, brands }: { actor: AuthUser; users:
           </div>)}
         </dl>
         <p className="admin-usage-explainer">
-          以上三项相加即为预估合计。<strong>待核对预估不是额外收费</strong>：生成结果或扣费状态尚未核实，暂时保留预估占用，不代表已实际扣款。
+          <strong>待核对预估不是额外收费</strong>：生成或扣费状态未核实，不代表已实际扣款。
           已释放 <button type="button" className="admin-usage-text-button" onClick={() => open('RELEASED')}>{dollars(report.releasedUsd)}</button> 不计入合计；最终以供应商实际账单为准。
         </p>
         {report.unpricedCount > 0 ? <div className="admin-usage-warning" role="status"><AlertTriangle size={17} aria-hidden="true" /><span><strong>费用待核实：{report.unpricedCount} 条</strong>缺少定价，暂未计入金额。</span><button className="admin-usage-text-button" type="button" onClick={() => open('UNPRICED')}>查看记录<ChevronRight size={16} aria-hidden="true" /></button></div> : null}

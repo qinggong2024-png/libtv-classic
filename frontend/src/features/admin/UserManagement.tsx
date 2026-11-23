@@ -1,6 +1,6 @@
 import { errorMessage } from '../../errorPresentation'
 // 本文件由 App.tsx 拆分生成（2026-09-28 前端架构拆分 v2）。
-import { AlertTriangle, CheckCircle2, KeyRound, LoaderCircle, LogOut, Plus, RefreshCw, UserRound, Wallet, History } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, KeyRound, LoaderCircle, LogOut, Plus, RefreshCw, UserRound } from 'lucide-react'
 import { type FormEvent, useCallback, useEffect, useState } from 'react'
 import { ApiError, changePassword, createAccountBrand, createAdminUser, deactivateAdminUser, getAccountBrands, getAdminUsers, resetAdminUserPassword } from '../../api'
 import { type AccountBrand, type AdminUser, type AuthUser } from '../../types'
@@ -17,19 +17,13 @@ import { AccountEventsPanel } from '../settings/AccountEventsPanel'
 import { ReportPagination } from '../settings/ReportPagination'
 import './accountManagement.css'
 
-const accountTabs = [
-  { value: 'accounts', label: '账号管理', icon: UserRound },
-  { value: 'usage', label: '用量与费用', icon: Wallet },
-  { value: 'events', label: '操作记录', icon: History },
-] as const
-
-export function UserManagement(props: { actor: AuthUser; sharedAuthentication: boolean; platform?: boolean }) {
+type AccountSection = 'accounts' | 'usage' | 'events'
+export function UserManagement(props: { actor: AuthUser; sharedAuthentication: boolean; platform?: boolean; section?: AccountSection }) {
   if (!isManagementAdmin(props.actor)) return <EmptyState icon={<UserRound size={24} />} title="没有管理中心权限" description="仅已授权的平台管理员可以查看账号管理与全站用量。" />
   return <ManagedAccounts key={props.actor.userId} {...props} adminId={props.actor.userId} />
 }
 
-function ManagedAccounts({ adminId, actor, sharedAuthentication, platform = true }: { adminId: string; actor: AuthUser; sharedAuthentication: boolean; platform?: boolean }) {
-  const [tab, setTab] = useState<typeof accountTabs[number]['value']>('accounts')
+function ManagedAccounts({ adminId, actor, sharedAuthentication, platform = true, section: tab = 'accounts' }: { adminId: string; actor: AuthUser; sharedAuthentication: boolean; platform?: boolean; section?: AccountSection }) {
   const [createOpen, setCreateOpen] = useState<'account' | 'brand' | null>(null)
   const [search, setSearch] = useState('')
   const [filterBrand, setFilterBrand] = useState('')
@@ -180,14 +174,7 @@ function ManagedAccounts({ adminId, actor, sharedAuthentication, platform = true
   const openCreate = (kind: 'account' | 'brand') => { setNotice(''); setError(''); setCreateOpen(kind) }
   const closeCreate = () => { if (busy === 'create' || busy === 'brand') return; setCreateOpen(null); setPassword(''); setError('') }
   return <div className="account-workspace">
-    <nav className="account-tabs" role="tablist" aria-label="品牌与账号">
-      {accountTabs.map(({ value, label, icon: Icon }, index) => <button key={value} id={`account-tab-${value}`} role="tab" type="button" aria-selected={tab === value} aria-controls={`account-panel-${value}`} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={(event) => {
-        const next = event.key === 'ArrowRight' ? (index + 1) % accountTabs.length : event.key === 'ArrowLeft' ? (index + accountTabs.length - 1) % accountTabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? accountTabs.length - 1 : null
-        if (next === null) return
-        event.preventDefault(); setTab(accountTabs[next].value); document.getElementById(`account-tab-${accountTabs[next].value}`)?.focus()
-      }}><Icon size={17} />{label}</button>)}
-    </nav>
-    <div id={`account-panel-${tab}`} role="tabpanel" aria-labelledby={`account-tab-${tab}`}>
+    <div className="account-panel">
     {tab === 'usage' ? <><AdminUsagePanel actor={actor} users={users} brands={brands} />{platform ? <div className="account-pricing"><button className="secondary-button" type="button" aria-expanded={pricingOpen} onClick={() => setPricingOpen((v) => !v)}>全站单价</button>{pricingOpen ? <GlobalUsagePricingForm actorId={adminId} /> : null}</div> : null}</> : null}
     {tab === 'events' ? <AccountEventsPanel actorId={adminId} users={users} brands={brands} /> : null}
     {tab === 'accounts' ? <section className="settings-section account-management-section">

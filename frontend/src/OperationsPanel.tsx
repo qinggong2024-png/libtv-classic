@@ -121,7 +121,7 @@ export function OperationsPanel({ adminId, onShowTasks, onShowBilling }: {
   const paidConfirmationBlockedByGlobal = !config.paidSubmissionsPaused && config.globalPaused
   return <section className="operations-console">
     <div className="ops-command-bar">
-      <div><span>生产控制</span><h2>生产开关</h2><p>状态徽标表示当前情况，按钮文字表示点击后执行的操作。</p></div>
+      <div><h2>生产控制</h2></div>
       <button className="secondary-button" disabled={busy} onClick={() => void refresh()}><RefreshCw size={16} />刷新状态</button>
     </div>
     <div className="ops-control-grid" aria-label="生产控制开关">
@@ -175,13 +175,13 @@ export function OperationsPanel({ adminId, onShowTasks, onShowBilling }: {
     {notice && <div className="service-alert service-alert--success" role="status"><Play size={18} /><span>{notice}</span></div>}
     <section className="ops-overview" aria-label="生产运行概况">
       <div className="detail-heading">
-        <div><span className="section-kicker">运行概况</span><h3>生产健康度</h3></div>
+        <div><h3>生产健康度</h3></div>
         <span>{sampledAt && !Number.isNaN(sampledAt.getTime()) ? `采样于 ${sampledAt.toLocaleTimeString('zh-CN', { hour12: false })}` : '每 15 秒更新'}</span>
       </div>
       {!health ? <p className="ops-data-warning" role="status">当前服务尚未提供生产分类指标，暂不展示容易误导的历史队列总量。请检查后端版本并刷新。</p> : null}
       <div className="ops-overview-grid">
         <div className="ops-stat-card"><Gauge size={19} /><span><small>正在生成 / 并发上限</small><strong>{snapshot.queues.running} / {config.generationConcurrency.global}</strong><em>{Math.round(snapshot.metrics.generationSlotUtilization * 100)}% 使用率</em></span></div>
-        <div className="ops-stat-card"><Layers3 size={19} /><span><small>可执行排队</small><strong>{queue?.actionableTotal ?? '—'}</strong><em>可被调度的新生成任务</em></span></div>
+        <div className="ops-stat-card"><Layers3 size={19} /><span><small>可执行排队</small><strong>{queue?.actionableTotal ?? '—'}</strong></span></div>
         <div className="ops-stat-card"><Server size={19} /><span><small>在线后台节点</small><strong>{snapshot.metrics.runnerOnlineHosts ?? '—'}</strong><em>最近 2 分钟内有心跳</em></span></div>
         <div className="ops-stat-card"><CheckCircle2 size={19} /><span><small>24 小时完成原片</small><strong>{pipeline.throughput.completedVideos24h}</strong><em>{pipeline.throughput.completedTasks24h} 个任务</em></span></div>
         <div className="ops-stat-card is-attention"><WalletCards size={19} /><span><small>预算 / 额度受限</small><strong>{blockedCount ?? '—'}</strong><em>已从可执行队列分离</em></span></div>
@@ -194,17 +194,11 @@ export function OperationsPanel({ adminId, onShowTasks, onShowBilling }: {
       </div>
     </section>
     {health ? <section className="ops-band ops-issues" aria-label="待处理问题">
-      <div className="detail-heading"><div><span className="section-kicker">异常处理</span><h3>需要关注的事项</h3></div><span>全平台只读明细 · 不改变原账号权限</span></div>
-      <div className="ops-decision-guide">
-        <strong>管理员先看这里：不需要逐条理解技术代码</strong>
-        <p><b>先核实 {health.cloudUnknownAttempts} 条云端状态不确定的记录：</b>可能已接单或扣费，先查供应商回执，千万不要直接重新生成。</p>
-        <p><b>{health.reservationsAwaitingReview} 条是费用核对记录：</b>其中 {health.reservationOutcomes.succeeded} 条视频已经生成成功；并不代表这些视频全部失败。请按账务结果核对。</p>
-        <p><b>{blockedCount} 条是历史受限记录：</b>不在当前可执行队列，只有还需要继续生成时才检查账号预算。</p>
-      </div>
-      <p className="ops-issue-guidance">选择分类查看各账号的记录，点击某条可以看到简单解释和建议操作。需要技术排查时再展开详细信息。
+      <div className="detail-heading"><div><h3>需要关注的事项</h3></div></div>
+      <div className="ops-issue-shortcuts">
         {onShowTasks ? <button type="button" className="text-button" onClick={onShowTasks}>我的任务中心</button> : null}
         {onShowBilling ? <button type="button" className="text-button" onClick={onShowBilling}>账号与费用管理</button> : null}
-      </p>
+      </div>
       <div className="ops-issue-row is-danger">
         <AlertTriangle size={19} /><span><strong>云端生成状态待核实 <b>{health.cloudUnknownAttempts} 条</b></strong><small>优先查询供应商回执、扣费与生成结果。不可直接重复提交付费任务。</small></span>
         <button type="button" className="text-button" aria-expanded={activeIssue === 'cloudUnknown'} onClick={() => setActiveIssue(old => old === 'cloudUnknown' ? null : 'cloudUnknown')}>查看全平台明细</button>
