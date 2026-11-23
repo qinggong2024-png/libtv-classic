@@ -44,9 +44,7 @@ from libtv_agent.services.image_quota import (
     reserve_image_quota,
 )
 from libtv_agent.services.runtime_control import (
-    RuntimeControlBlockedError,
     get_runtime_config,
-    reserve_internal_pilot_budget,
 )
 from libtv_agent.templates.garment_materials import (
     GarmentMaterial,
@@ -856,18 +854,8 @@ async def create_image_generation_batch(
             ) from exc
         # Legacy daily image-count cap is disabled. The USD budget is
         # reserved by reserve_image_quota() alongside the batch write.
-        try:
-            await reserve_internal_pilot_budget(
-                session,
-                settings,
-                user_id=actor.id,
-                units=len(specs),
-            )
-        except RuntimeControlBlockedError as exc:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                detail={"code": exc.code, "message": str(exc), "retryable": False},
-            ) from exc
+        # Standard images have their own USD reserve; Pilot allow-list rules
+        # belong only to explicitly launched experimental workflows.
         batch = create_batch_record(
             user_id=actor.id,
             idempotency_key=idempotency_key,

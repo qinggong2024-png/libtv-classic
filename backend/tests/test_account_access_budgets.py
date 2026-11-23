@@ -20,13 +20,13 @@ from libtv_agent.domain.models import (
     User,
 )
 from libtv_agent.services.account_access import reserve_usd, settle_usd
-from libtv_agent.services.points import reserve_points
 from libtv_agent.services.auth import PasswordService
 from libtv_agent.services.content_catalog import (
     MOTION_ACTION,
     motion_action_library,
     save_catalog_entry,
 )
+from libtv_agent.services.points import reserve_points
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -555,6 +555,69 @@ async def test_cutflow_budget_charges_per_source_and_fails_closed_when_unpriced(
             operation_id=record.operation_id, units=2,
         )
         assert replay.id == record.id
+
+
+async def test_admin_can_record_reviewed_uncertain_budget_hold_without_finalizing_charge(
+    account_app,
+):
+    """Unpriced history is recoverable without guessing provider charges or bypassing budget."""
+    from libtv_agent.domain.models import AuditEvent
+    from libtv_agent.services.points import business_date
+
+    app, client, ids = account_app
+    usage_id = uuid.uuid4()
+    async with app.state.database.session_factory() as session:
+        user = await session.get(User, ids["member"])
+        user.daily_budget_microusd = 500_000
+        user.image_price_microusd = 100_000
+        session.add(AccountUsage(
+            id=usage_id, user_id=user.id, brand_id=user.brand_id,
+            operation_id=uuid.uuid4(), business_date=business_date(),
+            kind="VIDEO", pricing_category="VIDEO", units=2,
+            amount_microusd=None, status="UNCERTAIN",
+        ))
+        await session.commit()
+    async with app.state.database.session_factory() as session:
+        with pytest.raises(HTTPException) as error:
+            await reserve_usd(
+                session, user_id=ids["member"], kind="IMAGE",
+                operation_id=uuid.uuid4(), units=1,
+            )
+        assert error.value.detail["code"] == "USD_PRICE_REQUIRED"
+        await session.rollback()
+
+    payload = {
+        "usageId": str(usage_id),
+        "estimatedAmountUsd": "0.30",
+        "reason": "Provider charge reviewed against statement",
+    }
+    url = "/api/v1/admin/account-usage/reconcile-unpriced"
+    denied = await client.post(url, headers=actor(ids, "manager"), json=payload)
+    assert denied.status_code == 403
+    accepted = await client.post(url, headers=actor(ids, "root"), json=payload)
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["finalProviderChargeConfirmed"] is False
+    assert (await client.post(url, headers=actor(ids, "root"), json=payload)).status_code == 409
+
+    async with app.state.database.session_factory() as session:
+        usage = await session.get(AccountUsage, usage_id)
+        assert usage.amount_microusd == 300_000
+        assert usage.status == "UNCERTAIN"
+        events = (await session.scalars(select(AuditEvent).where(
+            AuditEvent.entity_type == "account_usage",
+            AuditEvent.entity_id == str(usage_id),
+        ))).all()
+        assert len(events) == 1
+        reserved = await reserve_usd(
+            session, user_id=ids["member"], kind="IMAGE",
+            operation_id=uuid.uuid4(), units=1,
+        )
+        assert reserved.amount_microusd == 100_000
+        await settle_usd(session, kind="VIDEO", operation_id=usage.operation_id,
+                         status="ESTIMATED", actual_amount_microusd=350_000)
+        await session.flush()
+        await session.refresh(usage)
+        assert usage.amount_microusd == 350_000
 
 
 async def test_confirmation_reserves_saved_duration_and_replay_once(tmp_path):

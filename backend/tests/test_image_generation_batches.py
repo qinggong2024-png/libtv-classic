@@ -583,7 +583,9 @@ async def test_user_requirement_reaches_provider_and_survives_history(tmp_path: 
 
 
 @pytest.mark.asyncio
-async def test_production_pilot_rejects_non_allowlisted_user(tmp_path: Path) -> None:
+async def test_production_images_do_not_require_experimental_pilot_allowlist(
+    tmp_path: Path,
+) -> None:
     user_id = uuid.uuid4()
     app, _settings = await _production_app(
         tmp_path,
@@ -609,14 +611,14 @@ async def test_production_pilot_rejects_non_allowlisted_user(tmp_path: Path) -> 
                 data=data,
                 files=files,
             )
-    assert response.status_code == 403
-    assert response.json()["detail"]["code"] == "INTERNAL_PILOT_USER_NOT_ALLOWED"
-    assert adapter.uploads == []
-    assert adapter.submissions == []
+    assert response.status_code == 201, response.text
+    assert len(adapter.submissions) == 1
 
 
 @pytest.mark.asyncio
-async def test_production_pilot_count_is_reporting_only_and_replay_is_idempotent(tmp_path: Path) -> None:
+async def test_production_images_do_not_consume_pilot_count_and_replay_is_idempotent(
+    tmp_path: Path,
+) -> None:
     user_id = uuid.uuid4()
     app, _settings = await _production_app(
         tmp_path,
@@ -670,7 +672,9 @@ async def test_production_pilot_count_is_reporting_only_and_replay_is_idempotent
                 select(RuntimeConfigVersion).order_by(RuntimeConfigVersion.version.desc()).limit(1)
             )
             assert current is not None
-            assert current.config_json["pilotSubmittedCount"] == 2
+            # Ordinary production batches do not touch the separately managed
+            # experimental Pilot counter or its user allow-list.
+            assert current.config_json["pilotSubmittedCount"] == 0
         assert len(adapter.submissions) == 2
 
 

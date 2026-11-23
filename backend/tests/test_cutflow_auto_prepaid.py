@@ -10,7 +10,13 @@ import test_cutflow_auto_submit_v2 as base
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from libtv_agent.app import create_app
-from libtv_agent.domain.enums import DownloadStatus, GenerationStatus, ParentTaskPhase, ValidationStatus, VariantKind
+from libtv_agent.domain.enums import (
+    DownloadStatus,
+    GenerationStatus,
+    ParentTaskPhase,
+    ValidationStatus,
+    VariantKind,
+)
 from libtv_agent.domain.models import (
     AccountUsage,
     GenerationAttempt,
@@ -233,7 +239,6 @@ async def test_queue_video_task_requires_both_budgets_before_any_provider_comman
         return [await session.get(GenerationAttempt, ids["attempt"])]
 
     monkeypatch.setattr(fixed_video_tasks, "ensure_provider_submission_allowed", noop)
-    monkeypatch.setattr(fixed_video_tasks, "reserve_internal_pilot_budget", noop)
     monkeypatch.setattr(fixed_video_tasks, "prepare_kling_task", fake_prepare)
     async with db.session_factory() as s:
         parent = await s.get(ParentTask, ids["task"])
@@ -249,6 +254,104 @@ async def test_queue_video_task_requires_both_budgets_before_any_provider_comman
         assert (await s.scalars(select(GenerationCommand))).all() == []
         parent = await s.get(ParentTask, ids["task"])
         assert BUDGET_KEY not in parent.settings_json
+
+
+async def test_cut_worker_offline_does_not_block_original_video_admission(
+    handoff_env, monkeypatch,
+):
+    """Reserve CUT once, queue original now, dispatch the edit after CUT recovers."""
+    db, settings, store, ids = handoff_env
+    await _prepare(handoff_env, budget=2_000_000)
+    settings.cutflow_multi_source_enabled = False
+    async with db.session_factory() as s:
+        s.add(RuntimeConfigVersion(
+            version=2,
+            config_json={"globalUsagePricingMicrousd": {
+                "cutflowPriceUsd": 150_000,
+                "videoPricePerSecondUsd": 100_000,
+            }},
+            change_reason="offline CUT video-admission test",
+        ))
+        parent = await s.get(ParentTask, ids["task"])
+        parent.workflow_kind = "FIXED_TEMPLATE"
+        parent.phase = ParentTaskPhase.PREPARING
+        await s.commit()
+
+    async def noop(*_args, **_kwargs):
+        return None
+
+    async def fake_prepare(session, *_args, **_kwargs):
+        return [await session.get(GenerationAttempt, ids["attempt"])]
+
+    monkeypatch.setattr(fixed_video_tasks, "ensure_provider_submission_allowed", noop)
+    monkeypatch.setattr(fixed_video_tasks, "prepare_kling_task", fake_prepare)
+    async with db.session_factory() as s:
+        parent = await s.get(ParentTask, ids["task"])
+        result = await fixed_video_tasks.queue_video_task(
+            s, task=parent, user_id=ids["user"], settings=settings,
+            kling_adapter=SimpleNamespace(get_provider_name=lambda: "kling"),
+            object_store=store,
+        )
+        assert result.phase == ParentTaskPhase.QUEUED
+    async with db.session_factory() as s:
+        held = (await s.scalars(select(AccountUsage).where(
+            AccountUsage.kind == "CUTFLOW",
+        ))).one()
+        assert held.status == "RESERVED"
+        assert (await s.scalars(select(GenerationCommand))).all()
+    assert await enqueue_completed_v2(db, settings, store) == 0
+    # The normal worker is permitted to resume when CUT comes back online.
+    settings.cutflow_multi_source_enabled = True
+    assert await enqueue_completed_v2(db, settings, store) == 1
+
+
+@pytest.mark.parametrize(
+    "cut_price,budget",
+    [(None, 2_000_000), (3_000_000, 2_000_000), (150_000, 1_000_000)],
+)
+async def test_cut_prepayment_problem_stays_edit_only_while_video_budget_is_safe(
+    handoff_env, monkeypatch, cut_price, budget,
+):
+    db, settings, store, ids = handoff_env
+    await _prepare(handoff_env, budget=budget)
+    async with db.session_factory() as s:
+        s.add(RuntimeConfigVersion(
+            version=2,
+            config_json={"globalUsagePricingMicrousd": {
+                "cutflowPriceUsd": cut_price,
+                "videoPricePerSecondUsd": 100_000,
+            }},
+            change_reason="CUT insufficient funds must not block original",
+        ))
+        parent = await s.get(ParentTask, ids["task"])
+        parent.workflow_kind = "FIXED_TEMPLATE"
+        parent.phase = ParentTaskPhase.PREPARING
+        await s.commit()
+
+    async def noop(*_args, **_kwargs):
+        return None
+
+    async def fake_prepare(session, *_args, **_kwargs):
+        return [await session.get(GenerationAttempt, ids["attempt"])]
+
+    monkeypatch.setattr(fixed_video_tasks, "ensure_provider_submission_allowed", noop)
+    monkeypatch.setattr(fixed_video_tasks, "prepare_kling_task", fake_prepare)
+    async with db.session_factory() as s:
+        parent = await s.get(ParentTask, ids["task"])
+        queued = await fixed_video_tasks.queue_video_task(
+            s, task=parent, user_id=ids["user"], settings=settings,
+            kling_adapter=SimpleNamespace(get_provider_name=lambda: "kling"),
+            object_store=store,
+        )
+        assert queued.phase == ParentTaskPhase.QUEUED
+        assert queued.settings_json["autoCutflowPrepayWarning"] in {
+            "USD_PRICE_REQUIRED", "USD_DAILY_BUDGET_EXCEEDED",
+        }
+    async with db.session_factory() as s:
+        usage = (await s.scalars(select(AccountUsage))).all()
+        assert len(usage) == 1
+        assert usage[0].kind == "VIDEO" and usage[0].amount_microusd == 1_000_000
+        assert (await s.scalars(select(GenerationCommand))).all()
 
 
 

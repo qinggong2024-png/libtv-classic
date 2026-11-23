@@ -35,7 +35,7 @@ from libtv_agent.services.runtime_control import get_runtime_config, update_runt
 from libtv_agent.services.usage_pricing import PRICE_COLUMNS, PRICING_KEY, global_usage_prices
 from libtv_agent.services.usage_reports import aggregate_usage, display_totals, empty_totals
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 router = APIRouter(tags=["accounts"])
@@ -113,6 +113,62 @@ class GlobalUsagePricing(BaseModel):
     recreateVideoPricePerSecondUsd: Money | None = Field(ge=0, le=10_000, decimal_places=6)
     # 每条原片的剪辑预估。留空为未定价：有预算的账号将无法送剪（后端 409 USD_PRICE_REQUIRED）。
     cutflowPriceUsd: Money | None = Field(default=None, ge=0, le=10_000, decimal_places=6)
+
+
+class UnpricedUsageEstimate(BaseModel):
+    """Manual, auditable budget hold for an otherwise unpriced usage record."""
+
+    model_config = ConfigDict(extra="forbid")
+    usageId: uuid.UUID
+    estimatedAmountUsd: Money = Field(gt=0, le=1_000_000, decimal_places=6)
+    reason: str = Field(min_length=8, max_length=255)
+
+
+@router.post("/admin/account-usage/reconcile-unpriced")
+async def reconcile_unpriced_usage(
+    payload: UnpricedUsageEstimate, actor: Actor, session: Session,
+) -> dict:
+    # Only a platform administrator may assign financial evidence. This never
+    # submits a provider request or marks an uncertain charge as finalized.
+    if not platform_admin(actor):
+        raise HTTPException(403, detail={"code": "ADMIN_REQUIRED"})
+    record = await session.get(AccountUsage, payload.usageId)
+    if record is None:
+        raise HTTPException(404, detail={"code": "USAGE_NOT_FOUND"})
+    if record.amount_microusd is not None or record.status not in {"RESERVED", "UNCERTAIN"}:
+        raise HTTPException(409, detail={"code": "USAGE_ALREADY_PRICED_OR_RELEASED"})
+    previous_status = record.status
+    estimate = int(payload.estimatedAmountUsd * 1_000_000)
+    changed = await session.execute(
+        update(AccountUsage)
+        .where(
+            AccountUsage.id == payload.usageId,
+            AccountUsage.amount_microusd.is_(None),
+            AccountUsage.status.in_(("RESERVED", "UNCERTAIN")),
+        )
+        .values(amount_microusd=estimate, status="UNCERTAIN")
+        .execution_options(synchronize_session=False)
+    )
+    if changed.rowcount != 1:
+        await session.rollback()
+        raise HTTPException(409, detail={"code": "USAGE_UPDATED_CONCURRENTLY"})
+    session.add(AuditEvent(
+        actor_id=actor.id,
+        action="RECONCILE_UNPRICED_USAGE_ESTIMATE",
+        entity_type="account_usage",
+        entity_id=str(payload.usageId),
+        from_state=previous_status,
+        to_state="UNCERTAIN",
+        reason=payload.reason,
+        correlation_id=str(uuid.uuid4()),
+        evidence_refs_json=[],
+    ))
+    await session.commit()
+    return {
+        "usageId": str(payload.usageId), "status": "UNCERTAIN",
+        "estimatedAmountUsd": str(payload.estimatedAmountUsd),
+        "finalProviderChargeConfirmed": False,
+    }
 
 
 @router.get("/admin/usage-pricing")

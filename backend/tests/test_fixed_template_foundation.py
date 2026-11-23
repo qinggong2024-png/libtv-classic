@@ -181,6 +181,7 @@ def test_site_style_profiles_are_versioned_and_restricted_sources_are_explicit()
     profiles = list_site_style_profiles()
 
     assert {profile.id for profile in profiles} == {
+        "cherrykitten",
         "geeksoutfit",
         "guidingcross",
         "nerdywave",
@@ -196,6 +197,7 @@ def test_site_style_profiles_are_versioned_and_restricted_sources_are_explicit()
         "magicstation",
     }
     assert {profile.id for profile in profiles if profile.status == "active"} == {
+        "cherrykitten",
         "goodnurselife",
         "geeksoutfit",
         "guidingcross",
@@ -657,8 +659,9 @@ async def test_site_style_profile_api_exposes_evidence_gated_status() -> None:
 
     assert response.status_code == 200
     profiles = response.json()
-    assert len(profiles) == 13
+    assert len(profiles) == 14
     assert {item["id"] for item in profiles if item["status"] == "active"} == {
+        "cherrykitten",
         "goodnurselife",
         "geeksoutfit",
         "guidingcross",
@@ -673,9 +676,13 @@ async def test_site_style_profile_api_exposes_evidence_gated_status() -> None:
         "boldoversize",
         "magicstation",
     }
-    assert profiles[0]["retrievedAt"] == "2026-07-30"
-    assert profiles[0]["cameraLanguage"]
-    assert profiles[0]["openingRule"]
+    geeks = next(item for item in profiles if item["id"] == "geeksoutfit")
+    assert geeks["retrievedAt"] == "2026-07-30"
+    assert geeks["cameraLanguage"]
+    assert geeks["openingRule"]
+    cherry = next(item for item in profiles if item["id"] == "cherrykitten")
+    assert cherry["retrievedAt"] == "2026-11-23"
+    assert cherry["siteUrl"] == "https://www.cherrykitten.com/"
     assert all(item["evidenceLevel"] == "verified_site" for item in profiles)
     purplehecate = next(item for item in profiles if item["id"] == "magicstation")
     assert purplehecate["name"] == "魔法 / PurpleHecate"

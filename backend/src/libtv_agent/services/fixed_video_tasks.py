@@ -39,7 +39,6 @@ from libtv_agent.services.ai_creative_planner import (
 )
 from libtv_agent.services.automatic_motion_facts import observe_storyboards
 from libtv_agent.services.cutflow_budget import reserve_auto_cutflow
-from libtv_agent.services.cutflow_multi_worker import multi_worker_ready
 from libtv_agent.services.content_catalog import (
     get_merged_site_style_profile,
     motion_action_library,
@@ -56,7 +55,6 @@ from libtv_agent.services.prompt_compiler import PromptCompileInput, compile_vid
 from libtv_agent.services.runtime_control import (
     RuntimeControlBlockedError,
     ensure_provider_submission_allowed,
-    reserve_internal_pilot_budget,
 )
 from libtv_agent.services.subject_elements import automatic_element_metadata
 from libtv_agent.services.tasks import get_task
@@ -1148,12 +1146,7 @@ async def queue_video_task(
                 else settings.active_kling_model
             ),
         )
-        await reserve_internal_pilot_budget(
-            session,
-            settings,
-            user_id=user_id,
-            units=max(len(task.variants), 1),
-        )
+        # Standard paid tasks are subject to USD limits, not Pilot allow-listing.
         attempts = await prepare_kling_task(
             session,
             kling_adapter,
@@ -1173,34 +1166,6 @@ async def queue_video_task(
     previews: list[dict[str, Any]] = []
     persisted_task_id = task.id
     try:
-        if (task.workflow_kind == "FIXED_TEMPLATE"
-                and (task.settings_json or {}).get("autoSubmitToCutflow") is True
-                and settings.cutflow_auto_edit_enabled):
-            if not multi_worker_ready(settings):
-                raise HTTPException(503, detail={
-                    "code": "CUTFLOW_MULTI_SOURCE_NOT_READY",
-                    "message": "自动送剪尚未就绪，未开始付费生成或预占额度。",
-                })
-            if not attempts or not 1 <= len(task.variants) <= 8:
-                raise HTTPException(409, detail={
-                    "code": "CUTFLOW_SOURCE_COUNT_INVALID",
-                    "message": "自动送剪原片数量不符合要求，未预占费用。",
-                })
-            try:
-                await reserve_auto_cutflow(
-                    session, parent=task, attempt_id=attempts[0].id,
-                    units=len(task.variants),
-                )
-            except HTTPException as exc:
-                if isinstance(exc.detail, dict) and exc.detail.get("code") in {
-                    "USD_DAILY_BUDGET_EXCEEDED", "USD_PRICE_REQUIRED",
-                }:
-                    raise HTTPException(exc.status_code, detail={
-                        **exc.detail,
-                        "message": "已开启自动送剪，生成任务需同时预留剪辑预算。"
-                                   + str(exc.detail.get("message", "额度不足")),
-                    }) from exc
-                raise
         for attempt in attempts:
             variant = next(item for item in task.variants if item.id == attempt.variant_id)
             duration_seconds = int(
@@ -1265,6 +1230,34 @@ async def queue_video_task(
                     },
                 )
             )
+        # Reserve video cost first so a downstream CUT-only quote or budget
+        # problem cannot stop independently affordable original generation.
+        if (task.workflow_kind == "FIXED_TEMPLATE"
+                and (task.settings_json or {}).get("autoSubmitToCutflow") is True
+                and settings.cutflow_auto_edit_enabled):
+            if not attempts or not 1 <= len(task.variants) <= 8:
+                task.settings_json = {
+                    **(task.settings_json or {}),
+                    "autoCutflowPrepayWarning": "CUTFLOW_SOURCE_COUNT_INVALID",
+                }
+            else:
+                try:
+                    await reserve_auto_cutflow(
+                        session, parent=task, attempt_id=attempts[0].id,
+                        units=len(task.variants),
+                    )
+                except HTTPException as exc:
+                    if isinstance(exc.detail, dict) and exc.detail.get("code") in {
+                        "USD_DAILY_BUDGET_EXCEEDED", "USD_PRICE_REQUIRED",
+                    }:
+                        # The edit remains opt-in, but must pass its own USD
+                        # admission before the auto worker creates a CUT job.
+                        task.settings_json = {
+                            **(task.settings_json or {}),
+                            "autoCutflowPrepayWarning": exc.detail["code"],
+                        }
+                    else:
+                        raise
     except HTTPException as exc:
         detail = (
             exc.detail if isinstance(exc, HTTPException) and isinstance(exc.detail, dict) else {}
