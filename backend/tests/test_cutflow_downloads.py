@@ -13,7 +13,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from httpx import ASGITransport, AsyncClient
 from libtv_agent.app import create_app
-from libtv_agent.domain.models import ApiIdempotencyRecord, CutflowHandoff, MultiCutflowTask
+from libtv_agent.domain.models import ApiIdempotencyRecord, AuditEvent, CutflowHandoff, MultiCutflowTask
 from libtv_agent.services.cutflow_downloads import download_filename
 from sqlalchemy import event, inspect, select
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -200,3 +200,12 @@ async def test_real_download_headers_match_for_single_multi_and_preview(naming_e
         assert response.headers["content-disposition"] == (
             f'attachment; filename="PMO-TT261114AA{sequence:02d}.mp4"'
         )
+    async with database.session_factory() as session:
+        events = list(await session.scalars(select(AuditEvent).where(
+            AuditEvent.action == "DOWNLOAD_CUTFLOW_VIDEO",
+        )))
+    assert len(events) == 3  # Download attempts are auditable; reporting de-duplicates.
+    assert {entry.entity_id for entry in events} == {
+        f"{single.id}/render-1", f"{batch.id}/render-1",
+    }
+    assert {entry.actor_id for entry in events} == {ids["user"]}

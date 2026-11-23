@@ -16,6 +16,7 @@ from libtv_agent.services.cutflow_auto_status import auto_dispatch_status
 from libtv_agent.services.cutflow_auto_eligibility import eligible_auto_variants
 from libtv_agent.services.cutflow_budget import bind_prepaid_cutflow
 from libtv_agent.services.cutflow_downloads import download_filename
+from libtv_agent.services.media_download_metrics import CUTFLOW_DOWNLOAD, record_download
 from libtv_agent.services.cutflow_handoff import (
     CutflowHandoffError,
     configured,
@@ -412,10 +413,13 @@ async def multi_output_media(
         )
     except FileNotFoundError as exc:
         raise HTTPException(status.HTTP_410_GONE, "edited output has expired") from exc
+    filename = await download_filename(session, task, output) if download else None
+    if download:
+        await record_download(session, user_id=actor.id, action=CUTFLOW_DOWNLOAD, media_id=f"{task.id}/{output_id}")
     return FileResponse(
         local,
         media_type="video/mp4",
-        filename=await download_filename(session, task, output) if download else None,
+        filename=filename,
         headers={"Cache-Control": "private, no-store"},
     )
 
@@ -484,8 +488,11 @@ async def output_media(
         )
     except FileNotFoundError as exc:
         raise HTTPException(status.HTTP_410_GONE, "edited output has expired") from exc
+    filename = await download_filename(session, handoff, output) if download else None
+    if download:
+        await record_download(session, user_id=actor.id, action=CUTFLOW_DOWNLOAD, media_id=f"{handoff.id}/{output_id}")
     return FileResponse(local, media_type="video/mp4",
-                        filename=await download_filename(session, handoff, output) if download else None,
+                        filename=filename,
                         headers={"Cache-Control": "private, no-store"})
 
 

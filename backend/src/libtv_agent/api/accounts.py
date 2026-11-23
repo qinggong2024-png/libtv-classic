@@ -35,6 +35,7 @@ from libtv_agent.services.prompt_presets import DEFAULT_PROMPT_PRESET_SPECS
 from libtv_agent.services.runtime_control import get_runtime_config, update_runtime_config
 from libtv_agent.services.usage_pricing import PRICE_COLUMNS, PRICING_KEY, global_usage_prices
 from libtv_agent.services.usage_reports import aggregate_usage, display_totals, empty_totals
+from libtv_agent.services.media_download_metrics import aggregate_downloads
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -432,6 +433,7 @@ async def account_usage(
         await session.scalar(select(func.count()).select_from(AccountUsage).where(*criteria)) or 0
     )
     aggregates = await aggregate_usage(session, scope, start, end)
+    download_counts = await aggregate_downloads(session, scope, start, end)
     daily = aggregates if start == end == today else await aggregate_usage(
         session, scope, today, today
     )
@@ -451,6 +453,8 @@ async def account_usage(
     for values in aggregates.values():
         for key, value in values.items():
             totals[key] += value
+    totals["originalDownloads"] = sum(row["originalDownloads"] for row in download_counts.values())
+    totals["cutflowDownloads"] = sum(row["cutflowDownloads"] for row in download_counts.values())
     summaries = []
     for user in users:
         values = aggregates.get(user.id, empty_totals())
@@ -465,6 +469,7 @@ async def account_usage(
             "brandId": str(user.brand_id) if user.brand_id else None,
             "isActive": user.is_active,
             **display_totals(values),
+            **download_counts.get(user.id, {"originalDownloads": 0, "cutflowDownloads": 0}),
             "dailyBudgetUsd": None if user.daily_budget_microusd is None
             else user.daily_budget_microusd / 1_000_000,
             "todayBudgetUsedUsd": current["budgetUsedUsd"] / 1_000_000,

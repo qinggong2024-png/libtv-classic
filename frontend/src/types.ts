@@ -303,6 +303,8 @@ export interface AccountUsageTotals {
   imageCount: number
   videoSeconds: number
   cutflowClips: number
+  originalDownloads: number
+  cutflowDownloads: number
   unknownVideoCount: number
   estimatedUsd: number
   reservedUsd: number

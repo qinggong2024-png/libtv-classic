@@ -8,7 +8,7 @@ import { AdminUsagePanel } from './AdminUsagePanel'
 
 vi.mock('../../api', () => ({ getAdminAccountUsage: vi.fn() }))
 const admin: AuthUser = { userId: 'root', username: 'classic-admin', role: 'ADMIN' }
-const report: AccountUsageReport = { day: '2026-11-14', startDate: '2026-11-01', endDate: '2026-11-14', budgetDay: '2026-11-14', currency: 'USD', total: 0, recordCount: 0, imageCount: 0, videoSeconds: 0, cutflowClips: 2, unknownVideoCount: 0, estimatedUsd: .2, reservedUsd: 0, uncertainUsd: 0, releasedUsd: 0, unpricedCount: 0, budgetUsedUsd: .2, summaries: [], summaryTotal: 0, eventTotal: 0, policies: [], items: [], events: [] }
+const report: AccountUsageReport = { day: '2026-11-14', startDate: '2026-11-01', endDate: '2026-11-14', budgetDay: '2026-11-14', currency: 'USD', total: 0, recordCount: 0, imageCount: 0, videoSeconds: 0, cutflowClips: 2, originalDownloads: 0, cutflowDownloads: 0, unknownVideoCount: 0, estimatedUsd: .2, reservedUsd: 0, uncertainUsd: 0, releasedUsd: 0, unpricedCount: 0, budgetUsedUsd: .2, summaries: [], summaryTotal: 0, eventTotal: 0, policies: [], items: [], events: [] }
 let root: Root
 
 beforeEach(() => {
@@ -49,7 +49,7 @@ describe('administrator-only usage workspace', () => {
     await render(admin)
     expect(document.body.textContent).toContain('预估费用')
     expect(document.body.textContent).not.toContain('区间占用')
-    expect(Array.from(document.querySelectorAll('thead th')).map((cell) => cell.textContent)).toEqual(['账号 / 品牌', '图片（张）', '视频（秒）', '送剪原片（条）', '预估费用', '今日剩余额度', '明细'])
+    expect(Array.from(document.querySelectorAll('thead th')).map((cell) => cell.textContent)).toEqual(['账号 / 品牌', '图片（张）', '视频（秒）', '送剪原片（条）', '已下载原片（条）', '已下载 CUT 成片（条）', '预估费用', '今日剩余额度', '明细'])
     expect(getAdminAccountUsage).toHaveBeenCalledWith(expect.objectContaining({ includeEvents: false, startDate: expect.stringMatching(/-01$/) }), 'root')
     expect(document.querySelector('button[aria-pressed="true"]')?.textContent).toBe('本月')
   })

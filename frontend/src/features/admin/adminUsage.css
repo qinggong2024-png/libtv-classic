@@ -44,7 +44,7 @@
 .admin-usage .usage-overview-heading { margin: 0 0 12px; }
 .admin-usage .usage-overview-heading h3 { font-size: 15px; }
 .admin-usage .usage-table-scroll { border: 0; border-radius: 0; }
-.admin-usage-table { min-width: 800px; font-variant-numeric: tabular-nums; }
+.admin-usage-table { min-width: 1050px; font-variant-numeric: tabular-nums; }
 .admin-usage-table thead th { background: var(--surface-soft); color: var(--text-secondary); font-size: 12px; font-weight: 500; white-space: nowrap; }
 .admin-usage-table :is(th, td) { padding: 14px 12px; }
 .admin-usage-table td:not(:last-child), .admin-usage-table thead th:not(:first-child):not(:last-child) { text-align: right; }

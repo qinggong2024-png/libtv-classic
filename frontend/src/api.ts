@@ -566,7 +566,7 @@ export const restoreOutput = (taskId: string, variant: VariantKind) => request<{
 export const downloadUrl = (artifactId: string) => `/api/v1/downloads/${artifactId}`
 
 export async function saveArtifact(artifactId: string, filename: string): Promise<void> {
-  saveBlob(await requestBlob(downloadUrl(artifactId), { timeoutMs: DOWNLOAD_TIMEOUT_MS }), filename)
+  saveBlob(await requestBlob(`${downloadUrl(artifactId)}?download=true`, { timeoutMs: DOWNLOAD_TIMEOUT_MS }), filename)
 }
 
 function saveBlob(blob: Blob, filename: string): void {

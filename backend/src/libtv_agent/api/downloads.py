@@ -13,6 +13,7 @@ from libtv_agent.domain.models import (
     ParentTask,
 )
 from libtv_agent.services.deep_video_media import media_command
+from libtv_agent.services.media_download_metrics import ORIGINAL_DOWNLOAD, record_download
 from sqlalchemy import select
 
 router = APIRouter(prefix="/downloads", tags=["downloads"])
@@ -82,7 +83,8 @@ async def signed_download_url(
 
 @router.get("/{artifact_id}")
 async def download_artifact(
-    artifact_id: uuid.UUID, actor: Actor, session: Session, request: Request
+    artifact_id: uuid.UUID, actor: Actor, session: Session, request: Request,
+    download: bool = False,
 ) -> FileResponse:
     artifact, variant, task = await _owned_artifact(artifact_id, actor, session)
     if not artifact.object_key:
@@ -96,6 +98,8 @@ async def download_artifact(
         raise HTTPException(
             status.HTTP_410_GONE, "server copy has expired; use remote restore"
         ) from exc
+    if download and not artifact.depth:
+        await record_download(session, user_id=actor.id, action=ORIGINAL_DOWNLOAD, media_id=str(artifact.id))
     suffix = "depth" if artifact.depth else variant.variant_type.value.lower()
     return FileResponse(
         local,
