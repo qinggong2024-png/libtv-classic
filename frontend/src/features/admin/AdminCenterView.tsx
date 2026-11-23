@@ -4,7 +4,7 @@ import { Activity, ChevronRight, Clapperboard, KeyRound, LayoutDashboard, Shield
 import { type AuthUser, type SystemStatus } from '../../types'
 import { ErrorBoundary } from '../../ErrorBoundary'
 import { OperationsPanel } from '../../OperationsPanel'
-import { AdminVideoReview } from './AdminVideoReview'
+import { AdminVideoTaskReview } from './AdminVideoTaskReview'
 import { providerPresentation } from '../../providerPresentation'
 import { KlingProviderSettings } from './KlingProviderSettings'
 import { KlingBillingPanel } from './KlingBillingPanel'
@@ -49,7 +49,7 @@ export function AdminCenterView({
         : '开发环境'
   const allSections: Array<{ value: AdminSection; label: string; description: string; icon: React.ReactNode }> = [
     { value: 'overview', label: '运行总览', description: '生产开关、队列与告警', icon: <Activity size={17} /> },
-    { value: 'quality', label: '视频质量巡检', description: '检查各账号最新原片', icon: <Clapperboard size={17} /> },
+    { value: 'quality', label: '视频质量巡检', description: '查看成片、原片和提示词', icon: <Clapperboard size={17} /> },
     { value: 'accounts', label: '品牌与账号', description: '权限、使用记录与美元预算', icon: <UserRound size={17} /> },
     { value: 'providers', label: '生成提供商', description: '图片和视频服务设置', icon: <Clapperboard size={17} /> },
     { value: 'security', label: '流程与分析', description: '确认策略和分析服务', icon: <KeyRound size={17} /> },
@@ -77,7 +77,7 @@ export function AdminCenterView({
         </section>
         <section className="settings-section admin-operations-card"><OperationsPanel adminId={actor?.userId ?? null} onShowTasks={onShowTasks} onShowBilling={() => onSectionChange('accounts')} /></section>
       </> : null}
-      {currentSection === 'quality' ? <section className="settings-section"><AdminVideoReview adminId={actor!.userId} /></section> : null}
+      {currentSection === 'quality' ? <section className="settings-section"><AdminVideoTaskReview adminId={actor!.userId} /></section> : null}
       {currentSection === 'accounts' ? <UserManagement actor={actor!} platform sharedAuthentication={system?.sharedAuthentication ?? false} /> : null}
       {currentSection === 'providers' ? isAdmin ? <>
         <ProviderRoutingSettings key={`routing-${activeVideo?.backend ?? 'unknown'}`} adminId={actor!.userId} onChanged={onKlingChanged} />
