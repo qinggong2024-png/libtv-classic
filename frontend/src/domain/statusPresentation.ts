@@ -229,7 +229,38 @@ const ANALYSIS_FAILURE_LABELS: Record<string, string> = {
   ANALYSIS_SCHEMA_INVALID: '分析结果不完整',
 }
 
+/** A phase reason is an active error only after the workflow actually requires intervention. */
+export function taskHasActionableReason(task: Pick<Task, 'phase' | 'phaseReasonCode'>): boolean {
+  return task.phase === 'ACTION_REQUIRED' && Boolean(task.phaseReasonCode)
+}
+
+/** Shared recovery labels for both the task center and the task detail. */
+export function activeTaskRecoveryPresentation(
+  task: Pick<Task, 'phase' | 'phaseReasonCode' | 'variants'>,
+): StatusPresentation | null {
+  if (task.phase === 'GENERATING' && task.variants?.some(variant =>
+    variant.providerStatus === 'waiting_balance' && variant.generationStatus === 'PENDING',
+  )) {
+    return {
+      ...PROCESSING,
+      label: 'API 余额不足',
+      description: '请联系管理员充值。后台会保留已成功的视频，自动恢复未提交成功的片段。',
+    }
+  }
+  if (task.phase === 'ANALYZING' && task.phaseReasonCode === 'AI_CREATIVE_RETRY_SCHEDULED') {
+    return {
+      ...PROCESSING,
+      label: 'AI 编排等待自动重试',
+      description: '编排服务暂时不可用或限流，后台会在冷却后恢复；不用重新提交任务，视频生成尚未开始。',
+    }
+  }
+  return null
+}
+
 export function taskStatusPresentation(task: Task): StatusPresentation {
+  const recovery = activeTaskRecoveryPresentation(task)
+  if (recovery) return recovery
+
   const base = statusPresentation({
     source: 'task',
     value: task.phase,

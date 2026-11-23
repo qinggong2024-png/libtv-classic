@@ -1,6 +1,7 @@
 import type { MultiCutflowTask } from '../api'
 import type { Task } from '../types'
-import { ACTIVE_PHASES, AWAITING_USER_INPUT_PHASES } from './workflowStates'
+import { ACTIVE_PHASES, AWAITING_USER_INPUT_PHASES, TASK_PHASE_META } from './workflowStates'
+import { activeTaskRecoveryPresentation } from './statusPresentation'
 import { multiCutflowPresentation } from './cutflowPresentation'
 import { autoCutflowWaitDelayed } from './autoCutflowWaiting'
 
@@ -39,8 +40,15 @@ export function taskCenterState(task: Task, batches: MultiCutflowTask[], status:
     return { group: 'done', label: '成片可查看', detail: `已回传 ${outputs} 条成片`, outputs, readyCount, manualSelection: false } as const
   }
   // An unfinished raw video still needs generation to finish before a cut.
+  const recovery = ACTIVE_PHASES.has(task.phase) ? activeTaskRecoveryPresentation(task) : null
+  const rawStageLabel = task.phase === 'GENERATING' ? '正在生成原片' : (TASK_PHASE_META[task.phase]?.label ?? '正在生成原片')
   if (ACTIVE_PHASES.has(task.phase) && readyCount < task.variants.length) {
-    return { group: 'active', label: '正在生成原片', detail: `原片 ${readyCount}/${task.variants.length}`, outputs, readyCount, manualSelection: false } as const
+    return {
+      group: 'active',
+      label: recovery?.label ?? rawStageLabel,
+      detail: recovery?.description ?? `原片 ${readyCount}/${task.variants.length}`,
+      outputs, readyCount, manualSelection: false,
+    } as const
   }
   if (readyCount && status.error) {
     return { group: 'attention', label: '剪辑状态同步异常', detail: '无法确认 CUT 最新状态；请刷新核实，避免重复送剪', outputs, readyCount, manualSelection: false } as const
@@ -59,7 +67,12 @@ export function taskCenterState(task: Task, batches: MultiCutflowTask[], status:
     return { group: 'attention', label: task.settings?.autoSubmitToCutflow === true ? '自动送剪未启动' : '原片待处理', detail: task.settings?.autoSubmitToCutflow === true ? '未查到剪辑任务；打开详情查看并刷新' : '查看详情选择送剪方式', outputs, readyCount, manualSelection: false } as const
   }
   if (ACTIVE_PHASES.has(task.phase)) {
-    return { group: 'active', label: '正在生成原片', detail: `原片 ${readyCount}/${task.variants.length}`, outputs, readyCount, manualSelection: false } as const
+    return {
+      group: 'active',
+      label: recovery?.label ?? rawStageLabel,
+      detail: recovery?.description ?? `原片 ${readyCount}/${task.variants.length}`,
+      outputs, readyCount, manualSelection: false,
+    } as const
   }
   return { group: 'attention', label: '请查看任务', detail: '尚未获得可用原片', outputs, readyCount, manualSelection: false } as const
 }

@@ -4,6 +4,7 @@ import type { RecordsFilter as AppRecordsFilter } from '../../app/appTypes'
 import type { Task, Variant } from '../../types'
 import { ACTIVE_PHASES, FAILED_PHASES } from '../../domain/workflowStates'
 import { taskCenterState } from '../../domain/taskCenterState'
+import { taskHasActionableReason } from '../../domain/statusPresentation'
 import { hasUnseenCutflowOutput } from '../../domain/cutflowUnread'
 import { DataFreshness } from '../../shared/components/DataFreshness'
 import { EmptyState } from '../../shared/components/Section'
@@ -60,7 +61,7 @@ function TaskCenterCard({ task, basket, canWrite, onOpen, onPlay }: {
       </span>
       <span className="task-center-card__next">{state.group === 'done' ? '查看成片' : state.group === 'attention' ? '去处理' : '查看进度'} <ChevronRight size={17} aria-hidden="true" /></span>
     </button>
-    {task.phaseReasonCode ? <p className="task-center-card__reason">{taskFailureMessage(task)}</p> : null}
+    {taskHasActionableReason(task) ? <p className="task-center-card__reason">{taskFailureMessage(task)}</p> : null}
     {canSelectClips ? <div className="task-center-card__bottom">
       <span>{state.manualSelection ? '本任务已关闭自动送剪，可手动选择原片' : '可跨任务合并原片，也可创建新的剪辑版本'}</span>
       <button type="button" className="text-button" aria-expanded={expanded} onClick={() => setExpanded(open => !open)}>

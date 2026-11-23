@@ -7,6 +7,7 @@ import { analyzeTask, cancelTask, confirmTask, runPromptAssistant, saveTaskPromp
 import { type Asset, type Task, type Variant, type VariantKind } from '../../types'
 import { providerPresentation, variantExecutionMessage } from '../../providerPresentation'
 import { ACTIVE_PHASES, RESULT_PHASES } from '../../domain/workflowStates'
+import { taskHasActionableReason } from '../../domain/statusPresentation'
 import { formatTime, isAnalysisFailure, isWaveSpeedBalanceFailure, taskFailureMessage, taskRecoveryHeadline, taskStatus, variantDisplayName, variantKindDisplayName, variantKindShortLabel } from '../../domain/taskPresentation'
 import { DepthVideoResult } from './DepthVideoResult'
 import { CutflowControl } from './CutflowControl'
@@ -309,7 +310,7 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
             {directorModeLabel ? <><dt>编排模式</dt><dd>{directorModeLabel}</dd></> : null}
             <dt>生成服务</dt><dd>{provider.displayLabel}</dd>
             <dt>视频生成状态</dt><dd>{taskStatus(task).label}</dd>
-            {task.phaseReasonCode ? <><dt>情况说明</dt><dd>{taskFailureMessage(task)}</dd></> : null}
+            {taskHasActionableReason(task) ? <><dt>情况说明</dt><dd>{taskFailureMessage(task)}</dd></> : null}
           </dl><div className="prompt-hashes">{task.variants.map((variant) => <span key={variant.id}>
             <strong>{variantDisplayName(variant)} · {providerPresentation(variant.provider || task.generationProvider).displayLabel}</strong>
             <small>{variantExecutionMessage(variant, task.generationProvider, task.phase)}</small>
