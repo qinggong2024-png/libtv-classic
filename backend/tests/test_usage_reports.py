@@ -65,6 +65,13 @@ async def test_range_summary_precision_zero_users_and_paging(account_app):
     assert member["uncertainUsd"] == 0.300003
     assert member["releasedUsd"] == 0.999999
     assert member["budgetUsedUsd"] == 0.600006
+    assert member["imageUsedUsd"] == 0.400004
+    assert member["videoUsedUsd"] == 0.200002
+    assert member["cutflowUsedUsd"] == 0
+    assert member["otherUsedUsd"] == 0
+    assert data["imageUsedUsd"] == 0.800008
+    assert data["videoUsedUsd"] == 0.200002
+    assert sum(Decimal(str(data[key])) for key in ("imageUsedUsd", "videoUsedUsd", "cutflowUsedUsd", "otherUsedUsd")) == Decimal(str(data["budgetUsedUsd"]))
     assert data["budgetUsedUsd"] == 1.00001
     assert sum(Decimal(str(row["budgetUsedUsd"])) for row in data["summaries"]) == Decimal(
         str(data["budgetUsedUsd"])

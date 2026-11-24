@@ -24,7 +24,7 @@ const routes = [
   {name:'make', query:'', selector:'.home-view:not([hidden])', heading:'视频制作', reads:['video-templates','site-style-profiles'], loadingText:'正在加载站点风格'},
   {name:'records', query:'?view=records', selector:'.page-view > .records-overview', heading:'任务', reads:[]},
   {name:'library', query:'?view=library', selector:'.content-library-view', heading:'内容与主体库', reads:['motion-actions','site-style-profiles','video-templates'], loadingText:'正在读取内容库'},
-  {name:'settings', query:'?view=settings', selector:'.settings-view', heading:'偏好设置', reads:['auth/preferences/video-learning','auth/preferences/prompt-confirmation'], loadingText:'正在读取个人成片偏好'},
+  {name:'settings', query:'?view=settings', selector:'.settings-view', heading:'个人设置', reads:['auth/preferences/video-learning','auth/preferences/prompt-confirmation'], loadingText:'正在读取个人成片偏好'},
   {name:'admin-overview', query:'?view=admin', selector:'.admin-view', heading:'管理中心', section:'运行总览', reads:['admin/operations'], loadingText:'正在加载运行状态'},
   {name:'admin-accounts', query:'?view=admin&section=accounts', selector:'.admin-view', heading:'管理中心', section:'品牌与账号', reads:['admin/users'], loadingText:'正在读取成员账号…'},
   {name:'admin-providers', query:'?view=admin&section=providers', selector:'.admin-view', heading:'管理中心', section:'生成提供商', reads:['admin/kling/config','admin/kling/status','admin/wavespeed/config','admin/bach/config'], loadingText:'正在读取可灵配置…'},

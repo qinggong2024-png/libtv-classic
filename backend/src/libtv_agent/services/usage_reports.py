@@ -4,7 +4,8 @@ from libtv_agent.domain.models import AccountUsage
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-MONEY_FIELDS = ("estimatedUsd", "reservedUsd", "uncertainUsd", "releasedUsd", "budgetUsedUsd")
+CATEGORY_MONEY_FIELDS = {"imageUsedUsd": "IMAGE", "videoUsedUsd": "VIDEO", "cutflowUsedUsd": "CUTFLOW"}
+MONEY_FIELDS = ("estimatedUsd", "reservedUsd", "uncertainUsd", "releasedUsd", "budgetUsedUsd", *CATEGORY_MONEY_FIELDS, "otherUsedUsd")
 
 
 async def aggregate_usage(session: AsyncSession, scope, start, end) -> dict:
@@ -24,6 +25,14 @@ async def aggregate_usage(session: AsyncSession, scope, start, end) -> dict:
             (usage.status != "RELEASED") & usage.amount_microusd.is_(None), 1
         ),
         "budgetUsedUsd": total(usage.status != "RELEASED", usage.amount_microusd),
+        **{
+            field: total((usage.status != "RELEASED") & (usage.kind == kind), usage.amount_microusd)
+            for field, kind in CATEGORY_MONEY_FIELDS.items()
+        },
+        "otherUsedUsd": total(
+            (usage.status != "RELEASED") & ~usage.kind.in_(tuple(CATEGORY_MONEY_FIELDS.values())),
+            usage.amount_microusd,
+        ),
         **{
             field: total(usage.status == status, usage.amount_microusd)
             for field, status in (

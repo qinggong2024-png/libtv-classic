@@ -312,6 +312,10 @@ export interface AccountUsageTotals {
   releasedUsd: number
   unpricedCount: number
   budgetUsedUsd: number
+  imageUsedUsd?: number
+  videoUsedUsd?: number
+  cutflowUsedUsd?: number
+  otherUsedUsd?: number
 }
 
 export interface AccountUsageSummary extends AccountUsageTotals {

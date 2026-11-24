@@ -52,7 +52,7 @@ export function PersonalPromptConfirmationSetting() {
 
   return <section className="settings-section prompt-confirmation-section">
     <div className="settings-section-heading">
-      <div><span>生成流程</span><h2>分析完成后自动开始生成</h2><p>{automatic ? '普通方案分析完成后会跳过人工确认并直接生成，可能立即消耗生成额度；需要质量复核或被系统拦截的方案仍需人工处理。' : '默认关闭。分析完成后会停在确认步骤，等你检查提示词并主动开始生成。'}</p></div>
+      <div><h2>分析后自动生成</h2><p>开启后跳过普通方案确认，可能立即消耗额度；需复核的方案除外。</p></div>
       <div className="prompt-confirmation-control">
         <span className={`prompt-confirmation-state${automatic ? ' is-active' : ''}`}>{busy && !ready ? '读取中' : automatic ? '已开启' : '已关闭'}</span>
         <label className="settings-switch" title="分析完成后自动开始生成">
@@ -133,7 +133,7 @@ export function PersonalVideoLearningSetting() {
   const learned = (preference?.feedbackCount ?? 0) > 0
   return <section className="settings-section video-learning-section">
     <div className="settings-section-heading">
-      <div><span>个性化生成</span><h2>根据成片反馈持续学习</h2><p>{preference?.summary ?? '正在读取个人成片偏好'}</p><p>仅在相同模板与站点风格的自动视频生成中，应用成片赞／踩反馈形成的动作偏好与生成指导。不影响图片生成、视频复刻或手动模式；关闭后保留已有反馈。</p></div>
+      <div><h2>应用成片反馈</h2><p>仅影响相同模板与站点风格的自动视频生成；关闭后保留反馈。</p></div>
       <div className="prompt-confirmation-control">
         <span className={`prompt-confirmation-state${enabled ? ' is-active' : ''}`}>{busy === 'load' ? '读取中' : enabled ? '已开启' : '已关闭'}</span>
         <label className="settings-switch" title="根据成片反馈持续学习">
@@ -186,7 +186,7 @@ export function PersonalPasswordSetting() {
   }
 
   return <section className="settings-section personal-password-section">
-    <div className="settings-section-heading"><div><span>账号安全</span><h2>修改密码</h2><p>修改当前登录账号的密码。保存后，其他设备上的旧登录会话会自动退出。</p></div></div>
+    <div className="settings-section-heading"><div><h2>修改密码</h2><p>保存后，其他设备将退出登录。</p></div></div>
     <form className="personal-password-form" onSubmit={(event) => void save(event)}>
       <label htmlFor="settings-current-password"><span>当前密码</span><input id="settings-current-password" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} maxLength={512} autoComplete="current-password" required /></label>
       <label htmlFor="settings-new-password"><span>新密码</span><input id="settings-new-password" type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} minLength={12} maxLength={512} autoComplete="new-password" placeholder="至少 12 个字符" required /></label>

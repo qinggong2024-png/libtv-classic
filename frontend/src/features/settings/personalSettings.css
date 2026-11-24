@@ -1,0 +1,64 @@
+/* Personal workspace only; shared administrative reports are unaffected. */
+.personal-settings.settings-view { max-width: 1200px; padding-top: 32px; }
+.personal-settings-header h1 { margin: 0 0 24px; font-size: 28px; font-weight: 680; letter-spacing: -.035em; color: var(--text); }
+.personal-settings-layout { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(300px, 1fr); align-items: start; gap: 18px; animation: personal-settings-enter 200ms cubic-bezier(.2,.75,.3,1) both; }
+.personal-settings-sidebar { min-width: 0; display: grid; gap: 18px; }
+.personal-settings .settings-section { margin-top: 0; padding: 24px; border-radius: 16px; box-shadow: 0 2px 8px rgba(15,23,42,.025); min-width: 0; }
+.personal-settings .settings-section-heading { align-items: center; gap: 14px; }
+.personal-settings h2 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: -.015em; }
+.personal-settings h3 { margin: 0; font-size: 14px; font-weight: 650; }
+.personal-settings .settings-section-heading p { margin-top: 5px; font-size: 12px; }
+.personal-usage-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.personal-usage-heading small { display: block; color: var(--text-secondary); font-size: 12px; margin-top: 5px; }
+.personal-usage-heading .icon-button { flex: 0 0 auto; }
+.personal-usage-period { display: flex; gap: 4px; margin-top: 20px; padding: 4px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 10px; width: fit-content; max-width: 100%; }
+.personal-usage-period button { min-width: 64px; padding: 8px 12px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 13px; cursor: pointer; transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease; }
+.personal-usage-period button:hover { color: var(--text); }
+.personal-usage-period button[aria-pressed="true"] { color: var(--primary); background: var(--surface); border-color: var(--line); font-weight: 600; box-shadow: 0 2px 4px rgba(15,23,42,.05); }
+.personal-usage-dates { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin-top: 12px; }
+.personal-usage-dates label { display: grid; gap: 5px; color: var(--text-secondary); font-size: 12px; }
+.personal-usage-dates input { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; }
+.personal-usage-metrics { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin: 18px 0; }
+.personal-usage-metrics > div { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 18px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 12px; }
+.personal-usage-metrics > div:last-child { background: #f0f5ff; border-color: #dbe7ff; }
+.personal-usage-metrics span, .personal-usage-metrics small { font-size: 12px; color: var(--text-secondary); }
+.personal-usage-metrics strong { color: var(--text); font-size: clamp(22px,2.2vw,30px); font-weight: 650; letter-spacing: -.035em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.personal-usage-metrics > div:last-child strong { color: var(--primary); }
+.personal-usage-warning { font-size: 12px; color: var(--text-secondary); margin: 0 0 16px; }
+.personal-usage-breakdown { padding: 17px 0 20px; border-bottom: 1px solid var(--line); }
+.personal-usage-categories { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin: 15px 0 0; }
+.personal-usage-categories > div { display: grid; gap: 8px; min-width: 0; }
+.personal-usage-categories span { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 12px; }
+.personal-usage-categories strong { font-weight: 650; font-size: 17px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.personal-usage-breakdown small { display: block; margin-top: 12px; color: var(--text-secondary); }
+.personal-usage-history { padding-top: 20px; }
+.personal-usage-history h3 { margin-bottom: 12px; }
+.personal-usage-table { font-size: 12px; width: 100%; }
+.personal-usage-table th, .personal-usage-table td { padding: 12px 8px; white-space: normal; }
+.personal-usage-table th:last-child, .personal-usage-table td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.personal-usage-empty { text-align: center; padding: 30px 0; color: var(--text-secondary); font-size: 13px; }
+.personal-usage-pages { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.personal-usage-pages span { margin-right: auto; font-size: 12px; color: var(--text-secondary); }
+.personal-settings .personal-settings-group > .settings-section, .personal-settings-disclosure > .settings-section { padding: 17px 0; margin: 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+.personal-settings .personal-settings-group > .settings-section + .settings-section { border-top: 1px solid var(--line); }
+.personal-settings .personal-settings-group .settings-section-heading { padding: 0; border: 0; }
+.personal-settings .personal-settings-group .settings-section-heading h2 { font-size: 14px; }
+.personal-settings .personal-settings-disclosure { border-top: 1px solid var(--line); }
+.personal-settings .personal-settings-disclosure > summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 16px 0 0; cursor: pointer; list-style: none; font-size: 14px; font-weight: 550; color: var(--text); }
+.personal-settings summary::-webkit-details-marker { display: none; }
+.personal-settings-disclosure > summary svg { color: var(--text-secondary); transition: transform 180ms ease; }
+.personal-settings-disclosure[open] > summary svg { transform: rotate(180deg); }
+.personal-settings-disclosure[open] > .settings-section { animation: personal-settings-enter 180ms ease both; }
+.personal-settings-account > h2 { margin-bottom: 16px; }
+.personal-settings .personal-settings-account .personal-settings-disclosure > .settings-section .settings-section-heading h2 { display: none; }
+.personal-settings .personal-password-form { grid-template-columns: minmax(0,1fr); gap: 12px; align-items: start; }
+.personal-settings .personal-password-form button { justify-self: start; }
+.personal-settings .personal-password-form input { border-radius: 9px; }
+.personal-settings .personal-settings-logout { width: 100%; justify-content: center; margin-top: 18px; }
+.personal-settings .secondary-button, .personal-settings .primary-button { border-radius: 9px; transition: background 150ms ease, border-color 150ms ease, transform 140ms ease; }
+.personal-settings button:not(:disabled):active { transform: scale(.98); }
+.personal-settings button:focus-visible, .personal-settings summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+@keyframes personal-settings-enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 1100px) { .personal-settings-layout { grid-template-columns: minmax(0,1fr); } .personal-settings-sidebar { grid-template-columns: repeat(2,minmax(0,1fr)); align-items: start; } }
+@media (max-width: 760px) { .personal-settings-sidebar { grid-template-columns: minmax(0,1fr); } .personal-settings .settings-section { padding: 16px; } .personal-usage-period button { min-width: 0; padding: 8px 10px; } .personal-usage-metrics > div { padding: 12px; } }
+@media (prefers-reduced-motion: reduce) { .personal-settings *, .personal-settings *::before, .personal-settings *::after { animation: none !important; transition: none !important; } }

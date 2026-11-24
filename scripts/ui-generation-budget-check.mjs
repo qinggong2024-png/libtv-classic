@@ -132,7 +132,7 @@ try {
   await refresh()
   await deep.locator('.generation-cost-badge').getByText('预估 $0.00', { exact: true }).waitFor()
   await page.locator('.sidebar .daily-budget').click()
-  await page.getByRole('heading', { name: '偏好设置', exact: true }).waitFor()
+  await page.getByRole('heading', { name: '个人设置', exact: true }).waitFor()
   tasks = [{ id: 'legacy', title: '经典视频方案', phase: 'AWAITING_CONFIRMATION', stateVersion: 1,
     createdAt: '2026-10-16T01:00:00Z', updatedAt: '2026-10-16T01:00:00Z', assets: [], assetCount: 0,
     analysisResult: null, generationProvider: 'kling', actionCapabilities: { canCancel: true, canRegenerate: true, canConfirm: true },

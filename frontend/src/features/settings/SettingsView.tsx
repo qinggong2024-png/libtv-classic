@@ -1,10 +1,10 @@
-// 本文件由 App.tsx 拆分生成（2026-09-28 前端架构拆分 v2）。
-// 代码为逐字搬运，未经逻辑改写。
-import {useEffect} from 'react'
-import {type SystemStatus} from '../../types'
-import {removeStorage, writeStorage} from '../../safeStorage'
-import {BrowserNotificationSetting} from './BrowserNotificationSetting'
-import {PersonalPasswordSetting, PersonalPromptConfirmationSetting, PersonalVideoLearningSetting} from './PersonalSettings'
+import { useEffect } from 'react'
+import { ChevronDown, LogOut } from 'lucide-react'
+import './personalSettings.css'
+import { type SystemStatus } from '../../types'
+import { removeStorage, writeStorage } from '../../safeStorage'
+import { BrowserNotificationSetting } from './BrowserNotificationSetting'
+import { PersonalPasswordSetting, PersonalPromptConfirmationSetting, PersonalVideoLearningSetting } from './PersonalSettings'
 import { AccountUsagePanel } from './AccountUsagePanel'
 
 export function SettingsView({
@@ -29,16 +29,23 @@ export function SettingsView({
     removeStorage('local', 'default-model')
     removeStorage('local', ['default-output-variants', 'video-direction', 'default-ratio', 'default-duration', 'max-concurrency', 'retry-count', 'save-directory'])
   }, [])
-  return <div className="page-view settings-view"><div className="page-title"><div><span>个人工作区</span><h1>偏好设置</h1><p>这里只保留会影响你个人工作流的选项；生成模型、生成服务与固定生产规格由管理员统一维护。</p></div><div className="page-title-actions">{system?.sharedAuthentication ? <button className="secondary-button" onClick={onLogout}>退出登录</button> : null}</div></div>
-    {system?.sharedAuthentication ? <PersonalPasswordSetting /> : null}
-    <AccountUsagePanel actorId={actorId} personal />
-    <PersonalVideoLearningSetting />
-    <PersonalPromptConfirmationSetting />
-    <BrowserNotificationSetting
-      enabled={browserNotificationsEnabled}
-      permission={browserNotificationPermission}
-      onEnable={onEnableBrowserNotifications}
-      onDisable={onDisableBrowserNotifications}
-    />
+  return <div className="page-view settings-view personal-settings">
+    <header className="personal-settings-header"><h1>个人设置</h1></header>
+    <div className="personal-settings-layout">
+      <AccountUsagePanel key={actorId} actorId={actorId} />
+      <aside className="personal-settings-sidebar">
+        <div className="settings-section personal-settings-group">
+          <h2>工作偏好</h2>
+          <PersonalPromptConfirmationSetting />
+          <BrowserNotificationSetting enabled={browserNotificationsEnabled} permission={browserNotificationPermission} onEnable={onEnableBrowserNotifications} onDisable={onDisableBrowserNotifications} />
+          <details className="personal-settings-disclosure"><summary>智能学习 <ChevronDown size={16} aria-hidden="true" /></summary><PersonalVideoLearningSetting /></details>
+        </div>
+        {system?.sharedAuthentication ? <section className="settings-section personal-settings-account">
+          <h2>账号与安全</h2>
+          {system?.sharedAuthentication ? <><details className="personal-settings-disclosure"><summary>修改密码 <ChevronDown size={16} aria-hidden="true" /></summary><PersonalPasswordSetting /></details>
+          <button className="secondary-button personal-settings-logout" type="button" onClick={onLogout}><LogOut size={16} />退出登录</button></> : null}
+        </section> : null}
+      </aside>
+    </div>
   </div>
 }

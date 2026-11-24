@@ -159,7 +159,7 @@ try {
       return route.fulfill({ status: 404, json: {} })
     })
     await page.goto(`${origin}/__app_fixture?view=admin`)
-    const expectedHeading = pages.includes('images') ? '图片中心' : pages.includes('records') ? '任务' : '偏好设置'
+    const expectedHeading = pages.includes('images') ? '图片中心' : pages.includes('records') ? '任务' : '个人设置'
     await page.getByRole('heading', { name: expectedHeading, exact: true }).waitFor()
     const nav = page.locator('.sidebar')
     for (const [key, label] of [['images', '图片中心'], ['make', '视频制作'], ['records', '任务'], ['library', '内容库'], ['admin', '管理'], ['settings', '设置']]) {

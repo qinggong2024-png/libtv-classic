@@ -16,7 +16,7 @@ export const ROUTES = [
   { name: 'admin-accounts', query: '?view=admin&section=accounts', selector: '.admin-view .admin-section-content > .account-management-section', heading: '\u7ba1\u7406\u4e2d\u5fc3', sectionLabel: '\u54c1\u724c\u4e0e\u8d26\u53f7', requiresAdmin: true },
   { name: 'admin-providers', query: '?view=admin&section=providers', selector: '.admin-view .admin-section-content > .provider-section', heading: '\u7ba1\u7406\u4e2d\u5fc3', sectionLabel: '\u751f\u6210\u63d0\u4f9b\u5546', requiresAdmin: true },
   { name: 'admin-security', query: '?view=admin&section=security', selector: '.admin-view .admin-section-content > .prompt-confirmation-section', heading: '\u7ba1\u7406\u4e2d\u5fc3', sectionLabel: '\u6d41\u7a0b\u4e0e\u5206\u6790', requiresAdmin: true },
-  { name: 'settings', query: '?view=settings', selector: '.settings-view', heading: '\u504f\u597d\u8bbe\u7f6e' },
+  { name: 'settings', query: '?view=settings', selector: '.settings-view', heading: '\u4e2a\u4eba\u8bbe\u7f6e' },
 ]
 
 export function isPageReady(route, snapshot) {
