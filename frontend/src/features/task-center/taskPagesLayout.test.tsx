@@ -23,6 +23,13 @@ const renderDetail = (item: Task, multiCutReady = false) => renderToStaticMarkup
   <ProductionWorkspace task={item} onClose={noop} onChanged={refresh} onRemix={noop} onReuse={noop} onPlay={noop} multiCutReady={multiCutReady} />,
 )
 
+it('keeps feedback with ready originals in task detail, not on the creation page', () => {
+  const html = renderToStaticMarkup(<ProductionWorkspace task={task} onClose={noop} onChanged={refresh} onRemix={noop} onReuse={noop} onPlay={noop} onFeedbackChanged={noop} />)
+  expect(html).toContain('result-feedback')
+  expect(html.match(/class="result-feedback"/g)).toHaveLength(1)
+  expect(renderDetail(task)).not.toContain('result-feedback')
+})
+
 describe('经典版自适应任务详情', () => {
   it('任务中心的工具按钮用于刷新状态而非复制链接', () => {
     const html = renderToStaticMarkup(<RecordsView tasks={[task]} hasMore={false} loadingMore={false}

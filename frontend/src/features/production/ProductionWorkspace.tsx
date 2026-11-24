@@ -9,6 +9,7 @@ import { providerPresentation, variantExecutionMessage } from '../../providerPre
 import { ACTIVE_PHASES, RESULT_PHASES } from '../../domain/workflowStates'
 import { taskHasActionableReason } from '../../domain/statusPresentation'
 import { formatTime, isAnalysisFailure, isWaveSpeedBalanceFailure, taskFailureMessage, taskRecoveryHeadline, taskStatus, variantDisplayName, variantKindDisplayName, variantKindShortLabel } from '../../domain/taskPresentation'
+import { VariantFeedback } from './VariantFeedback'
 import { DepthVideoResult } from './DepthVideoResult'
 import { CutflowControl } from './CutflowControl'
 import { TaskCutflowActivity, TaskCutflowDeliveries } from './TaskCutflowSections'
@@ -79,7 +80,7 @@ function StandaloneProductionWorkspace(props: WorkspaceProps) {
   </>
 }
 
-function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRemix, onReuse, onDepthReuse, onPlay, focusVariantId = null, canGenerate = true, multiCutReady = false }: { canGenerate?: boolean; task: Task; tasks?: Task[]; basketStorageKey?: string; cutflowBasket: MultiCutBasketController; onClose: () => void; onChanged: () => Promise<void>; onDepthReuse?: () => void; onRemix: () => void; onReuse: (variants: VariantKind[]) => void; onPlay: (variant: Variant) => void; onPlaySource?: (sourceTask: Task, variant: Variant) => void; focusVariantId?: string | null; multiCutReady?: boolean }) {
+function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRemix, onReuse, onDepthReuse, onPlay, onFeedbackChanged, focusVariantId = null, canGenerate = true, multiCutReady = false }: { canGenerate?: boolean; task: Task; tasks?: Task[]; basketStorageKey?: string; cutflowBasket: MultiCutBasketController; onClose: () => void; onChanged: () => Promise<void>; onDepthReuse?: () => void; onRemix: () => void; onReuse: (variants: VariantKind[]) => void; onPlay: (variant: Variant) => void; onPlaySource?: (sourceTask: Task, variant: Variant) => void; onFeedbackChanged?: (task: Task) => void; focusVariantId?: string | null; multiCutReady?: boolean }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [preview, setPreview] = useState<{ asset: Asset; label: string } | null>(null)
@@ -397,6 +398,7 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
                   hint={previouslyCut ? '创建一个新剪辑版本，旧成片继续保留' : '可与同任务其他原片一起送剪'}
                   onToggle={() => cutflowBasket.toggle(variant.id)}
                 />) : undefined} /></div>
+              {variant.downloadArtifactId && onFeedbackChanged ? <VariantFeedback task={task} variant={variant} onFeedbackChanged={onFeedbackChanged} /> : null}
             </section>
           })}</div>
           {hasMultipleResults && !awaitingAutoDispatch ? <aside className="task-original-gallery__sidebar" aria-label="批量送剪操作">
