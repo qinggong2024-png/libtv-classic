@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
+import sys
 import tempfile
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
 from libtv_agent.config import Settings
+from libtv_agent.services.cutflow_status_reader import ERROR_CODES
 
 
 def timestamp(value: object) -> datetime | None:
@@ -56,6 +59,45 @@ def _save(target: Path, value: dict) -> None:
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+def nas_probe(settings: Settings, timeout: float = 10) -> str:
+    """Bound SMB hangs in a disposable process; no network IO on the API loop."""
+    if settings.cutflow_transport != "lan" or settings.cutflow_handoff_root is None:
+        return "NOT_CONFIGURED"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(Path(__file__).with_name("cutflow_status_reader.py")),
+             str(settings.cutflow_handoff_root), "--probe"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=timeout, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except subprocess.TimeoutExpired:
+        return "NAS_PROBE_TIMEOUT"
+    except OSError:
+        return "NAS_UNAVAILABLE"
+    return "OK" if result.returncode == 0 else ERROR_CODES.get(result.returncode, "NAS_UNAVAILABLE")
+
+
+def nas_health(settings: Settings, now: datetime) -> dict:
+    try:
+        path = settings.artifact_root / "cutflow-observations" / "nas.json"
+        value = json.loads(path.read_text(encoding="utf-8")) if path.stat().st_size < 4096 else {}
+        checked = timestamp(value.get("checkedAt"))
+        code = value.get("code")
+        if code not in {"OK", "NOT_CONFIGURED", "NAS_PROBE_TIMEOUT", "NAS_UNAVAILABLE", *ERROR_CODES.values()}:
+            raise ValueError("invalid health code")
+        if checked and 0 <= (now - checked).total_seconds() <= 150:
+            return {"code": code, "checkedAt": checked.isoformat()}
+        return {"code": "STALE", "checkedAt": checked.isoformat() if checked else None}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {"code": "UNKNOWN", "checkedAt": None}
+
+
+def save_nas_health(settings: Settings, code: str, now: datetime) -> None:
+    _save(settings.artifact_root / "cutflow-observations" / "nas.json",
+          {"code": code, "checkedAt": now.isoformat()})
 
 
 def worker_pulse(settings: Settings, now: datetime) -> None:

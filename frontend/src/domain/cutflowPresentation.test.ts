@@ -52,6 +52,13 @@ describe('cutflow progress evidence', () => {
     expect(cutflowPresentation(handoff(status))).toMatchObject({ step: 0, active: false })
   })
 
+  it('retains a CUT job during NAS authentication loss and clears the warning after recovery', () => {
+    const task = { ...multiTask('EDITING'), errorCode: 'CUTFLOW_NAS_AUTH_FAILED' }
+    expect(multiCutflowPresentation(task)).toMatchObject({ label: '共享目录凭证失效，等待管理员恢复', active: true, completed: false })
+    expect(multiCutflowPresentation({ ...task, errorCode: null }).label).toBe('CUT 正在剪辑')
+    expect(multiCutflowPresentation({ ...task, status: 'PENDING_REVIEW', outputs: [{ id: 'render' } as MultiCutflowTask['outputs'][number]] }).completed).toBe(true)
+  })
+
   it('keeps review decisions separate from rendering completion', () => {
     expect(cutflowReviewLabel('PENDING')).toBe('待审核')
     expect(cutflowReviewLabel('APPROVED')).toBe('审核通过')

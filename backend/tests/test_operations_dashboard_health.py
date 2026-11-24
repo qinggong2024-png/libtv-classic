@@ -180,3 +180,26 @@ async def test_full_capacity_without_executable_backlog_does_not_claim_queue_blo
     assert snapshot["queues"]["actionableTotal"] == 0
     assert snapshot["pipelinePerformance"]["currentConstraint"] != "GENERATION_CAPACITY"
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_nas_health_alert_uses_worker_snapshot_and_clears_after_recovery(tmp_path):
+    from libtv_agent.services.cutflow_observation import save_nas_health
+
+    engine, factory = await _open_db()
+    settings = Settings(
+        object_store_mode="local", runner_root=tmp_path / "runner",
+        artifact_root=tmp_path / "artifacts", cutflow_handoff_enabled=True,
+        cutflow_transport="lan", _env_file=None,
+    )
+    try:
+        async with factory() as session:
+            save_nas_health(settings, "NAS_AUTH_FAILED", datetime.now(UTC))
+            snapshot = await operations_snapshot(session, settings)
+            assert any(alert["code"] == "NAS_AUTH_FAILED" and alert["action"] == "CHECK_CUT_NAS"
+                       for alert in snapshot["alerts"])
+            save_nas_health(settings, "OK", datetime.now(UTC))
+            snapshot = await operations_snapshot(session, settings)
+            assert not any(alert["code"] == "NAS_AUTH_FAILED" for alert in snapshot["alerts"])
+    finally:
+        await engine.dispose()

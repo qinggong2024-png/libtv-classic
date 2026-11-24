@@ -432,11 +432,30 @@ async def _worker_pulse(settings: Settings) -> None:
         await asyncio.sleep(15)
 
 
+async def _nas_monitor(settings: Settings) -> None:
+    previous = None
+    while True:
+        code = await asyncio.to_thread(cutflow_observation.nas_probe, settings)
+        try:
+            await asyncio.to_thread(cutflow_observation.save_nas_health, settings, code, datetime.now(UTC))
+        except OSError:
+            logging.getLogger(__name__).warning("CUTFLOW_NAS_HEALTH_SAVE_FAILED")
+        if code != previous:
+            log = logging.getLogger(__name__)
+            if code == "OK" and previous not in {None, "OK"}:
+                log.info("CUTFLOW_NAS_RECOVERED previous=%s; original jobs remain eligible", previous)
+            elif code not in {"OK", "NOT_CONFIGURED"}:
+                log.error("CUTFLOW_NAS_HEALTH_FAILED code=%s; original jobs retained", code)
+            previous = code
+        await asyncio.sleep(60)
+
+
 async def run(once: bool, stopping=None) -> None:
     settings = get_settings()
     require_configuration(settings)
     database = Database(settings.database_url)
     pulse = asyncio.create_task(_worker_pulse(settings)) if not once else None
+    nas_monitor = asyncio.create_task(_nas_monitor(settings)) if not once and settings.cutflow_transport == "lan" else None
     clean_stop = False
     try:
         store = create_object_store(settings)
@@ -515,6 +534,10 @@ async def run(once: bool, stopping=None) -> None:
                 await asyncio.to_thread(stopping.wait, 15 if failed else 1)
         clean_stop = True
     finally:
+        if nas_monitor is not None:
+            nas_monitor.cancel()
+            with suppress(asyncio.CancelledError):
+                await nas_monitor
         if pulse is not None:
             pulse.cancel()
             with suppress(asyncio.CancelledError):

@@ -13,6 +13,8 @@ import hashlib
 import json
 import os
 import re
+import subprocess
+import sys
 import uuid
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
@@ -44,6 +46,7 @@ from libtv_agent.services.cutflow_multi_adapter import (
     normalize_cut_multi_response,
 )
 from libtv_agent.services.cutflow_product_package import NATIVE_ROOT
+from libtv_agent.services.cutflow_status_reader import ERROR_CODES, error_exit
 from libtv_agent.services.cutflow_protocol import (
     JOB_CONTRACT,
     check_status_revision,
@@ -429,6 +432,40 @@ def normalize_multi_status(task: MultiCutflowTask, response: dict) -> dict:
     return result
 
 
+def _read_remote_snapshot(root: Path, relative: str, *, timeout: float = 6.0) -> bytes | None:
+    """A UNC read may block in the Windows SMB driver indefinitely.
+
+    Do not rely on asyncio.wait_for(to_thread(...)): the underlying thread
+    survives cancellation and prevents asyncio.run shutdown. Isolate only
+    the read-only operation; the worker keeps its normal lease fencing.
+    """
+    reader = Path(__file__).with_name("cutflow_status_reader.py")
+    try:
+        result = subprocess.run(
+            [sys.executable, str(reader), str(root), relative],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            timeout=timeout, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        raise CutflowHandoffError(
+            "CUTFLOW_NAS_UNAVAILABLE",
+            "CUT 共享目录读取超时，保留原任务并继续核对",
+        ) from None
+    if result.returncode == 3:
+        return None
+    if result.returncode == 4:
+        raise CutflowHandoffError("UNSAFE_PATH", "CUT 状态路径越界")
+    if result.returncode == 6 or len(result.stdout) > MAX_RESPONSE_BYTES:
+        raise CutflowHandoffError("INVALID_RESULT", "CUT 多源状态文件过大")
+    if result.returncode != 0:
+        code = ERROR_CODES.get(result.returncode, "NAS_UNAVAILABLE")
+        raise CutflowHandoffError(
+            "CUTFLOW_" + code, "CUT 共享目录暂时不可读，保留原任务并继续核对",
+        )
+    return result.stdout
+
+
 def read_multi_nas_status(
     task: MultiCutflowTask,
     settings: Settings,
@@ -440,22 +477,29 @@ def read_multi_nas_status(
         or settings.cutflow_handoff_root is None
     ):
         return None
-    path = safe_path(
-        settings.cutflow_handoff_root,
-        f"{OUTPUT_PATH_PREFIX}/{task.id}/{STATUS_PATH}",
-    )
-    try:
-        if path.exists() and not path.is_file():
-            raise OSError("status path is not a regular file")
-        with path.open("rb") as handle:
-            raw = handle.read(MAX_RESPONSE_BYTES + 1)
-    except FileNotFoundError:
-        return None
-    except OSError:
-        raise CutflowHandoffError(
-            "CUTFLOW_NAS_UNAVAILABLE",
-            "CUT 共享目录暂时不可读，系统会使用同一任务编号继续重试",
-        ) from None
+    relative = f"{OUTPUT_PATH_PREFIX}/{task.id}/{STATUS_PATH}"
+    if os.name == "nt" and str(settings.cutflow_handoff_root).startswith("\\\\"):
+        raw = _read_remote_snapshot(settings.cutflow_handoff_root, relative)
+        if raw is None:
+            return None
+    else:
+        path = safe_path(settings.cutflow_handoff_root, relative)
+        try:
+            if path.exists() and not path.is_file():
+                raise OSError("status path is not a regular file")
+            with path.open("rb") as handle:
+                raw = handle.read(MAX_RESPONSE_BYTES + 1)
+        except FileNotFoundError as exc:
+            classified = ERROR_CODES.get(error_exit(exc))
+            if classified:
+                raise CutflowHandoffError("CUTFLOW_" + classified, "CUT 共享目录连接异常，将继续核对原任务") from None
+            return None
+        except OSError as exc:
+            code = ERROR_CODES.get(error_exit(exc), "NAS_UNAVAILABLE")
+            raise CutflowHandoffError(
+                "CUTFLOW_" + code,
+                "CUT 共享目录暂时不可读，系统会使用同一任务编号继续重试",
+            ) from None
     if len(raw) > MAX_RESPONSE_BYTES:
         raise CutflowHandoffError("INVALID_RESULT", "CUT 多源状态文件过大")
     try:

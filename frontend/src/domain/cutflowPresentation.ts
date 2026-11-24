@@ -26,7 +26,21 @@ const ACTIVE_MULTI_CUTFLOW_STATUSES = new Set([
   'UNKNOWN',
 ])
 
+export function nasRecoveryMessage(code: string | null | undefined) {
+  const messages: Record<string, string> = {
+    CUTFLOW_NAS_AUTH_FAILED: '共享目录凭证失效，等待管理员恢复',
+    CUTFLOW_NAS_ACCESS_DENIED: '共享目录权限异常，等待管理员恢复',
+    CUTFLOW_NAS_UNREACHABLE: '共享目录连接异常，正在自动恢复',
+    CUTFLOW_NAS_UNAVAILABLE: '共享目录暂不可用，正在自动恢复',
+  }
+  return code ? messages[code] : undefined
+}
+
 export function multiCutflowPresentation(task: MultiCutflowTask) {
+  const nas = nasRecoveryMessage(task.errorCode)
+  if (nas && ACTIVE_MULTI_CUTFLOW_STATUSES.has(task.status)) {
+    return { label: nas, active: true, completed: false }
+  }
   if (task.status === 'READY' && task.errorCode === 'CUTFLOW_NOTIFICATION_TOO_LARGE') {
     return { label: 'CUT 通知超限，等待 NAS 接单', active: true, completed: false }
   }

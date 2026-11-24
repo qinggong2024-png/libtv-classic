@@ -29,6 +29,13 @@ describe('CUT stage proof and safe user-facing labels', () => {
     expect(result).toMatchObject({ headline: 'CUT 接单异常', tone: 'attention' })
   })
 
+  it('shows recoverable NAS authentication failure without a duplicate submission action', () => {
+    const result = cutflowDispatchPresentation(settings, true, true, false, false, true, false, false,
+      snapshot('EDITING', 'CUTFLOW_NAS_AUTH_FAILED'))
+    expect(result).toMatchObject({ headline: '共享目录凭证失效，等待管理员恢复', action: null, tone: 'neutral' })
+    expect(result.detail).toContain('无需重复送剪')
+  })
+
   it('shows a sync error above a cached active record', () => {
     const result = cutflowDispatchPresentation(
       settings, true, true, false, false, true, true, false, snapshot('EDITING'),

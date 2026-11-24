@@ -6,6 +6,12 @@ import type { OperationsIssueCategory, OperationsSnapshot } from './types'
 import { OperationsIssuesBrowser } from './features/admin/OperationsIssuesBrowser'
 
 const alertCodeLabels: Record<string, string> = {
+  NAS_AUTH_FAILED: 'CUT 共享目录凭证失效',
+  NAS_ACCESS_DENIED: 'CUT 共享目录读写权限不足',
+  NAS_UNREACHABLE: 'CUT 共享目录网络不可达',
+  NAS_PROBE_TIMEOUT: 'CUT 共享目录访问超时',
+  NAS_UNAVAILABLE: 'CUT 共享目录暂不可用',
+  NAS_HEALTH_STALE: 'CUT 共享目录健康检查已过期',
   LIBTV_AUTH_REQUIRED: '历史任务连接信息已失效',
   KLING_API_KEY_MISSING: '还没有填写可灵服务密钥',
   KLING_API_AUTHENTICATION_FAILED: '可灵官方服务 密钥验证没通过',
@@ -19,6 +25,7 @@ const alertCodeLabels: Record<string, string> = {
 }
 
 const alertActionLabels: Record<string, string> = {
+  CHECK_CUT_NAS: '请管理员检查 NAS 凭证、网络及权限；原任务会自动恢复，无需重复送剪。',
   RUN_REFRESH_LIBTV_LOGIN: '请检查历史任务认证状态',
   CONFIGURE_KLING_API_KEY: '请填写或更换可灵服务密钥',
   REFRESH_KLING_API_STATUS: '请重新检查可灵连接',

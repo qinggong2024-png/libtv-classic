@@ -34,6 +34,7 @@ from libtv_agent.domain.models import (
     RunnerHost,
     TaskConfirmationVersion,
 )
+from libtv_agent.services.cutflow_observation import nas_health
 from libtv_agent.services.runtime_control import get_runtime_config
 from sqlalchemy import case, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -867,6 +868,14 @@ async def operations_snapshot(session: AsyncSession, settings: Settings) -> dict
         or 0
     )
     alerts: list[dict[str, str]] = []
+    if settings.cutflow_handoff_enabled and settings.cutflow_transport == "lan":
+        nas = nas_health(settings, sampled_at)
+        if nas["code"] not in {"OK", "UNKNOWN", "NOT_CONFIGURED"}:
+            alerts.append({
+                "severity": "ACTION_REQUIRED",
+                "code": nas["code"] if nas["code"] != "STALE" else "NAS_HEALTH_STALE",
+                "action": "CHECK_CUT_NAS",
+            })
     if config.get("libtvAuthRequired", False):
         alerts.append(
             {

@@ -1,4 +1,5 @@
 import type { Task } from '../../types'
+import { nasRecoveryMessage } from '../../domain/cutflowPresentation'
 import type { MultiCutflowTask, AutoCutflowDispatchStatus } from '../../api'
 
 export type CutflowNextAction = 'select' | 'refresh' | 'history' | 'view' | null
@@ -40,6 +41,8 @@ export function cutflowDispatchPresentation(
 
   if (hasFailedEdit) return result('剪辑任务失败', '已找到失败的剪辑记录；请查看错误原因。不要直接重复创建新任务。', '处理失败', 'history', '查看原因', 'attention')
   if (hasActiveEdit) {
+    const nas = nasRecoveryMessage(latestEdit?.errorCode)
+    if (nas) return result(nas, '原任务与成片记录已保留，恢复连接后自动继续。无需重复送剪；长时间未恢复请联系管理员。', '连接待恢复', null, null, 'neutral')
     if (latestEdit?.status === 'QUEUED') return result('待送剪，正在准备素材', 'ALLWE 已保存送剪任务，后台将打包并投递原片；尚未确认 CUT 接单。', '待投递')
     if (latestEdit?.status === 'READY') {
       if (latestEdit.errorCode === 'CUTFLOW_NOTIFICATION_TOO_LARGE') return result('等待 CUT 接单', '通知超限，已切换等待 NAS 扫描接单；请核对共享目录与 CUT 接单状态。', '接单待核实', 'history', '查看记录', 'attention')

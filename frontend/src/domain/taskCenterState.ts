@@ -2,7 +2,7 @@ import type { MultiCutflowTask } from '../api'
 import type { Task } from '../types'
 import { ACTIVE_PHASES, AWAITING_USER_INPUT_PHASES, TASK_PHASE_META } from './workflowStates'
 import { activeTaskRecoveryPresentation } from './statusPresentation'
-import { multiCutflowPresentation } from './cutflowPresentation'
+import { multiCutflowPresentation, nasRecoveryMessage } from './cutflowPresentation'
 import { autoCutflowWaitDelayed } from './autoCutflowWaiting'
 
 // This is a *user-facing* workflow state, not a mutation of backend generation phases.
@@ -26,10 +26,11 @@ export function taskCenterState(task: Task, batches: MultiCutflowTask[], status:
     const intakeWarning = active.status === 'READY' && [
       'CUTFLOW_NOTIFICATION_TOO_LARGE', 'CUTFLOW_STATUS_MISSING', 'CUTFLOW_IMPORT_REJECTED',
     ].includes(active.errorCode ?? '')
+    const nas = nasRecoveryMessage(active.errorCode)
     return {
       group: intakeWarning ? 'attention' : 'active',
       label: multiCutflowPresentation(active).label,
-      detail: intakeWarning ? (active.errorMessage || 'CUT 尚未确认接单；请核对共享目录扫描，不要重复送剪') : '已送剪，无需重复操作',
+      detail: nas ? '原任务已保留，恢复连接后自动继续，无需重新送剪。' : intakeWarning ? (active.errorMessage || 'CUT 尚未确认接单；请核对共享目录扫描，不要重复送剪') : '已送剪，无需重复操作',
       outputs, readyCount, manualSelection: false,
     } as const
   }
