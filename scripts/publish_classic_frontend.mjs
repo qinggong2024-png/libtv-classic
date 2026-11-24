@@ -5,7 +5,6 @@
  */
 import { cp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { spawn } from 'node:child_process'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -54,26 +53,16 @@ export async function publishClassicFrontend({
   await rm(stage, { recursive: true, force: true })
 }
 
-async function buildAndPublish() {
-  const frontendRoot = join(projectRoot, 'frontend')
-  const stageDir = join(frontendRoot, `.dist-stage-${randomUUID()}`)
-  const viteCli = join(frontendRoot, 'node_modules', 'vite', 'bin', 'vite.js')
-  try {
-    await new Promise((accept, reject) => {
-      const worker = spawn(process.execPath, [viteCli, 'build', '--outDir', stageDir], {
-        cwd: frontendRoot,
-        stdio: 'inherit',
-      })
-      worker.once('error', reject)
-      worker.once('close', code => code === 0 ? accept() : reject(new Error(`Vite build failed: ${code}`)))
-    })
-    await publishClassicFrontend({ stageDir })
-  } finally {
-    await rm(stageDir, { recursive: true, force: true })
-  }
+async function publishPreparedBuild() {
+  // Building is deliberately a separate step: npm run build never touches live dist.
+  await publishClassicFrontend({
+    stageDir: join(projectRoot, 'frontend', 'dist-build'),
+    distDir: join(projectRoot, 'frontend', 'dist'),
+  })
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await buildAndPublish()
+  if (!process.argv.includes('--apply')) throw new Error('Frontend publish requires explicit --apply (build with npm run build for validation only)')
+  await publishPreparedBuild()
   console.log('Classic frontend published: previous hashed assets retained')
 }
