@@ -242,7 +242,10 @@
 .admin-view .ops-issue-shortcuts .text-button { padding: 4px 0; font-size: 12px; }
 .admin-view .ops-issue-row { border-radius: 9px; padding: 14px 8px; transition: background-color .17s ease; }
 .admin-view .ops-issue-row:hover { background: #f8fafc; }
-.admin-view .account-workspace .settings-section { padding: 0; }
+.admin-view .account-workspace .settings-section { padding: 20px 24px 24px; box-sizing: border-box; max-width: 100%; }
+@media (max-width: 1280px) {
+  .admin-view .account-workspace .settings-section { padding-inline: 16px; }
+}
 .admin-view .account-workspace .account-row { padding: 17px 12px; border-radius: 11px; transition: background-color .18s ease; }
 .admin-view .account-workspace .account-row:hover { background: #f8fafc; }
 .admin-view .account-workspace .account-row.is-inactive { background: var(--surface-soft); }
