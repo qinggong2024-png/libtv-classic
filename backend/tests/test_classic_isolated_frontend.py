@@ -3,7 +3,7 @@ import hashlib
 import json
 import subprocess
 import sys
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 import pytest
@@ -115,6 +115,20 @@ def test_publish_installs_assets_and_records_verified_receipt(release, monkeypat
     assert Path(result["rollbackIndex"]).read_bytes() == b"old"
     assert mod.receipt_for(root, result["frontendNew"], pins["approved"], active=result)
     assert (root / "frontend" / "dist" / "assets" / "index-new.js").read_bytes() == b"new asset"
+
+
+def test_build_is_staged_before_production_lock(release, monkeypatch):
+    root, candidate, pins = release
+    prepare_stage(candidate, monkeypatch)
+
+    @contextmanager
+    def lock(_):
+        assert (candidate / "frontend/dist-build/index.html").exists()
+        assert (root / "frontend/dist/index.html").read_bytes() == b"old"
+        yield
+
+    result = mod.publish_isolated(root, candidate, lock=lock, **pins)
+    assert result["ready"] and result["frontendPublished"]
 
 
 def test_failed_http_asset_check_restores_our_old_index(release, monkeypatch):

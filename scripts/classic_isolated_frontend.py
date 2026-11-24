@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import tempfile
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.request import ProxyHandler, build_opener
@@ -297,85 +298,103 @@ def record_receipt(root, item):
     return str(path)
 
 
+@contextmanager
+def candidate_stage_lock(candidate):
+    # Different candidates can build concurrently. The same candidate cannot.
+    path = Path(git(candidate, "rev-parse", "--absolute-git-dir")) / "classic-stage.lock"
+    with path.open("x", encoding="ascii") as handle:
+        try:
+            handle.write(str(os.getpid()))
+            handle.flush()
+            yield
+        finally:
+            handle.close()
+            path.unlink(missing_ok=True)
+
+
 def publish_isolated(root, candidate, *, lock, **pins):
-    with lock(root):
-        before = assess_isolated(root, candidate, **pins)
-        if not before["ready"]:
-            return before
+    before = assess_isolated(root, candidate, **pins)
+    if not before["ready"]:
+        return before
+    with candidate_stage_lock(candidate):
         dist = root / "frontend" / "dist"
         stage = candidate / "frontend" / "dist-build"
         npm = shutil.which("npm.cmd") or shutil.which("npm")
         if not npm:
             raise RuntimeError("npm not found")
-        # Build only in the pinned candidate, never main or the active API directory.
+        # Compile in the isolated candidate before taking the production lock.
+        # No production assets are written during staging. Pin the staged bytes.
         subprocess.run([npm, "run", "build"], cwd=candidate / "frontend", check=True, timeout=240)
         files = staged_files(stage, dist)
-        after = assess_isolated(root, candidate, **pins)
-        if not after["ready"] or not unchanged(before, after):
-            after["ready"] = False
-            after["blockers"].append("LIVE_OR_CANDIDATE_BASELINE_CHANGED")
-            return after
-        entry = dist / "index.html"
-        archive = history(root)
-        archive.mkdir(parents=True, exist_ok=True)
-        backup = archive / ("frontend-index-" + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ") + ".html")
-        shutil.copy2(entry, backup)
-        expected = files["index.html"]
-        # Install new immutable assets first, then recheck every staged/live file.
-        for name, sha in files.items():
-            if name == "index.html":
-                continue
-            dest = dist / name
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            if not dest.exists():
-                # Never leave a half-written immutable filename after a failed copy.
-                with tempfile.NamedTemporaryFile(dir=dest.parent, prefix=".asset-", delete=False) as output:
-                    pending = Path(output.name)
-                try:
-                    shutil.copyfile(stage / name, pending)
-                    if digest(pending) != sha:
-                        raise RuntimeError("STAGED_ASSET_CHANGED")
-                    try:
-                        os.link(pending, dest)
-                    except FileExistsError:
-                        pass
-                finally:
-                    pending.unlink(missing_ok=True)
-            if digest(dest) != sha:
-                raise RuntimeError("FRONTEND_ASSET_MISMATCH")
-        final = assess_isolated(root, candidate, **pins)
-        if not final["ready"] or not unchanged(before, final):
-            final["ready"] = False
-            final["blockers"].append("LIVE_OR_CANDIDATE_BASELINE_CHANGED")
-            return final
-        data = (stage / "index.html").read_bytes()
-        if hashlib.sha256(data).hexdigest() != expected:
-            raise RuntimeError("STAGED_INDEX_CHANGED")
-        switched = False
-        try:
-            atomic_index(entry, data)
-            switched = True
-            post = assess_isolated(root, candidate, **dict(pins, old=expected))
-            # New index has no receipt yet; it will be recorded only after verification.
-            remaining = [b for b in post["blockers"] if b != "LIVE_FRONTEND_SOURCE_RECEIPT_REQUIRED"]
-            if remaining or not unchanged(before, post) or digest(entry) != expected or http_digest() != expected:
-                raise RuntimeError("FRONTEND_POST_PUBLISH_VERIFICATION_FAILED")
+        with lock(root):
+            if staged_files(stage, dist) != files:
+                raise RuntimeError("STAGED_ARTIFACT_CHANGED")
+            after = assess_isolated(root, candidate, **pins)
+            if not after["ready"] or not unchanged(before, after):
+                after["ready"] = False
+                after["blockers"].append("LIVE_OR_CANDIDATE_BASELINE_CHANGED")
+                return after
+            entry = dist / "index.html"
+            archive = history(root)
+            archive.mkdir(parents=True, exist_ok=True)
+            backup = archive / ("frontend-index-" + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ") + ".html")
+            shutil.copy2(entry, backup)
+            expected = files["index.html"]
+            # Install new immutable assets first, then recheck every staged/live file.
             for name, sha in files.items():
-                if name.startswith("assets/") and http_digest("/" + name) != sha:
-                    raise RuntimeError("FRONTEND_HTTP_ASSET_MISMATCH")
-            checked = assess_isolated(root, candidate, **dict(pins, old=expected))
-            if [b for b in checked["blockers"] if b != "LIVE_FRONTEND_SOURCE_RECEIPT_REQUIRED"] or not unchanged(before, checked):
-                raise RuntimeError("LIVE_BASELINE_CHANGED_AFTER_ASSET_CHECK")
-            result = dict(checked, blockers=[], ready=True, frontendPublished=True,
-                          mode="isolated-frontend-hot", frontendOld=pins["old"], frontendNew=expected,
-                          expectedFrontendSha256=expected, servedFrontendSha256=expected,
-                          artifactSourceHead=pins["candidate_head"], rollbackIndex=str(backup),
-                          artifactFilesVerified=len(files))
-            result["baselineReceipt"] = before["baselineReceipt"]
-            result["receipt"] = record_receipt(root, result)
-            return result
-        except Exception:
-            # Only restore our own pointer; never overwrite a concurrent publisher.
-            if switched and digest(entry) == expected:
-                atomic_index(entry, backup.read_bytes())
-            raise
+                if name == "index.html":
+                    continue
+                dest = dist / name
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                if not dest.exists():
+                    # Never leave a half-written immutable filename after a failed copy.
+                    with tempfile.NamedTemporaryFile(dir=dest.parent, prefix=".asset-", delete=False) as output:
+                        pending = Path(output.name)
+                    try:
+                        shutil.copyfile(stage / name, pending)
+                        if digest(pending) != sha:
+                            raise RuntimeError("STAGED_ASSET_CHANGED")
+                        try:
+                            os.link(pending, dest)
+                        except FileExistsError:
+                            pass
+                    finally:
+                        pending.unlink(missing_ok=True)
+                if digest(dest) != sha:
+                    raise RuntimeError("FRONTEND_ASSET_MISMATCH")
+            final = assess_isolated(root, candidate, **pins)
+            if not final["ready"] or not unchanged(before, final):
+                final["ready"] = False
+                final["blockers"].append("LIVE_OR_CANDIDATE_BASELINE_CHANGED")
+                return final
+            data = (stage / "index.html").read_bytes()
+            if hashlib.sha256(data).hexdigest() != expected:
+                raise RuntimeError("STAGED_INDEX_CHANGED")
+            switched = False
+            try:
+                atomic_index(entry, data)
+                switched = True
+                post = assess_isolated(root, candidate, **dict(pins, old=expected))
+                # New index has no receipt yet; it will be recorded only after verification.
+                remaining = [b for b in post["blockers"] if b != "LIVE_FRONTEND_SOURCE_RECEIPT_REQUIRED"]
+                if remaining or not unchanged(before, post) or digest(entry) != expected or http_digest() != expected:
+                    raise RuntimeError("FRONTEND_POST_PUBLISH_VERIFICATION_FAILED")
+                for name, sha in files.items():
+                    if name.startswith("assets/") and http_digest("/" + name) != sha:
+                        raise RuntimeError("FRONTEND_HTTP_ASSET_MISMATCH")
+                checked = assess_isolated(root, candidate, **dict(pins, old=expected))
+                if [b for b in checked["blockers"] if b != "LIVE_FRONTEND_SOURCE_RECEIPT_REQUIRED"] or not unchanged(before, checked):
+                    raise RuntimeError("LIVE_BASELINE_CHANGED_AFTER_ASSET_CHECK")
+                result = dict(checked, blockers=[], ready=True, frontendPublished=True,
+                              mode="isolated-frontend-hot", frontendOld=pins["old"], frontendNew=expected,
+                              expectedFrontendSha256=expected, servedFrontendSha256=expected,
+                              artifactSourceHead=pins["candidate_head"], rollbackIndex=str(backup),
+                              artifactFilesVerified=len(files))
+                result["baselineReceipt"] = before["baselineReceipt"]
+                result["receipt"] = record_receipt(root, result)
+                return result
+            except Exception:
+                # Only restore our own pointer; never overwrite a concurrent publisher.
+                if switched and digest(entry) == expected:
+                    atomic_index(entry, backup.read_bytes())
+                raise
