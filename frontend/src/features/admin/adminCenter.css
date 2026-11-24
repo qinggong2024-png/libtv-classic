@@ -294,3 +294,108 @@
   .admin-view .ops-control-card, .admin-view .ops-issue-row,
   .admin-view :is(.primary-button, .secondary-button, .icon-button) { transition: none; }
 }
+
+/* Dashboard second pass: prioritize actionable exceptions, then compact throughput. */
+.admin-view .admin-page-heading { min-height: 54px; margin-bottom: 17px; padding-bottom: 15px; }
+.admin-view .admin-content-heading { padding: 2px 0 14px; margin-bottom: 12px; }
+.admin-view .admin-content-heading h2 { font-size: 22px; }
+.admin-view .ops-command-bar {
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 0 0 15px;
+  border-bottom: 1px solid var(--line);
+}
+.admin-view .ops-live-status, .admin-view .ops-command-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 11px; }
+.admin-view .ops-command-actions { gap: 8px; }
+.admin-view .ops-command-actions button { min-height: 35px; padding-inline: 13px; border-radius: 9px; font-size: 12px; }
+.admin-view .ops-live-indicator { display: inline-flex; align-items: center; gap: 7px; color: var(--success); font-size: 12px; font-weight: 670; }
+.admin-view .ops-live-indicator.is-attention { color: var(--warning); }
+.admin-view .ops-live-indicator i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.admin-view .ops-sampled-at { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.admin-view .ops-live-paused { display: inline-flex; align-items: center; gap: 5px; color: var(--danger); font-size: 11px; font-weight: 650; }
+.admin-view .ops-issues {
+  margin: 0 0 14px;
+  padding: 15px 18px 5px;
+  border: 1px solid rgba(203, 213, 225, .8);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.admin-view .ops-issues .detail-heading { margin-bottom: 6px; }
+.admin-view .ops-issues .detail-heading h3 { margin: 0; font-size: 15px; font-weight: 680; }
+.admin-view .ops-attention-count { color: var(--warning); font-weight: 650; font-size: 12px; }
+.admin-view .ops-issue-row { padding: 12px 5px; }
+.admin-view .ops-issue-row strong { font-size: 13px; }
+.admin-view .ops-issue-row .text-button { color: var(--primary); font-weight: 600; }
+.admin-view .ops-issues-clear { display: flex; align-items: center; gap: 8px; min-height: 48px; color: var(--muted); font-size: 12px; }
+.admin-view .ops-issues-clear svg { color: var(--success); }
+.admin-view .ops-safety-alerts { margin-bottom: 16px; padding: 12px 18px; border: 1px solid rgba(221, 157, 157, .5); border-radius: 13px; }
+.admin-view .ops-safety-alerts .detail-heading { margin-bottom: 8px; }
+.admin-view .ops-safety-alerts h3 { margin: 0; font-size: 14px; }
+.admin-view .ops-safety-alerts .ops-row { justify-content: flex-start; gap: 10px; }
+.admin-view .ops-safety-alerts .ops-row > span { min-width: 0; }
+.admin-view .ops-safety-alerts .ops-row strong { color: var(--text); }
+.admin-view .ops-overview { margin: 0 0 17px; }
+.admin-view .ops-key-metrics {
+  display: grid;
+  grid-template-columns: repeat(4,minmax(0,1fr));
+  border: 1px solid rgba(203, 213, 225, .7);
+  border-radius: 14px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.admin-view .ops-key-metrics > div { display: grid; align-content: center; gap: 6px; min-width: 0; min-height: 113px; padding: 15px 18px; }
+.admin-view .ops-key-metrics > div + div { border-left: 1px solid var(--line); }
+.admin-view .ops-key-metrics small { color: var(--text-secondary); font-size: 12px; }
+.admin-view .ops-key-metrics strong { color: var(--text); font-variant-numeric: tabular-nums; letter-spacing: -.035em; font-size: clamp(21px,2vw,29px); line-height: 1.1; font-weight: 710; }
+.admin-view .ops-key-metrics strong span { color: var(--muted); font-size: 16px; font-weight: 500; }
+.admin-view .ops-key-metrics em { color: var(--muted); font-size: 11px; font-style: normal; white-space: normal; }
+.admin-view .ops-management-details, .admin-view .ops-advanced-details { margin: 0; border-top: 1px solid var(--line); interpolate-size: allow-keywords; }
+.admin-view .ops-management-details > summary, .admin-view .ops-advanced-details > summary {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-height: 52px;
+  padding: 14px 28px 14px 2px; position: relative;
+  color: var(--text); font-size: 13px; font-weight: 670; list-style: none; cursor: pointer;
+}
+.admin-view .ops-management-details > summary::-webkit-details-marker, .admin-view .ops-advanced-details > summary::-webkit-details-marker { display: none; }
+.admin-view .ops-management-details > summary::after, .admin-view .ops-advanced-details > summary::after {
+  content: ''; position: absolute; right: 12px; top: calc(50% - 4px);
+  width: 7px; height: 7px; border-right: 1.7px solid var(--muted); border-bottom: 1.7px solid var(--muted);
+  transform: rotate(45deg); transition: transform .2s ease;
+}
+.admin-view .ops-management-details[open] > summary::after, .admin-view .ops-advanced-details[open] > summary::after { transform: rotate(225deg); }
+.admin-view .ops-management-details > summary:hover, .admin-view .ops-advanced-details > summary:hover { color: var(--primary); }
+.admin-view .ops-management-details > summary:focus-visible, .admin-view .ops-advanced-details > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.admin-view .ops-switch-summary, .admin-view .ops-advanced-details > summary > span:last-child { color: var(--muted); font-size: 11px; font-weight: 450; }
+.admin-view .ops-switch-summary i { padding-inline: 6px; font-style: normal; }
+.admin-view .ops-details-inner { padding-bottom: 20px; }
+.admin-view .ops-control-grid { padding-top: 4px; }
+.admin-view .ops-control-card { min-height: 86px; padding: 13px; }
+.admin-view .ops-advanced-inner { padding: 2px 1px 20px; }
+.admin-view .ops-queue-facts { margin: 2px 0 8px; }
+.admin-view .ops-advanced-inner .ops-band { padding-block: 17px; }
+.admin-view .ops-advanced-inner .ops-columns { grid-template-columns: minmax(0,1fr); }
+.admin-view .ops-advanced-inner .ops-pipeline .detail-heading { margin-bottom: 12px; }
+@supports selector(details::details-content) {
+  .admin-view .ops-management-details::details-content, .admin-view .ops-advanced-details::details-content { block-size: 0; opacity: 0; overflow: hidden; transition: block-size .25s var(--ease-standard), opacity .17s ease; }
+  .admin-view .ops-management-details[open]::details-content, .admin-view .ops-advanced-details[open]::details-content { block-size: auto; opacity: 1; }
+}
+@media (max-width: 1180px) {
+  .admin-view .ops-key-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .admin-view .ops-key-metrics > div:nth-child(3) { border-left: 0; }
+  .admin-view .ops-key-metrics > div:nth-child(n+3) { border-top: 1px solid var(--line); }
+}
+@media (max-width: 760px) {
+  .admin-view .ops-command-bar { align-items: stretch; }
+  .admin-view .ops-command-actions { width: 100%; }
+  .admin-view .ops-command-actions button { flex: 1; }
+  .admin-view .ops-key-metrics { grid-template-columns: 1fr; }
+  .admin-view .ops-key-metrics > div:nth-child(n) { border-left: 0; border-top: 1px solid var(--line); }
+  .admin-view .ops-key-metrics > div:first-child { border-top: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .admin-view .ops-management-details::details-content, .admin-view .ops-advanced-details::details-content,
+  .admin-view .ops-management-details > summary::after, .admin-view .ops-advanced-details > summary::after { transition: none; }
+}
+
+/* Preserve the pinned administrator source; remove redundant breadcrumb visually. */
+.admin-view .admin-content-heading>span { display: none; }
