@@ -317,3 +317,66 @@
 .composer:has(.v6-workspace) .v6-config .director-mode-switch button:focus-visible{outline-color:var(--primary)}
 .composer:has(.v6-workspace) .v6-config .director-mode-switch button:hover{color:var(--primary)}
 .composer:has(.v6-workspace) .v6-config .director-mode-switch:hover .director-mode-switch__thumb{box-shadow:var(--shadow-sm)}
+
+/* Creation subviews: keep native select semantics, style the popup itself on modern Chromium. */
+@supports (appearance: base-select) and selector(select::picker(select)){
+  :is(.image-center.page-view,.composer:has(.v6-workspace),.video-recreation,.creation-drawer) select{appearance:base-select;align-items:center;gap:8px;cursor:pointer;min-height:39px;padding:0 10px;border-radius:10px;background:var(--surface-soft);border:1px solid var(--line);color:var(--text);font-size:12px;transition:background .18s ease,border-color .18s ease,box-shadow .18s ease}
+  :is(.image-center.page-view,.composer:has(.v6-workspace),.video-recreation,.creation-drawer) select::picker-icon{margin-left:auto;color:var(--muted);transition:rotate .22s cubic-bezier(.22,1,.36,1)}
+  :is(.image-center.page-view,.composer:has(.v6-workspace),.video-recreation,.creation-drawer) select:open::picker-icon{rotate:180deg;color:var(--primary)}
+  :is(.image-center.page-view,.composer:has(.v6-workspace),.video-recreation,.creation-drawer) select:open{background:var(--surface);border-color:color-mix(in srgb,var(--primary) 45%,white);box-shadow:0 0 0 3px var(--primary-soft)}
+  :is(.image-center.page-view,.composer:has(.v6-workspace),.video-recreation,.creation-drawer) select::picker(select){appearance:base-select;margin:5px 0;padding:5px;border:1px solid var(--line);border-radius:12px;background:var(--surface);box-shadow:0 12px 36px rgba(24,35,53,.14),0 2px 8px rgba(24,35,53,.05);max-height:300px;overflow:auto;scrollbar-width:thin;opacity:0;transform:translateY(-4px) scale(.985);transform-origin:top center;transition:opacity 180ms ease,transform 220ms cubic-bezier(.22,1,.36,1),display 220ms allow-discrete,overlay 220ms allow-discrete}
+  :is(.image-center.page-view,.composer:has(.v6-workspace),.video-recreation,.creation-drawer) select:open::picker(select){opacity:1;transform:translateY(0) scale(1)}
+  @starting-style{:is(.image-center.page-view,.composer:has(.v6-workspace),.video-recreation,.creation-drawer) select:open::picker(select){opacity:0;transform:translateY(-4px) scale(.985)}}
+  :is(.image-center.page-view,.composer:has(.v6-workspace),.video-recreation,.creation-drawer) select option{display:flex;align-items:center;min-height:35px;padding:7px 10px;gap:8px;border:0;border-radius:8px;color:var(--text-secondary);background:transparent;font-size:12px;line-height:1.4;cursor:pointer;transition:background .14s ease,color .14s ease}
+  :is(.image-center.page-view,.composer:has(.v6-workspace),.video-recreation,.creation-drawer) select option:checked{color:var(--primary);background:var(--primary-soft);font-weight:650}
+  :is(.image-center.page-view,.composer:has(.v6-workspace),.video-recreation,.creation-drawer) select option:hover,:is(.image-center.page-view,.composer:has(.v6-workspace),.video-recreation,.creation-drawer) select option:focus-visible{background:var(--surface-tint);outline:none;color:var(--primary)}
+  :is(.image-center.page-view,.composer:has(.v6-workspace),.video-recreation,.creation-drawer) select option::checkmark{order:1;margin-left:auto;color:var(--primary);font-size:12px}
+  :is(.image-center.page-view,.composer:has(.v6-workspace),.video-recreation,.creation-drawer) select:disabled{cursor:not-allowed;opacity:.65}
+}
+.creation-drawer.foundation-drawer-backdrop{background:rgba(24,35,53,.27);padding:12px;animation:creation-overlay-in .2s ease both}
+.creation-drawer .foundation-drawer{width:min(690px,92vw);height:100%;max-height:100%;border:1px solid var(--line);border-radius:20px;overflow:hidden;background:var(--page);box-shadow:0 18px 64px rgba(24,35,53,.18);animation:creation-drawer-enter .28s cubic-bezier(.22,1,.36,1) both}
+.creation-drawer .foundation-drawer__header{min-height:66px;padding:14px 20px;background:var(--surface)}
+.creation-drawer .foundation-drawer__header h2{font-size:17px;font-weight:700}
+.creation-drawer .foundation-drawer__content{padding:16px 20px;scrollbar-width:thin}
+.creation-drawer .foundation-drawer__footer{min-height:64px;padding:12px 20px;box-shadow:none;background:var(--surface)}
+.creation-drawer :is(.primary-button,.secondary-button,.text-button,.icon-button){border-radius:10px;display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1.4;transition:background .18s ease,border-color .18s ease,transform .18s ease}
+.creation-drawer .primary-button{background:var(--primary);border-color:var(--primary);color:white;min-height:38px}
+.creation-drawer .secondary-button{min-height:38px;border-color:var(--line);background:var(--surface)}
+.creation-drawer .foundation-drawer__header .icon-button{width:34px;height:34px;background:var(--surface-soft);border:1px solid var(--line)}
+.creation-drawer .foundation-drawer__header .icon-button:hover{background:var(--surface-tint)}
+.creation-drawer :is(button):active:not(:disabled){transform:scale(.98)}
+.creation-drawer .image-history-grid{grid-template-columns:repeat(auto-fill,minmax(135px,1fr));gap:10px}
+.creation-drawer .image-history-card{gap:4px;padding:0 0 8px;border-radius:13px;overflow:hidden;border-color:var(--line);background:var(--surface);transition:background .18s ease,border-color .18s ease,box-shadow .18s ease,transform .18s ease}
+.creation-drawer .image-history-card:hover:not(:disabled){transform:translateY(-1px);border-color:color-mix(in srgb,var(--primary) 35%,white);box-shadow:var(--shadow-xs)}
+.creation-drawer .image-history-card.is-selected{border-color:var(--primary);background:var(--primary-soft);box-shadow:0 0 0 1px var(--primary)}
+.creation-drawer .image-history-card-preview{border-radius:0;aspect-ratio:3/4}
+.creation-drawer .image-history-card-check{border-radius:7px;width:22px;height:22px;transition:background .18s ease,transform .18s ease}
+.creation-drawer .image-history-card.is-selected .image-history-card-check{transform:scale(1.04)}
+.creation-drawer .image-history-card-title,.creation-drawer .image-history-card-label{padding:0 9px;font-size:12px;line-height:1.4}
+.creation-drawer .image-history-card-label{font-size:10px;color:var(--muted)}
+.creation-drawer .image-history-empty{min-height:220px;border:1px dashed var(--line-strong);border-radius:14px;background:var(--surface);gap:8px;font-size:12px}
+.creation-drawer .depth-history-list{display:grid;gap:8px}
+.creation-drawer .depth-history-item{display:flex;align-items:center;gap:12px;min-width:0;padding:10px;background:var(--surface);border:1px solid var(--line);border-radius:13px;transition:background .18s ease,border-color .18s ease,transform .18s ease;text-align:left}
+.creation-drawer .depth-history-item:hover:not(:disabled){background:var(--primary-soft);border-color:color-mix(in srgb,var(--primary) 35%,white);transform:translateY(-1px)}
+.creation-drawer .depth-history-item>span:first-child{border-radius:8px;overflow:hidden}
+.creation-drawer .depth-history-item>span:last-child{flex:1;min-width:0}
+.creation-drawer .depth-history-item strong{font-size:13px;line-height:1.4}
+.image-center.page-view .image-results{padding:16px 20px;border:1px solid var(--line);border-radius:19px;background:var(--surface);box-shadow:var(--shadow-xs)}
+.image-center.page-view .image-results-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+.image-center.page-view .image-results-heading h2{font-size:15px;margin:0}
+.image-center.page-view .image-results-heading__actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.image-center.page-view .image-record-view{display:flex;align-items:center;padding:3px;gap:3px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft)}
+.image-center.page-view .image-record-view .secondary-button{border:0;background:transparent;min-height:30px;box-shadow:none}
+.image-center.page-view .image-record-view .secondary-button[aria-pressed=true]{background:var(--surface);color:var(--primary);box-shadow:var(--shadow-xs)}
+.image-center.page-view .image-task-card,.image-center.page-view .image-gallery-item{border-radius:14px;border-color:var(--line);background:var(--surface);box-shadow:none}
+.image-center.page-view .image-task-technical{border-color:var(--line);border-radius:10px;background:var(--surface-soft)}
+.image-center.page-view .image-task-technical summary{padding:9px 12px;font-size:12px;color:var(--text-secondary);transition:color .18s ease,background .18s ease}
+.image-center.page-view .image-task-technical[open] summary{color:var(--primary)}
+.image-center.page-view .image-task-technical[open]>:not(summary){animation:creation-overlay-in .18s ease both}
+.image-center.page-view .image-results-empty{min-height:220px;border:1px dashed var(--line-strong);border-radius:14px;background:var(--surface-soft)}
+.image-mention-menu{border-radius:12px!important;border:1px solid var(--line)!important;padding:5px!important;box-shadow:0 12px 36px rgba(24,35,53,.14)!important;animation:creation-overlay-in .18s ease both}
+.image-mention-menu [role=option]{border-radius:8px;transition:background .15s ease}
+@keyframes creation-overlay-in{from{opacity:0}to{opacity:1}}
+@keyframes creation-drawer-enter{from{opacity:0;transform:translateX(24px) scale(.99)}to{opacity:1;transform:translateX(0) scale(1)}}
+@media(prefers-reduced-motion:reduce){.creation-drawer,.creation-drawer .foundation-drawer,.creation-drawer button,.image-mention-menu,.image-center.page-view .image-task-technical[open]>:not(summary){animation:none!important;transition:none!important}}
+@supports (appearance: base-select) and selector(select::picker(select)){@media(prefers-reduced-motion:reduce){:is(.image-center.page-view,.composer:has(.v6-workspace),.video-recreation,.creation-drawer) select::picker(select),:is(.image-center.page-view,.composer:has(.v6-workspace),.video-recreation,.creation-drawer) select::picker-icon{transition:none}}}

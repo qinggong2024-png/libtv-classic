@@ -55,15 +55,15 @@ export function ImageHistoryPicker({ scope, remaining, addedOutputIds, onAdd, on
     } finally { if (mounted.current) setImporting(false) }
   }
 
-  return <FoundationDrawer open title="从生图记录选择" eyebrow="目标人物 / 商品参考图" onClose={onClose} footer={<>
+  return <FoundationDrawer open className="creation-drawer" title="从生图记录选择" onClose={onClose} footer={<>
     <span className="image-history-selection" aria-live="polite">已选 {selectedIds.length}/{remaining} 张</span>
     <button type="button" className="secondary-button" onClick={onClose}>取消</button>
     <button type="button" className="primary-button" disabled={loading || history.loading || importing || !selectedIds.length} onClick={() => void confirm()}>{importing ? <LoaderCircle size={16} className="spin" /> : <Check size={16} />}{importing ? '正在读取图片' : '添加参考图'}</button>
   </>}>
-    <p className="image-history-intro">当前账号已保存的生图历史，可跨浏览器直接选择图片。按选择顺序追加，最多还能添加 {remaining} 张。</p>
+
     {history.error ? <div className="inline-alert inline-alert--danger" role="alert">{history.error}<button type="button" className="text-button" disabled={history.loading} onClick={history.refresh}><RefreshCw size={14} />重试同步</button></div> : null}
     {error ? <div className="inline-alert inline-alert--danger" role="alert">{error}<button type="button" className="text-button" disabled={importing} onClick={() => { setLoading(true); setError(''); setSelectedIds([]); setRevision((value) => value + 1) }}><RefreshCw size={14} />重新读取</button></div> : null}
-    {loading || history.loading ? <p className="image-history-empty" role="status"><LoaderCircle size={22} className="spin" />正在读取生图记录</p> : !entries.length && !history.error ? <div className="image-history-empty"><Images size={28} /><strong>暂无可用的生图记录</strong><p>在图片中心生成图片后，即可在这里选择。</p></div> : <div className="image-history-grid">
+    {loading || history.loading ? <p className="image-history-empty" role="status"><LoaderCircle size={22} className="spin" />正在读取生图记录</p> : !entries.length && !history.error ? <div className="image-history-empty"><Images size={28} /><strong>暂无可用的生图记录</strong></div> : <div className="image-history-grid">
       {entries.map(({ output, outfitName }) => {
         const selectedIndex = selectedIds.indexOf(output.id)
         const selected = selectedIndex >= 0
@@ -72,7 +72,7 @@ export function ImageHistoryPicker({ scope, remaining, addedOutputIds, onAdd, on
         return <button type="button" className={`image-history-card${selected ? ' is-selected' : ''}`} key={output.id} aria-pressed={selected} disabled={disabled} aria-label={`${outfitName} · ${output.label}`} onClick={() => setSelectedIds((current) => selected ? current.filter((id) => id !== output.id) : [...current, output.id])}>
           <span className="image-history-card-preview">{output.file ? <LocalImage file={output.file} alt={output.label} /> : <AuthenticatedImage src={output.downloadUrl || output.url} alt={output.label} />}<span className="image-history-card-check" aria-hidden="true">{selected ? selectedIndex + 1 : added ? <Check size={14} /> : null}</span></span>
           <span className="image-history-card-title" title={outfitName}>{outfitName}</span><span className="image-history-card-label" title={output.label}>{output.label}</span>
-          <small>{added ? '已添加' : '可选用'}</small>
+          {added ? <small>已添加</small> : null}
         </button>
       })}
     </div>}

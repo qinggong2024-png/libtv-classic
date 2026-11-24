@@ -436,7 +436,7 @@ export function ImageOutputCompare({ outputs, initialIds = [], sources = {}, onC
   const [comparisonIds, setComparisonIds] = useState(() => imageComparisonIds(outputs, initialIds))
   const resolvedIds = imageComparisonIds(outputs, comparisonIds)
   if (outputs.length < 2) return null
-  return <FoundationDrawer
+  return <FoundationDrawer className="creation-drawer"
     open
     title="并排比较"
     onClose={onClose}

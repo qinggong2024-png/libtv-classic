@@ -59,7 +59,7 @@ export function FoundationConfirmPanel({ title, description, confirmLabel = '确
   </section>
 }
 
-export function FoundationDrawer({ open, title, eyebrow, onClose, children, footer }: { open: boolean; title: string; eyebrow?: string; onClose: () => void; children: ReactNode; footer?: ReactNode }) {
+export function FoundationDrawer({ open, title, eyebrow, onClose, children, footer, className = "" }: { open: boolean; title: string; eyebrow?: string; onClose: () => void; children: ReactNode; footer?: ReactNode; className?: string }) {
   const titleId = useId()
   const dialogRef = useRef<HTMLDialogElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
@@ -79,7 +79,7 @@ export function FoundationDrawer({ open, title, eyebrow, onClose, children, foot
     }
   }, [open])
   if (!open) return null
-  return <dialog ref={dialogRef} className="foundation-drawer-backdrop" aria-labelledby={titleId} onCancel={(event) => { event.preventDefault(); onClose() }} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+  return <dialog ref={dialogRef} className={"foundation-drawer-backdrop " + className} aria-labelledby={titleId} onCancel={(event) => { event.preventDefault(); onClose() }} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <section className="foundation-drawer">
       <header className="foundation-drawer__header"><div>{eyebrow ? <span>{eyebrow}</span> : null}<h2 id={titleId}>{title}</h2></div><button ref={closeRef} type="button" className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header>
       <div className="foundation-drawer__content">{children}</div>

@@ -51,14 +51,14 @@ export function DepthVideoHistoryPicker({ onSelect, onClose }: {
     finally { importingRef.current = false; if (mounted.current) setImporting(null) }
   }
   const entries = depthVideoHistoryEntries(tasks)
-  return <FoundationDrawer open title="选择已有深度视频" eyebrow="视频来源" onClose={onClose}>
-    <p className="image-history-intro">选择当前账号已保存的深度视频。带入后将跳过深度提取，直接替换人物与商品。</p>
+  return <FoundationDrawer open className="creation-drawer" title="选择已有深度视频" onClose={onClose}>
+
     {error ? <p className="inline-alert inline-alert--danger" role="alert">{error}<button className="text-button" disabled={loading || Boolean(importing)} onClick={() => void loadMore()}>重试读取</button></p> : null}
     <div className="depth-history-list">{entries.map(({ task, downloadId }) => <button type="button" className="depth-history-item" key={task.id} disabled={Boolean(importing)} onClick={() => void choose(downloadId, task.title)}>
       <span><VideoThumbnail artifactId={downloadId} alt="深度视频封面" /></span>
       <span><strong>{task.title}</strong><small>{String(task.settings?.durationSeconds ?? '—')} 秒 · {importing === downloadId ? '正在读取视频…' : '选用此深度视频'}</small></span>
     </button>)}</div>
-    {loading ? <p role="status"><LoaderCircle className="spin" size={17} />正在读取历史结果</p> : !entries.length && !error ? <p>暂无可用的深度视频，可以先提取深度或上传已有文件。</p> : null}
+    {loading ? <p role="status"><LoaderCircle className="spin" size={17} />正在读取历史结果</p> : !entries.length && !error ? <div className="image-history-empty">暂无可用的深度视频</div> : null}
     {cursor ? <button className="secondary-button" disabled={loading || Boolean(importing)} onClick={() => void loadMore()}>加载更多</button> : null}
   </FoundationDrawer>
 }
