@@ -3,11 +3,13 @@ import { errorMessage, userFacingError } from '../../errorPresentation'
 // 代码为逐字搬运，未经逻辑改写。
 import { AlertTriangle, ArrowRight, Check, CheckCircle2, CircleAlert, Images, LoaderCircle, LockKeyhole, Plus, Trash2, WandSparkles } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ApiError, createVideoTask, getKlingElements, getSiteStyleProfiles, getTask, getVideoTemplates, querySubmissionRecovery, uploadStoryboard, type SubmissionRecoveryResult } from '../../api'
+import { ApiError, createVideoTask, getSiteStyleProfiles, getTask, getVideoTemplates, querySubmissionRecovery, uploadStoryboard, type SubmissionRecoveryResult } from '../../api'
 import { mapWithConcurrency } from '../../concurrency'
-import { type KlingElement, type SiteStyleProfileSummary, type SystemStatus, type Task, type VideoTemplateSummary } from '../../types'
+import { type SiteStyleProfileSummary, type SystemStatus, type Task, type VideoTemplateSummary } from '../../types'
 import { CustomPromptField } from '../../CustomPromptField'
 import { SubjectInputPanel } from '../../SubjectInputPanel'
+import { ProductHistoryPicker } from './ProductHistoryPicker'
+import { fillSubjectDropSlots } from '../../subjectPanelDrop'
 import { IMAGE_FILE_ACCEPT, isSupportedImageFile } from '../../imageFiles'
 import { type BatchUploadGroup, groupBatchUploadFiles } from '../../batchUpload'
 import { type SubjectInputMode, type SubjectReferenceFiles, buildSubjectImageReferences, createEmptySubjectReferenceFiles, getSubjectReferenceCount, subjectReferenceFilesFromImages, validateSubjectReferenceFiles } from '../../subjectFiles'
@@ -37,7 +39,6 @@ type ManualVideoDraft = {
   materials: Material[]
   subjectFiles: SubjectReferenceFiles
   subjectMode: SubjectInputMode
-  elementId: string
 }
 type ComposerBatchGroup = BatchUploadGroup & { manual?: ManualVideoDraft }
 type SubmissionGroup = {
@@ -72,7 +73,6 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
   const [previewGroupKey, setPreviewGroupKey] = useState('')
   const [templates, setTemplates] = useState<VideoTemplateSummary[]>([])
   const [profiles, setProfiles] = useState<SiteStyleProfileSummary[]>([])
-  const [elements, setElements] = useState<KlingElement[]>([])
   const [templateId, setTemplateId] = useState(storedSettings.templateId)
   const { choices, error: siteError, siteProfileId, setSiteProfileId, defaultProfileId } = useAccountSiteSelection(seed?.siteProfileId)
   const [generationMode, setGenerationMode] = useState<'automatic' | 'custom'>(initialPromptState.generationMode)
@@ -84,7 +84,7 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
     ? seed.subjectFiles
     : subjectReferenceFilesFromImages(seed?.products ?? []))
   const [subjectMode, setSubjectMode] = useState<SubjectInputMode>(() => subjectFiles.frontalImage ? 'upload' : 'none')
-  const [elementId, setElementId] = useState('')
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [resultCount, setResultCount] = useState(storedSettings.resultCount)
   const [durationSeconds, setDurationSeconds] = useState(storedSettings.durationSeconds)
   // The Sol director now owns natural movement amplitude; do not retain hidden legacy overrides.
@@ -94,13 +94,6 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
   const [displayFocus, setDisplayFocus] = useState<VideoDisplayFocus>('overall')
   const [catalogLoading, setCatalogLoading] = useState(true)
   const [catalogError, setCatalogError] = useState('')
-  const [elementCatalogError, setElementCatalogError] = useState('')
-  const [elementsLoading, setElementsLoading] = useState(true)
-  const [elementsLoadingMore, setElementsLoadingMore] = useState(false)
-  const [elementPages, setElementPages] = useState({ custom: 1, official: 1 })
-  const [elementTotals, setElementTotals] = useState({ custom: 0, official: 0 })
-  const [elementLoaded, setElementLoaded] = useState({ custom: 0, official: 0 })
-  const [elementCatalogReloadKey, setElementCatalogReloadKey] = useState(0)
   const [busy, setBusy] = useState(false)
   const [stage, setStage] = useState('正在上传素材')
   const [progress, setProgress] = useState(0)
@@ -121,7 +114,6 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
   const batchInputRef = useRef<HTMLInputElement>(null)
   const resetTimerRef = useRef<number | null>(null)
   const uploadAbortRef = useRef<AbortController | null>(null)
-  const elementMoreAbortRef = useRef<AbortController | null>(null)
   const submissionIdentityRef = useRef<{ clientTaskId: string; idempotencyKey: string } | null>(null)
   const submissionGroupsRef = useRef<SubmissionGroup[]>([])
   const submittingRef = useRef(false)
@@ -130,7 +122,6 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
   const activeModel = videoGeneration?.model || videoGeneration?.models[0] || activeProvider.displayName
   // Fixed-video task schema caps the combined image/Element budget at 7.
   const referenceLimit = Math.min(7, videoGeneration?.imageInputLimit ?? 0)
-  const historySupported = videoGeneration?.supportsElementReferences !== false
   const productReferencesSupported = videoGeneration?.supportsProductReferences !== false
   const storyboardLimit = Math.min(7, Math.max(1, referenceLimit || 7))
   const validBatchGroups = batchGroups.filter((group) => !group.errors.length)
@@ -148,12 +139,11 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
   const durationOptionsLabel = durationSupported ? formatVideoDurationOptions(durationOptions) : '无可用时长'
   const providerAvailable = Boolean(videoGeneration?.available && videoGeneration.authenticated)
   const subjectValidation = validateSubjectReferenceFiles(subjectFiles)
-  const subjectReferenceCount = getSubjectReferenceCount(subjectMode, subjectFiles, elementId)
+  const subjectReferenceCount = getSubjectReferenceCount(subjectMode, subjectFiles, '')
   const subjectReady = subjectMode === 'none'
     || (subjectMode === 'upload' && subjectValidation.isValid && productReferencesSupported)
-    || (subjectMode === 'history' && historySupported && Boolean(elementId))
   const providerInputsSupported = validBatchGroups.length
-    ? validBatchGroups.every((group) => group.storyboards.length + (group.manual ? getSubjectReferenceCount(group.manual.subjectMode, group.manual.subjectFiles, group.manual.elementId) : Number(Boolean(group.productFront)) + Number(Boolean(group.productBack))) <= referenceLimit)
+    ? validBatchGroups.every((group) => group.storyboards.length + (group.manual ? getSubjectReferenceCount(group.manual.subjectMode, group.manual.subjectFiles, '') : Number(Boolean(group.productFront)) + Number(Boolean(group.productBack))) <= referenceLimit)
     : storyboards.length + subjectReferenceCount <= referenceLimit
   const selectedTemplate = templates.find((item) => item.id === templateId) ?? null
   const selectedProfile = profiles.find((item) => item.id === siteProfileId) ?? null
@@ -207,89 +197,16 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
       directorMode,
     })
   }, [actionIntensity, customPrompt, cutMode, directorMode, generationMode, normalizedDurationSeconds, resultCount, siteProfileId, templateId])
-  useEffect(() => {
-    if (!system || (!system.sharedAuthentication && !actorId)) {
-      return
-    }
-    const controller = new AbortController()
-    elementMoreAbortRef.current?.abort()
-    void Promise.allSettled([
-      getKlingElements(actorId, 1, 50, false, controller.signal),
-      getKlingElements(actorId, 1, 50, true, controller.signal),
-    ])
-      .then((results) => {
-        if (controller.signal.aborted) return
-        const nextElements = new Map<string, KlingElement>()
-        for (const result of results) {
-          if (result.status !== 'fulfilled') continue
-          for (const element of result.value.items) {
-            if (!nextElements.has(element.id)) nextElements.set(element.id, element)
-          }
-        }
-        setElements([...nextElements.values()])
-        setElementPages({ custom: 1, official: 1 })
-        setElementTotals({
-          custom: results[0].status === 'fulfilled' ? results[0].value.total : 0,
-          official: results[1].status === 'fulfilled' ? results[1].value.total : 0,
-        })
-        setElementLoaded({
-          custom: results[0].status === 'fulfilled' ? results[0].value.items.length : 0,
-          official: results[1].status === 'fulfilled' ? results[1].value.items.length : 0,
-        })
-        // 官方与自定义两个请求常常返回同一句错误，去重避免出现「xxx；xxx」。
-        const failures = [...new Set(results
-          .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-          .map((result) => result.reason instanceof ApiError ? result.reason.message : '主体列表加载失败'))]
-        setElementCatalogError(failures.join('；'))
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setElementsLoading(false)
-      })
-    return () => {
-      controller.abort()
-      elementMoreAbortRef.current?.abort()
-    }
-  }, [actorId, system, elementCatalogReloadKey])
-  const hasMoreElements = elementLoaded.custom < elementTotals.custom || elementLoaded.official < elementTotals.official
-  const loadMoreElements = async () => {
-    if (elementsLoading || elementsLoadingMore || !hasMoreElements) return
-    const source = elementLoaded.custom < elementTotals.custom ? 'custom' : 'official'
-    const page = elementPages[source] + 1
-    const controller = new AbortController()
-    elementMoreAbortRef.current?.abort()
-    elementMoreAbortRef.current = controller
-    setElementsLoadingMore(true)
-    setElementCatalogError('')
-    try {
-      const result = await getKlingElements(actorId, page, 50, source === 'official', controller.signal)
-      if (controller.signal.aborted) return
-      setElements((current) => {
-        const merged = new Map(current.map((element) => [element.id, element]))
-        for (const item of result.items) if (!merged.has(item.id)) merged.set(item.id, item)
-        return [...merged.values()]
-      })
-      setElementPages((current) => ({ ...current, [source]: page }))
-      setElementTotals((current) => ({ ...current, [source]: result.total }))
-      setElementLoaded((current) => ({ ...current, [source]: current[source] + result.items.length }))
-    } catch (cause) {
-      if (!controller.signal.aborted) setElementCatalogError(errorMessage(cause, '继续加载历史主体失败'))
-    } finally {
-      if (elementMoreAbortRef.current === controller) {
-        elementMoreAbortRef.current = null
-        setElementsLoadingMore(false)
-      }
-    }
-  }
   useEffect(() => () => {
     if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current)
     uploadAbortRef.current?.abort()
   }, [])
-  const currentManual: ManualVideoDraft = { key: manualKey, materials: storyboards, subjectFiles, subjectMode, elementId }
-  const hasDraftMaterials = (item: ManualVideoDraft) => item.materials.length > 0 || getSubjectReferenceCount(item.subjectMode, item.subjectFiles, item.elementId) > 0
+  const currentManual: ManualVideoDraft = { key: manualKey, materials: storyboards, subjectFiles, subjectMode }
+  const hasDraftMaterials = (item: ManualVideoDraft) => item.materials.length > 0 || getSubjectReferenceCount(item.subjectMode, item.subjectFiles, '') > 0
   const manualReady = (item: ManualVideoDraft) => {
     const count = item.materials.length
-    const refs = getSubjectReferenceCount(item.subjectMode, item.subjectFiles, item.elementId)
-    const subjectOk = item.subjectMode === 'none' || (item.subjectMode === 'upload' && productReferencesSupported && validateSubjectReferenceFiles(item.subjectFiles).isValid) || (item.subjectMode === 'history' && historySupported && Boolean(item.elementId))
+    const refs = getSubjectReferenceCount(item.subjectMode, item.subjectFiles, '')
+    const subjectOk = item.subjectMode === 'none' || (item.subjectMode === 'upload' && productReferencesSupported && validateSubjectReferenceFiles(item.subjectFiles).isValid)
     return count > 0 && count <= storyboardLimit && count + refs <= referenceLimit && subjectOk && Boolean(selectedTemplate && count >= selectedTemplate.minImages && count <= selectedTemplate.maxImages)
       && (generationMode === 'automatic' || getVideoDurationOptions(videoGeneration, count).includes(normalizedDurationSeconds))
   }
@@ -300,7 +217,7 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
     setStoryboards(item?.materials ?? [])
     setSubjectFiles(item?.subjectFiles ?? createEmptySubjectReferenceFiles())
     setSubjectMode(item?.subjectMode ?? 'none')
-    setElementId(item?.elementId ?? '')
+    setHistoryOpen(false)
     setFileUploadStates(new Map())
     setGroupProgress([])
     submissionGroupsRef.current = []
@@ -349,7 +266,7 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
     if (!result.groups.length) { setNotice('未匹配命名规则，请检查文件名。'); return }
     if (result.groups.length && !batchMode && hasDraftMaterials(currentManual)) setManualDrafts(items => [...items, currentManual])
     setManualKey(createUuid())
-    setElementId('')
+    setHistoryOpen(false)
     submissionGroupsRef.current = []
     setGroupProgress([])
     setPreviewGroupKey('')
@@ -369,7 +286,7 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
     ].filter(Boolean).join('；'))
   }
   const previewBatchGroup = (group: ComposerBatchGroup) => {
-    if (group.manual) { setStoryboards(group.manual.materials); setSubjectFiles(group.manual.subjectFiles); setSubjectMode(group.manual.subjectMode); setElementId(group.manual.elementId); setManualKey(group.manual.key); return }
+    if (group.manual) { setStoryboards(group.manual.materials); setSubjectFiles(group.manual.subjectFiles); setSubjectMode(group.manual.subjectMode); setManualKey(group.manual.key); return }
     setStoryboards(group.storyboards.map((file) => ({ id: createUuid(), file })))
     setSubjectMode('upload')
     setSubjectFiles({ frontalImage: group.productFront, backImage: group.productBack, detailImages: [] })
@@ -435,7 +352,6 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
       setStoryboards(chosen[0].materials)
       setSubjectMode(chosen[0].subjectMode)
       setSubjectFiles(chosen[0].subjectFiles)
-      setElementId(chosen[0].elementId)
     }
     submittingRef.current = true
     setBusy(true)
@@ -523,7 +439,7 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
               customPrompt: generationMode === 'custom' ? customPrompt.trim() : undefined,
               templateId,
               siteProfileId,
-              elementIds: group.manual ? (group.manual.subjectMode === 'history' && group.manual.elementId ? [group.manual.elementId] : []) : subjectMode === 'history' && elementId ? [elementId] : [],
+              elementIds: [],
               subjectUploads,
               resultCount,
               durationSeconds: normalizedDurationSeconds,
@@ -579,7 +495,7 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
         setGroupProgress([])
         setSubjectMode('none')
         setSubjectFiles(createEmptySubjectReferenceFiles())
-        setElementId('')
+        setHistoryOpen(false)
         setManualKey(createUuid())
         if (!manualDrafts.length) {
           setGenerationMode('automatic')
@@ -650,7 +566,7 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
           setStoryboards([])
           setSubjectMode('none')
           setSubjectFiles(createEmptySubjectReferenceFiles())
-          setElementId('')
+          setHistoryOpen(false)
           setManualKey(createUuid())
         }
         setSubmittedNotice(batchMode ? '已核对并保留原任务；继续时只提交尚未成功的组。' : '已确认原任务创建成功；未重新提交。')
@@ -708,7 +624,7 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
       setUncertainSubmission(null)
       setError('')
       setSubmittedNotice('已通过原提交编号找回或创建任务，没有生成第二个提交编号。')
-      if (!batchMode) { setStoryboards([]); setSubjectFiles(createEmptySubjectReferenceFiles()); setSubjectMode('none'); setElementId(''); setManualKey(createUuid()) }
+      if (!batchMode) { setStoryboards([]); setSubjectFiles(createEmptySubjectReferenceFiles()); setSubjectMode('none'); setHistoryOpen(false); setManualKey(createUuid()) }
       try { onCreated(task, task.phase === 'ANALYZING') } catch {
         setNotice('原任务已确认创建，请前往任务中心查看。')
       }
@@ -731,7 +647,7 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
     setGroupProgress([])
     setSubjectMode('none')
     setSubjectFiles(createEmptySubjectReferenceFiles())
-    setElementId('')
+    setHistoryOpen(false)
     setCreativeBrief('')
     setVideoType('ootd')
     setDisplayFocus('overall')
@@ -796,23 +712,18 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
         <SubjectInputPanel
           className="v6-subject"
           mode={batchMode && previewGroup?.manual ? previewGroup.manual.subjectMode : subjectMode}
-          onModeChange={(mode) => { if (!materialsLocked) setSubjectMode(mode) }}
+          onModeChange={(mode) => { if (!materialsLocked && mode !== 'history') setSubjectMode(mode) }}
           uploadedFiles={displayedSubjectFiles}
           uploadStates={fileUploadStates}
           onUploadedFilesChange={(files) => { if (!materialsLocked) setSubjectFiles(files) }}
-          elements={elements}
-          selectedElementId={batchMode && previewGroup?.manual ? previewGroup.manual.elementId : elementId}
-          onSelectedElementIdChange={(id) => { if (!materialsLocked) setElementId(id) }}
+          elements={[]}
+          selectedElementId=""
+          onSelectedElementIdChange={() => {}}
           storyboardReferenceCount={displayedStoryboards.length}
           referenceLimit={referenceLimit || 7}
-          allowHistorySelection={historySupported}
+          allowHistorySelection={productReferencesSupported && Boolean(siteProfileId) && subjectReferenceCount < Math.min(4, Math.max(0, referenceLimit - displayedStoryboards.length))}
+          onOpenProductHistory={() => setHistoryOpen(true)}
           disabled={materialsLocked}
-          elementsLoading={elementsLoading}
-          elementsError={elementCatalogError}
-          onReloadElements={() => { setElementsLoading(true); setElementCatalogReloadKey((current) => current + 1) }}
-          hasMoreElements={hasMoreElements}
-          loadingMoreElements={elementsLoadingMore}
-          onLoadMoreElements={() => void loadMoreElements()}
         />
       </div>
       {!batchMode ? <section className="creation-video-queue" aria-label="待提交商品">
@@ -821,7 +732,7 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
           <button type="button" className="creation-queue-select" onClick={() => selectManual(item)} aria-pressed={item.key === manualKey} disabled={materialsLocked}>
             <span className="creation-queue-thumb">{item.materials[0] ? <LocalImage file={item.materials[0].file} alt="分镜"/> : <Images size={16}/>}</span>
             <span className="creation-queue-thumb">{item.subjectFiles.frontalImage ? <LocalImage file={item.subjectFiles.frontalImage} alt="商品"/> : <Images size={16}/>}</span>
-            <span className="creation-queue-info"><strong>{item.subjectFiles.frontalImage?.name.replace(/\.[^.]+$/, '') ?? item.materials[0]?.file.name.replace(/\.[^.]+$/, '') ?? '新商品'}</strong><small>{item.materials.length} 张分镜 · {getSubjectReferenceCount(item.subjectMode, item.subjectFiles, item.elementId)} 张参考</small></span>
+            <span className="creation-queue-info"><strong>{item.subjectFiles.frontalImage?.name.replace(/\.[^.]+$/, '') ?? item.materials[0]?.file.name.replace(/\.[^.]+$/, '') ?? '新商品'}</strong><small>{item.materials.length} 张分镜 · {getSubjectReferenceCount(item.subjectMode, item.subjectFiles, '')} 张参考</small></span>
             <span className={'creation-queue-state ' + (manualReady(item) ? 'is-ready' : '')}>{manualReady(item) ? <CheckCircle2 size={15}/> : <CircleAlert size={15}/>} {manualReady(item) ? '已就绪' : '待完善'}</span>
           </button>
           <button type="button" className="creation-queue-remove" aria-label="移除待提交商品" disabled={materialsLocked} onClick={() => removeManual(item.key)}><Trash2 size={15}/></button>
@@ -902,7 +813,7 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
           : !providerAvailable ? <div className="inline-alert inline-alert--danger" role="alert"><AlertTriangle size={16} />{activeProvider.displayLabel} 当前不可用。请让管理员配置连接信息、启用通道并验证连接。</div>
           : !siteProfileId ? <div className="inline-alert" role="alert"><CircleAlert size={17} /><span>{siteError || (choices ? '请选择商品所属品牌后再生成。' : '正在读取账号品牌。')}</span></div>
           : !productionReady && !catalogLoading ? <div className="inline-alert" role="alert"><CircleAlert size={17} /><span>{generationMode === 'automatic' ? '暂无可用的默认站点风格，请联系管理员；也可在高级设置中选择已验收的风格。' : '默认生产规格当前不可用。'}</span></div>
-          : !subjectReady ? <div className="inline-alert" role="alert"><CircleAlert size={17} /><span>{subjectMode === 'upload' ? (!productReferencesSupported ? '当前模型不支持独立商品参考图，请更换模型或移除商品图。' : subjectValidation.errors[0]) : !historySupported ? '当前 CLI 模型不支持历史 Element 主体，请改用上传参考图。' : '请选择一个可用的历史主体，或清除主体后按默认方式生成。'}</span></div>
+          : !subjectReady ? <div className="inline-alert" role="alert"><CircleAlert size={17} /><span>{subjectMode === 'upload' ? (!productReferencesSupported ? '当前模型不支持独立商品参考图，请更换模型或移除商品图。' : subjectValidation.errors[0]) : '请选择有效的商品参考图。'}</span></div>
           : !providerInputsSupported ? <div className="inline-alert inline-alert--danger" role="alert"><AlertTriangle size={16} />当前视频工作流（{activeModel}）最多接收 {referenceLimit} 张图片；请减少图片数量后再提交。</div>
             : !storyboardCountSupported ? <div className="inline-alert" role="alert"><CircleAlert size={17} /><span>{`当前模型的分镜图最多添加 ${storyboardLimit} 张。`}</span></div>
             : !durationSupported ? <div className="inline-alert" role="alert"><CircleAlert size={17} /><span>当前模型没有可用的自动编排 5–15 秒时长，请联系管理员检查模型配置。</span></div>
@@ -914,6 +825,14 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
                   : null}
     </div>
     </div>
+    {historyOpen && !materialsLocked && siteProfileId ? <ProductHistoryPicker key={manualKey + ':' + siteProfileId + ':' + actorId} siteProfileId={siteProfileId} maxSelection={Math.max(0, Math.min(4 - subjectReferenceCount, referenceLimit - displayedStoryboards.length - subjectReferenceCount))} existingFiles={buildSubjectImageReferences(subjectFiles).map(item => item.file)} onClose={() => setHistoryOpen(false)} onSelect={(files) => {
+      const result = fillSubjectDropSlots(subjectFiles, files)
+      setSubjectFiles(result.files)
+      setSubjectMode('upload')
+      setHistoryOpen(false)
+      submissionGroupsRef.current = []
+      setSubmittedNotice('')
+    }} /> : null}
     {preview ? <ImagePreview file={preview.file} label={preview.label} onClose={() => setPreview(null)} /> : null}
   </section>
 }

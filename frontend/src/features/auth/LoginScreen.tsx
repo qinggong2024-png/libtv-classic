@@ -43,7 +43,7 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: () => Promis
           <h1><span>广告视频</span><span>素材中心</span></h1>
           <p>图片与视频制作工作台</p>
           <div className="allwe-login__rule" aria-hidden="true" />
-          <div className="allwe-login__workflow"><span>图片中心</span><span aria-hidden="true">/</span><span>视频制作</span><span aria-hidden="true">/</span><span>内容与主体库</span></div>
+          <div className="allwe-login__workflow"><span>图片中心</span><span aria-hidden="true">/</span><span>视频制作</span><span aria-hidden="true">/</span><span>内容库</span></div>
         </div>
       </aside>
       <div className="allwe-login__form-column">

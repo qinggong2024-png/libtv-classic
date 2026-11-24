@@ -57,6 +57,7 @@ export interface SubjectInputPanelProps {
   onSelectedElementIdChange: (elementId: string) => void
   storyboardReferenceCount: number
   referenceLimit?: number
+  onOpenProductHistory?: () => void
   allowHistorySelection?: boolean
   disabled?: boolean
   elementsLoading?: boolean
@@ -104,6 +105,7 @@ export function SubjectInputPanel({
   onSelectedElementIdChange,
   storyboardReferenceCount,
   referenceLimit = KLING_MAX_REFERENCES,
+  onOpenProductHistory,
   allowHistorySelection = true,
   disabled = false,
   elementsLoading = false,
@@ -240,12 +242,12 @@ export function SubjectInputPanel({
           type="button"
           className={mode === 'history' ? 'is-selected' : ''}
           disabled={disabled || !allowHistorySelection}
-          title={!allowHistorySelection ? '当前 CLI 模型不支持历史 Element 主体' : undefined}
+          title={!allowHistorySelection ? (onOpenProductHistory ? '请先选择品牌，并留出参考图数量' : '当前 CLI 模型不支持历史 Element 主体') : undefined}
           aria-pressed={mode === 'history'}
-          onClick={() => changeMode(mode === 'history' ? 'none' : 'history')}
+          onClick={() => onOpenProductHistory ? onOpenProductHistory() : changeMode(mode === 'history' ? 'none' : 'history')}
         >
           <History aria-hidden="true" size={15} />
-          从历史选择
+          {onOpenProductHistory ? '历史商品图' : '从历史选择'}
         </button>
         {mode !== 'none' ? <button
           type="button"

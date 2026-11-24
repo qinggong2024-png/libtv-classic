@@ -7,6 +7,7 @@ import { GenerationAdvancedSettings, GenerationBrief } from '../../shared/compon
 import type { SystemStatus } from '../../types'
 import { MaterialCard } from './MaterialCard'
 import { ProductionComposer } from './ProductionComposer'
+import { ProductHistoryPicker } from './ProductHistoryPicker'
 import type { RemixSeed } from './productionTypes'
 
 // Exercise the composer's actual event handlers without a browser dependency.
@@ -204,6 +205,24 @@ describe('OOTD composer integration', () => {
     expect(options).toMatchObject({ generationMode: 'automatic', durationSeconds: duration, creativeBrief: '用户补充要求', autoSubmitToCutflow: true, subjectUploads: [{ id: 'product.png' }] })
     expect(options?.customPrompt).toBeUndefined()
     expect(identity).toEqual({ clientTaskId: expect.any(String), idempotencyKey: expect.any(String) })
+  })
+
+  it('opens own product history without querying Kling subjects and submits selected files as product uploads', async () => {
+    const { render } = await mount()
+    expect(getKlingElements).not.toHaveBeenCalled()
+    const panel = find(render(), node => node.type === SubjectInputPanel)
+    expect(panel.props.allowHistorySelection).toBe(true)
+    invoke(panel, 'onOpenProductHistory')
+    const picker = find(render(), node => node.type === ProductHistoryPicker)
+    expect(picker.props.siteProfileId).toBe('brand')
+    invoke(picker, 'onSelect', [image('original-front.png'), image('original-back.png')])
+    expect(find(render(), node => node.type === SubjectInputPanel).props.mode).toBe('upload')
+    invoke(submitButton(render()), 'onClick')
+    await vi.waitFor(() => expect(createVideoTask).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(createVideoTask).mock.calls[0][2]).toMatchObject({
+      subjectUploads: [{ id: 'original-front.png' }, { id: 'original-back.png' }],
+      elementIds: [],
+    })
   })
 
   it('accepts multiple dropped storyboards and keeps their upload order', async () => {

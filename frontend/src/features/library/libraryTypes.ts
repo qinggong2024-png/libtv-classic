@@ -2,7 +2,7 @@
 // 代码为逐字搬运，未经逻辑改写。
 import { type MotionActionSummary, type SiteStyleProfileSummary } from '../../types'
 
-export type ContentLibraryScope = 'general' | 'brand' | 'subjects'
+export type ContentLibraryScope = 'general' | 'brand'
 export type ContentLibraryKind = 'actions' | 'styles'
 export type ActionCategoryFilter = MotionActionSummary['category'] | 'all'
 
