@@ -8,6 +8,7 @@ import type { AdminVideoHealthFilter, AdminVideoPage, AdminVideoRecord, AdminVid
 import './adminVideoReview.css'
 import './adminVideoHealth.css'
 import './adminVideoReviewCompact.css'
+import { reviewDate } from './adminReviewTime'
 
 function ReviewedVideo({ adminId, item, onClose }: {
   adminId: string
@@ -37,10 +38,10 @@ function ReviewedVideo({ adminId, item, onClose }: {
 
 function readableDate(text: string | null): string {
   if (!text) return '日期未记录'
-  const date = new Date(text)
-  return Number.isNaN(date.valueOf())
+  const date = reviewDate(text)
+  return !date
     ? '日期未记录'
-    : date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+    : date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 function friendlyVideoTitle(item: AdminVideoRecord): string {

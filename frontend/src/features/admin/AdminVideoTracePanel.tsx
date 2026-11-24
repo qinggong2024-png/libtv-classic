@@ -8,11 +8,12 @@ import { useDismiss } from '../../shared/hooks/useDismiss'
 import type { AdminVideoRecord, AdminVideoTrace } from '../../types'
 import './adminVideoTrace.css'
 import './adminVideoTraceCompact.css'
+import { reviewDate } from './adminReviewTime'
 
 const time = (value: string | null) => {
   if (!value) return '未记录'
-  const date = new Date(value)
-  return Number.isNaN(date.valueOf()) ? '时间格式不明' : date.toLocaleString('zh-CN', { hour12: false })
+  const date = reviewDate(value)
+  return !date ? '时间格式不明' : date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
 }
 
 const duration = (value: number | null) => {

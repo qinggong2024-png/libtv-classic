@@ -825,6 +825,7 @@ export interface AdminVideoRecord {
   brandId: string | null
   brandName: string | null
   createdAt: string | null
+  taskCreatedAt?: string | null
   durationSeconds: number | null
   width: number | null
   height: number | null
@@ -942,6 +943,7 @@ export interface AdminVideoTask {
   username: string
   brandName: string | null
   createdAt: string | null
+  latestRawAt?: string | null
   clips: AdminVideoRecord[]
   rawClipCount: number
   severity: AdminVideoSeverity

@@ -219,3 +219,33 @@ it('keeps 9:16 as one main preview with available raw clips and prompts', async 
   expect(view.host.textContent).toContain('返回视频目录')
   expect(view.host.textContent).not.toContain('审核通过')
 })
+
+it('replays the legacy timestamp mismatch without inventing an eight-hour wait', async () => {
+  const task = { ...data.items[0], createdAt: '2026-10-01T02:07:01', cut: null, cutStatus: 'READY' }
+  const traceFor = (id: string) => {
+    const trace = sampleTrace(id)
+    trace.taskCreatedAt = '2026-10-01T02:00:00+00:00'
+    trace.timeline = [
+      ['parent_task.analysis_started_at', '2026-10-01T02:00:01.600000+00:00'],
+      ['generation_variant.confirmed_at', '2026-10-01T02:01:28.000000+00:00'],
+      ['generation_attempt.submitted_at', '2026-10-01T02:01:31.000000+00:00'],
+      ['generation_attempt.completed_at', '2026-10-01T02:06:46.000000+00:00'],
+      ['download_artifact.created_at', id === 'clip-1' ? '2026-10-01T02:07:01' : '2026-10-01T02:06:45+00:00'],
+      ['multi_cutflow_task.created_at', '2026-10-01T02:07:07+00:00'],
+    ].map(([source, at]) => ({ label: source, source, at, endAt: null, elapsedSeconds: null, status: null, origin: 'persisted' }))
+    return trace
+  }
+  vi.mocked(getAdminVideoTasks).mockResolvedValue({ ...data, items: [task] })
+  vi.mocked(getAdminVideoTrace).mockImplementation(async (_admin, id) => traceFor(id))
+  view = await mount(<AdminVideoTaskReview adminId="admin-id"/>)
+  await act(async () => { await Promise.resolve() })
+  expect(view.host.textContent).toContain('原片保存 10/01 10:07')
+  const open = [...view.host.querySelectorAll('button')].find(el => el.textContent?.includes('查看完整详情'))
+  await act(async () => { open?.click(); await Promise.resolve(); await Promise.resolve() })
+  const metrics = [...view.host.querySelectorAll('.admin-review-metrics strong')].map(el => el.textContent)
+  expect(metrics).toEqual(['7分1秒', '6分59秒', '2秒'])
+  const created = view.host.querySelector<HTMLButtonElement>('.admin-review-segment')
+  await act(async () => { created?.click() })
+  expect(view.host.querySelector('.admin-review-selected time')?.textContent).toBe('10:00:00')
+  expect(view.host.querySelector('.admin-review-step[data-tone="warning"]')).toBeNull()
+})

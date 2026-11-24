@@ -15,6 +15,7 @@ import type {
   AdminVideoSort, AdminVideoTask, AdminVideoTaskPage, AdminVideoTrace,
 } from '../../types'
 import { AdminReviewTimeline } from './AdminReviewTimeline'
+import { reviewDate, taskCreationTime } from './adminReviewTime'
 import './adminVideoReview.css'
 import './adminVideoTaskReview.css'
 import './adminVideoTaskReviewCompact.css'
@@ -34,8 +35,9 @@ function label(clip: AdminVideoRecord) {
 }
 function date(value: string | null) {
   if (!value) return '时间未记录'
-  const result = new Date(value)
-  return Number.isNaN(result.getTime()) ? '时间未记录' : result.toLocaleString('zh-CN', {
+  const result = reviewDate(value)
+  return !result ? '时间未记录' : result.toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai',
     month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
   })
 }
@@ -245,7 +247,7 @@ function TaskDetail({ adminId, task, position, total, onBack, onPrevious, onNext
     </header>
     <div className="admin-task-identity">
       <h2 title={task.title}>{task.brandName || '视频任务'} · 任务巡检</h2>
-      <span>{task.username} · {date(task.createdAt)} · {task.clips.length} 条原片</span>
+      <span>{task.username} · {date(taskCreationTime(task, Object.values(traces)))} · {task.clips.length} 条原片</span>
       {task.severity !== 'normal' && <span className="admin-task-identity-risk" data-tone={task.severity}>{task.severity === 'critical' ? '存在异常' : '需要检查'}</span>}
     </div>
     <div className="admin-task-layout">
@@ -404,7 +406,7 @@ export function AdminVideoTaskReview({ adminId }: { adminId: string }) {
             <div className="admin-video-card-body">
               <strong title={task.title}>{task.title}</strong>
               <span>{task.brandName || '未归属品牌'} · {task.username}</span>
-              <small>{date(task.createdAt)} · {task.clips.length} 条原片 · {task.cut ? '成片已保存' : task.cutStatus ? `CUT ${task.cutStatus}` : '暂无成片'}</small>
+              <small>{taskCreationTime(task) ? '创建 ' + date(taskCreationTime(task)) : '原片保存 ' + date(task.latestRawAt ?? task.createdAt)} · {task.clips.length} 条原片 · {task.cut ? '成片已保存' : task.cutStatus ? `CUT ${task.cutStatus}` : '暂无成片'}</small>
               {task.severity !== 'normal' && <span className="admin-task-issue"><AlertCircle size={13}/> {task.severity === 'critical' ? '存在明确链路异常' : '存在需要检查的记录'}</span>}
               <div className="admin-video-card-actions">
                 <button type="button" className="text-button" onClick={() => openDetail(task.taskId)}><Workflow size={14}/>查看完整详情</button>
