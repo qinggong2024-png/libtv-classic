@@ -1,8 +1,10 @@
 import {
   AlertCircle, ArrowLeft, ChevronLeft, ChevronRight, Clapperboard,
-  FileText, Image, LoaderCircle, Play, RefreshCw, Search, Workflow,
+  FileText, Image, LoaderCircle, Play, RefreshCw, Search, Workflow, X,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { useDismiss } from '../../shared/hooks/useDismiss'
 import {
   adminCutUrl, adminVideoThumbnailUrl, fetchAdminCutObjectUrl,
   fetchAdminReferenceObjectUrl, fetchAdminVideoObjectUrl, getAdminVideoTasks, getAdminVideoTrace,
@@ -41,6 +43,16 @@ function date(value: string | null) {
     month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
   })
 }
+function ReferencePreview({ url, title, onClose }: { url: string; title: string; onClose: () => void }) {
+  const dialogRef = useRef<HTMLElement>(null)
+  useDismiss(true, onClose, dialogRef)
+  return createPortal(<div className="modal-backdrop image-preview-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
+    <section ref={dialogRef} className="image-preview-modal admin-reference-preview" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="image-preview-stage"><img src={url} alt={title} /></div>
+      <button type="button" className="icon-button image-preview-close" onClick={onClose} aria-label="关闭图片预览"><X size={19} /></button>
+    </section>
+  </div>, document.body)
+}
 function ReferenceImage({ adminId, clipId, reference }: {
   adminId: string; clipId: string; reference: AdminVideoReference
 }) {
@@ -48,9 +60,15 @@ function ReferenceImage({ adminId, clipId, reference }: {
     fetchAdminReferenceObjectUrl(adminId, clipId, assetId)
   ), [adminId, clipId])
   const { url, error } = useMediaObjectUrl(reference.id, load, '参考图读取失败', reference.available)
+  const [preview, setPreview] = useState(false)
   if (!reference.available) return <span>原图已失效</span>
   if (error) return <span role="status">{error}</span>
-  return url ? <img src={url} alt={reference.filename} loading="lazy" /> : <span>正在加载参考图…</span>
+  return url ? <>
+    <button type="button" className="admin-reference-open" aria-label={`查看${referenceName(reference)}大图：${reference.filename}`} onClick={() => setPreview(true)}>
+      <img src={url} alt={reference.filename} loading="lazy" />
+    </button>
+    {preview && <ReferencePreview url={url} title={`${referenceName(reference)}：${reference.filename}`} onClose={() => setPreview(false)} />}
+  </> : <span>正在加载参考图…</span>
 }
 
 function referenceName(reference: AdminVideoReference) {
@@ -403,15 +421,15 @@ export function AdminVideoTaskReview({ adminId }: { adminId: string }) {
               {(task.cut?.durationSeconds ?? task.clips[0]?.durationSeconds) != null &&
                 <span className="admin-video-duration">{Math.round(task.cut?.durationSeconds ?? task.clips[0].durationSeconds!)}s</span>}
             </button>
-            <div className="admin-video-card-body">
+            <button type="button" className="admin-video-card-body admin-task-detail-trigger" onClick={() => openDetail(task.taskId)}>
               <strong title={task.title}>{task.title}</strong>
               <span>{task.brandName || '未归属品牌'} · {task.username}</span>
               <small>{taskCreationTime(task) ? '创建 ' + date(taskCreationTime(task)) : '原片保存 ' + date(task.latestRawAt ?? task.createdAt)} · {task.clips.length} 条原片 · {task.cut ? '成片已保存' : task.cutStatus ? `CUT ${task.cutStatus}` : '暂无成片'}</small>
               {task.severity !== 'normal' && <span className="admin-task-issue"><AlertCircle size={13}/> {task.severity === 'critical' ? '存在明确链路异常' : '存在需要检查的记录'}</span>}
-              <div className="admin-video-card-actions">
-                <button type="button" className="text-button" onClick={() => openDetail(task.taskId)}><Workflow size={14}/>查看完整详情</button>
-              </div>
-            </div>
+              <span className="admin-video-card-actions">
+                <span className="text-button"><Workflow size={14}/>查看完整详情</span>
+              </span>
+            </button>
           </article>
         })}
       </div>}

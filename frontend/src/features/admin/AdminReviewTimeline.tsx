@@ -75,6 +75,9 @@ const clock = (value: string | null) => {
   if (!value) return '未记录'
   return reviewDate(value)?.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) ?? '未记录'
 }
+const milestoneDate = (value: string | null) => reviewDate(value)?.toLocaleString('zh-CN', {
+  timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+}) ?? '未记录'
 const span = (seconds: number | null) => {
   if (seconds === null) return '—'
   return seconds >= 3600 ? `${Math.floor(seconds / 3600)}时${Math.floor((seconds % 3600) / 60)}分`
@@ -115,12 +118,13 @@ export function AdminReviewTimeline({ task, traces, loading }: {
         <button type="button" className="admin-review-segment" aria-pressed={active.id === step.id} onClick={() => setSelected(step.id)} disabled={loading}>
           <span className="admin-review-segment-bar" aria-hidden="true" />
           <strong>{step.label}</strong>
-          <small>{loading || index === 0 ? '—' : span(step.elapsedSeconds)}</small>
+          <time className="admin-review-milestone-time" dateTime={step.at || undefined}>{loading ? '读取中' : step.at ? (index === 0 || step.id === 'final' ? milestoneDate(step.at) : clock(step.at)) : '未记录'}</time>
+          {index > 0 && step.elapsedSeconds !== null && <small>{loading ? '—' : span(step.elapsedSeconds)}</small>}
         </button>
       </li>)}
     </ol>
     <div className="admin-review-selected" data-tone={active.tone} aria-live="polite">
-      <strong>{active.label}</strong><time dateTime={active.at || undefined}>{loading ? '—' : clock(active.at)}</time><span>{loading ? '—' : span(active.elapsedSeconds)}</span>
+      <strong>{active.label}</strong><time dateTime={active.at || undefined}>{loading ? '—' : milestoneDate(active.at)}</time><span>{loading ? '—' : span(active.elapsedSeconds)}</span>
       <span className="admin-review-selected-state">{loading ? '' : active.tone === 'critical' ? '异常' : active.tone === 'warning' ? '待核实' : active.tone === 'missing' ? '未记录' : '已记录'}</span>
     </div>
   </section>
