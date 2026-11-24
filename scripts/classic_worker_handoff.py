@@ -90,16 +90,53 @@ def disarm_handoff(kind: str | None = None) -> None:
         hold_file(selected).unlink(missing_ok=True)
 
 
+def plan_handoff(*, uncertain_baseline: int) -> dict:
+    """Read-only handoff decision; never pauses admissions or starts workers."""
+    from classic_stack import owned_process
+
+    report = check(STORAGE / "classic.db", baseline_uncertain=uncertain_baseline)
+    try:
+        state = json.loads(STATE.read_text(encoding="utf-8"))
+        processes = {
+            item["name"]: bool(owned_process(item))
+            for item in state.get("processes", [])
+            if item.get("name") in KINDS
+        }
+    except (OSError, ValueError, TypeError):
+        processes = {}
+    blockers = list(report["blockers"])
+    if set(processes) != set(KINDS) or not all(processes.values()):
+        blockers.append("WORKER_IDENTITY_UNVERIFIED")
+    return {
+        "mode": "read-only-worker-handoff-plan",
+        "workerProcessesAlive": processes,
+        "restartHolds": {kind: restart_held(kind) for kind in KINDS},
+        "taskCounts": report["counts"],
+        "blockers": sorted(set(blockers)),
+        "readyForShortIntakeFreezeAndExclusiveHandoff": not blockers,
+        "nextAction": (
+            "keep-existing-workers-and-reconcile-original-tasks" if blockers
+            else "pause-new-intake-recheck-checkpoint-and-arm-selected-worker"
+        ),
+        "note": "No second Runner/CUT is started. Paid UNKNOWN records are not resubmitted.",
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["check", "arm", "disarm", "status"])
+    parser.add_argument("action", choices=["plan", "check", "arm", "disarm", "status"])
     parser.add_argument("--baseline-unknown", type=int, default=15)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--kind", choices=KINDS)
     args = parser.parse_args()
     if args.baseline_unknown < 0:
         parser.error("baseline must be nonnegative")
-    if args.action == "status":
+    if args.action == "plan":
+        decision = plan_handoff(uncertain_baseline=args.baseline_unknown)
+        print(json.dumps(decision, indent=2))
+        if not decision["readyForShortIntakeFreezeAndExclusiveHandoff"]:
+            raise SystemExit(2)
+    elif args.action == "status":
         print(json.dumps({kind: restart_held(kind) for kind in KINDS}))
     elif args.action == "check":
         print(json.dumps(preflight(uncertain_baseline=args.baseline_unknown), indent=2))

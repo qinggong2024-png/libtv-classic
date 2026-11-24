@@ -20,6 +20,7 @@ from urllib.request import ProxyHandler, build_opener
 
 from classic_active_release_status import report, verify_release
 from classic_v2_canary_preflight import check as check_tasks
+from classic_release_classifier import committed_changes
 
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE_PAID_UNKNOWN = 15
@@ -118,11 +119,20 @@ def release_lock(root: Path):
 
 def publish_frontend(root: Path, expected_main: str, expected_api: str,
                      baseline_unknown: int, *, frontend_only: bool = False,
-                     expected_old_frontend: str | None = None) -> dict:
+                     expected_old_frontend: str | None = None,
+                     change_base: str | None = None) -> dict:
     """Strict by default; explicit frontend-only mode never pauses production."""
     with release_lock(root):
         before = assess(root, expected_main, expected_api, require_paused=not frontend_only,
                         baseline_unknown=baseline_unknown, frontend_only=frontend_only)
+        if frontend_only:
+            try:
+                changes = committed_changes(root, change_base) if change_base else None
+            except ValueError:
+                changes = None
+            if not changes or not changes["frontendHotEligible"] or changes["target"] != expected_main:
+                before["blockers"].append("FRONTEND_CHANGE_SCOPE_NOT_VERIFIED")
+                before["ready"] = False
         if frontend_only and (not expected_old_frontend or before["frontendIndexSha256"] != expected_old_frontend):
             before["blockers"].append("FRONTEND_BASELINE_CHANGED")
             before["ready"] = False
@@ -140,6 +150,13 @@ def publish_frontend(root: Path, expected_main: str, expected_api: str,
                                 require_paused=not frontend_only, baseline_unknown=baseline_unknown,
                                 frontend_only=frontend_only)
         if frontend_only:
+            try:
+                current_changes = committed_changes(root, change_base) if change_base else None
+            except ValueError:
+                current_changes = None
+            if not current_changes or not current_changes["frontendHotEligible"] or current_changes["target"] != expected_main:
+                before_publish["blockers"].append("FRONTEND_CHANGE_SCOPE_CHANGED")
+                before_publish["ready"] = False
             for key in ("activeApiPort", "activeConfigRevision", "activeSchemaRevision", "admissionPaused", "frontendIndexSha256"):
                 if before_publish[key] != before[key]:
                     before_publish["blockers"].append("LIVE_BASELINE_CHANGED:" + key)
@@ -177,9 +194,39 @@ def publish_frontend(root: Path, expected_main: str, expected_api: str,
         return result
 
 
+def plan_release(root: Path, *, base: str) -> dict:
+    """Read-only deploy decision; paid/CUT work is not mistaken for website downtime."""
+    changes = committed_changes(root, base)
+    front = changes["frontendHotEligible"]
+    live = assess(root, frontend_only=front)
+    reasons = list(live["blockers"])
+    if live["mainHead"] != changes["target"]:
+        reasons.append("CANDIDATE_IS_NOT_MAIN")
+    if changes["mode"] == "no-runtime-change":
+        action = "no-deploy-needed"
+    elif front:
+        action = "frontend-hot-publish-after-diff-and-api-review"
+    elif changes["mode"] == "api-canary-review":
+        action = "api-compatibility-review-and-standby-provenance-required"
+    elif changes["mode"] == "worker-handoff-required":
+        action = "worker-task-lease-handoff-required"
+    else:
+        action = "maintenance-or-manual-review-required"
+    if not front and changes["mode"] != "no-runtime-change":
+        reasons.append("NOT_AUTOMATICALLY_HOT_DEPLOYABLE")
+    return {
+        "changes": changes,
+        "online": live,
+        "nextAction": action,
+        "canHotPublishFrontend": front and not reasons,
+        "blockers": sorted(set(reasons)),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("status", "check", "publish-frontend", "verify"))
+    parser.add_argument("command", choices=("status", "check", "plan", "publish", "publish-frontend", "verify"))
+    parser.add_argument("--change-base", help="Approved prior commit for exact change-scope verification")
     parser.add_argument("--apply", action="store_true", help="Required for publish-frontend")
     parser.add_argument("--frontend-only", action="store_true", help="Approved API-compatible frontend-only release; task counts are informational")
     parser.add_argument("--expected-old-frontend", help="Approved current live index SHA256 for frontend-only publish")
@@ -190,7 +237,28 @@ def main() -> int:
     args = parser.parse_args()
     if args.baseline_unknown < 0:
         parser.error("--baseline-unknown must be nonnegative")
-    if args.command == "publish-frontend":
+    if args.command == "plan":
+        if not args.change_base:
+            parser.error("plan requires --change-base (approved prior Git commit)")
+        try:
+            result = plan_release(ROOT, base=args.change_base)
+        except ValueError as error:
+            parser.error(str(error))
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["canHotPublishFrontend"] or result["nextAction"] == "no-deploy-needed" else 2
+    if args.command in {"publish", "publish-frontend"}:
+        if args.command == "publish":
+            if not args.change_base:
+                parser.error("publish requires --change-base")
+            try:
+                scope = committed_changes(ROOT, args.change_base)
+            except ValueError as error:
+                parser.error(str(error))
+            if not scope["frontendHotEligible"]:
+                parser.error("Automated publish blocked; classification is " + scope["mode"])
+            args.frontend_only = True
+        if args.frontend_only and not args.change_base:
+            parser.error("frontend-only publish requires --change-base")
         if not args.apply:
             parser.error("publish-frontend requires --apply")
         if not args.expected_main_head or len(args.expected_main_head) != 40:
@@ -201,7 +269,8 @@ def main() -> int:
             parser.error("frontend-only publish requires --expected-old-frontend")
         result = publish_frontend(ROOT, args.expected_main_head, args.expected_api_revision,
                                   args.baseline_unknown, frontend_only=args.frontend_only,
-                                  expected_old_frontend=args.expected_old_frontend)
+                                  expected_old_frontend=args.expected_old_frontend,
+                                  change_base=args.change_base)
     else:
         result = assess(ROOT, args.expected_main_head, args.expected_api_revision,
                         baseline_unknown=args.baseline_unknown, frontend_only=args.frontend_only)
