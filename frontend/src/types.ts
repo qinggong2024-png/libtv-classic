@@ -348,7 +348,8 @@ export interface AccountEventReport {
   startDate: string
   endDate: string
   total: number
-  items: { id: string; username: string; action: string; createdAt: string; entityType: string; entityId: string }[]
+  view?: 'production'
+  items: { id: string; username: string; action: string; createdAt: string; entityType: string; entityId: string; quantity?: number | null; detailTitle?: string | null; outcome?: string | null; category?: string }[]
 }
 
 export interface UploadResult {

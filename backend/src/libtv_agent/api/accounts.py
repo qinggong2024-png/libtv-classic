@@ -36,6 +36,7 @@ from libtv_agent.services.runtime_control import get_runtime_config, update_runt
 from libtv_agent.services.usage_pricing import PRICE_COLUMNS, PRICING_KEY, global_usage_prices
 from libtv_agent.services.usage_reports import aggregate_usage, display_totals, empty_totals
 from libtv_agent.services.media_download_metrics import aggregate_downloads
+from libtv_agent.services.production_activity import production_activity
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -559,11 +560,15 @@ async def account_events(
     startDate: date | None = None,
     endDate: date | None = None,
     action: str | None = Query(default=None, min_length=1, max_length=100),
+    view: Literal["audit", "production"] = "audit",
+    category: Literal["IMAGE", "VIDEO", "CUTFLOW", "DOWNLOAD", "REVIEW", "SYSTEM"] | None = None,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
 ) -> dict:
     scope = await account_report_scope(session, actor, userId, brandId)
     start, end = account_report_dates(None, startDate, endDate)
+    if view == "production":
+        return await production_activity(session, scope, start, end, category, offset, limit)
     criteria = (
         AuditEvent.actor_id.in_(scope),
         AuditEvent.created_at >= datetime.combine(start, time.min, SHANGHAI).astimezone(UTC),

@@ -20,7 +20,7 @@ createRoot(document.getElementById('root')).render(React.createElement(Fixture))
 const users = [{id:'a',username:'GC',brandId:'g',role:'USER',isActive:true,dailyBudgetUsd:50,isBrandAdmin:false,pagePermissions:[],createdAt:'2026-10-01T00:00:00Z'}]
 const brands = [{id:'g',name:'GC / GuidingCross'}]
 const totals = { recordCount: 1, imageCount: 0, videoSeconds: 60, cutflowClips: 2, originalDownloads: 1, cutflowDownloads: 1, unknownVideoCount: 0, estimatedUsd: 10, reservedUsd: 0, uncertainUsd: 0, releasedUsd: 0, unpricedCount: 0, budgetUsedUsd: 10 }
-const events = Array.from({length:45},(_,i)=>({id:'event-'+i,username:'GC',action:i%2?'LOGOUT':'LOGIN',createdAt:'2026-11-24T04:23:01Z',entityType:'user',entityId:'user-a'}))
+const events = Array.from({length:45},(_,i)=>({id:'event-'+i,username:'GC',action:i%2?'LOGIN':'CREATE_VIDEO_TASK',category:i%2?'SYSTEM':'VIDEO',quantity:i%2?null:2,detailTitle:i%2?null:'测试视频任务',createdAt:'2026-11-24T04:23:01Z',entityType:i%2?'user':'parent_task',entityId:i%2?'user-a':'task-a'}))
 const requests = [], errors = []
 const server = await createServer({ configFile:false, envFile:false, cacheDir:resolve(reportDir,'vite-cache'), root:resolve(root,'frontend'), server:{host:'127.0.0.1',port:0},logLevel:'error',plugins:[{name:'events-polish',configureServer(vite){
   vite.middlewares.use('/__events_polish',async (_req,res,next)=>{try{res.setHeader('Content-Type','text/html');res.end(await vite.transformIndexHtml('/__events_polish',html))}catch(error){next(error)}})
@@ -43,9 +43,10 @@ try {
     if(url.pathname==='/api/v1/admin/brands')return route.fulfill({json:brands})
     if(url.pathname==='/api/v1/admin/account-usage')return route.fulfill({json:{...totals,day:q.endDate,startDate:q.startDate,endDate:q.endDate,budgetDay:'2026-11-24',currency:'USD',total:0,summaryTotal:1,eventTotal:0,policies:[],items:[],events:[],summaries:[{...totals,userId:'a',username:'GC',brandId:'g',isActive:true,dailyBudgetUsd:50,todayBudgetUsedUsd:10,todayUnpricedCount:0,todayRemainingUsd:40}]}})
     if(url.pathname==='/api/v1/account/events'){
-      const items=events.filter(e=>(!q.action||e.action===q.action)&&(!q.endDate||q.endDate>='2026-11-24'))
+      assert.equal(q.view,'production')
+      const items=events.filter(e=>(!q.category||e.category===q.category)&&(!q.endDate||q.endDate>='2026-11-24'))
       const offset=Number(q.offset||0),limit=Number(q.limit||20)
-      return route.fulfill({json:{startDate:q.startDate,endDate:q.endDate,total:items.length,items:items.slice(offset,offset+limit)}})
+      return route.fulfill({json:{view:'production',startDate:q.startDate,endDate:q.endDate,total:items.length,items:items.slice(offset,offset+limit)}})
     }
     errors.push('Unmocked API '+url.pathname)
     return route.fulfill({status:404,json:{}})
@@ -76,11 +77,17 @@ try {
   }
   await log.getByRole('button',{name:'操作记录下一页'}).click()
   await log.getByText('第 2 / 3 页 · 共 45 条',{exact:true}).waitFor()
-  await log.getByLabel('操作类型',{exact:true}).selectOption('LOGIN')
+  await log.getByLabel('操作类型',{exact:true}).selectOption('SYSTEM')
+  await log.getByText('第 1 / 2 页 · 共 22 条',{exact:true}).waitFor()
+  assert.equal(await table.getByRole('columnheader',{name:'明细',exact:true}).count(),0)
+  assert.equal(await table.getByRole('button',{name:'查看操作详情'}).count(),0)
+  await log.getByLabel('操作类型',{exact:true}).selectOption('VIDEO')
   await log.getByText('第 1 / 2 页 · 共 23 条',{exact:true}).waitFor()
+  await table.getByText('创建生视频任务 2 条',{exact:true}).first().waitFor()
   await table.getByRole('button',{name:'查看操作详情'}).first().click()
   const drawer=page.getByRole('dialog')
-  await drawer.getByText('user-a',{exact:true}).waitFor()
+  await drawer.getByText('task-a',{exact:true}).waitFor()
+  await drawer.getByText('测试视频任务',{exact:true}).waitFor()
   await page.screenshot({path:resolve(reportDir,'event-detail.png'),animations:'disabled'})
   await page.keyboard.press('Escape')
   await drawer.waitFor({state:'hidden'})

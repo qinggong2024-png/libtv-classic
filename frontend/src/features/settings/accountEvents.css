@@ -6,7 +6,9 @@
 .admin-view .admin-events .admin-events-table :is(th,td) { text-align: left; }
 .admin-view .admin-events .admin-events-table thead th:first-child { width: 26%; }
 .admin-view .admin-events .admin-events-table tbody th { min-width: 100px; font-weight: 600; }
-.admin-view .admin-events .admin-events-table :is(th,td):last-child { width: 64px; text-align: right; padding-right: 16px; }
+.admin-view .admin-events .admin-events-table.has-details :is(th,td):last-child { width: 64px; text-align: right; padding-right: 16px; }
+.admin-view .admin-events .admin-events-table td.admin-events-activity { text-align: left; width: auto; font-weight: 500; }
+.admin-view .admin-events .admin-events-table thead th:nth-child(2) { width: 20%; }
 .admin-view .admin-events .admin-events-table tbody td { height: 56px; }
 .admin-events .admin-events-table time { color: var(--text-secondary); white-space: nowrap; }
 .admin-events .admin-usage-footer { justify-content: flex-end; }

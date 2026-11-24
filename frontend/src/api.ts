@@ -751,7 +751,7 @@ export const getAccountUsage = (values: { userId?: string; brandId?: string; day
   return request<AccountUsageReport>(`/api/v1/account/usage?${params}`, {}, { actorId })
 }
 
-export const getAccountEvents = (values: { userId?: string; brandId?: string; startDate?: string; endDate?: string; action?: string; offset?: number; limit?: number }, actorId?: string) => {
+export const getAccountEvents = (values: { userId?: string; brandId?: string; startDate?: string; endDate?: string; action?: string; view?: 'audit' | 'production'; category?: string; offset?: number; limit?: number }, actorId?: string) => {
   const params = new URLSearchParams()
   for (const [key, value] of Object.entries(values)) if (value !== undefined && value !== '') params.set(key, String(value))
   return request<AccountEventReport>(`/api/v1/account/events?${params}`, {}, { actorId })
