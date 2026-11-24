@@ -90,6 +90,13 @@ async def enqueue_confirmation(session, task, actor_id, payload: ConfirmRequest)
 
 async def claim_confirmation(session):
     eligible = (OutboxEvent.event_type == REQUESTED, OutboxEvent.status == OutboxStatus.PENDING)
+    # Avoid taking SQLite's write lock for a no-op poll. Release the read
+    # transaction before the atomic claim; the original CAS remains authoritative.
+    if session.get_bind().dialect.name == "sqlite" and not session.in_transaction():
+        pending = await session.scalar(select(OutboxEvent.id).where(*eligible).limit(1))
+        await session.rollback()
+        if pending is None:
+            return None
     candidate = (
         select(OutboxEvent.id)
         .where(*eligible)

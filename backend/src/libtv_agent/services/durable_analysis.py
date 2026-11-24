@@ -34,6 +34,17 @@ async def claim_next(session, *, stale_seconds: float, now=None):
             ParentTask.analysis_heartbeat_at < now - timedelta(seconds=stale_seconds),
         ),
     )
+    # Polling an empty SQLite queue with UPDATE still reserves the sole writer.
+    # A read-only hint on a fresh session avoids that contention. End the read
+    # transaction before attempting the original atomic claim. The hint never
+    # grants ownership; a newly queued job is picked up on the next poll.
+    if session.get_bind().dialect.name == "sqlite" and not session.in_transaction():
+        pending = await session.scalar(
+            select(ParentTask.id).where(ParentTask.phase == ParentTaskPhase.ANALYZING, eligible).limit(1)
+        )
+        await session.rollback()
+        if pending is None:
+            return None
     # Only pre-provider claims can be retried; never adopt legacy/automatic jobs.
     # One UPDATE with a scalar subquery avoids a read-to-write SQLite upgrade.
     candidate = (
