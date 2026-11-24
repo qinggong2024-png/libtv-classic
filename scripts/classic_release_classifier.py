@@ -125,3 +125,60 @@ def committed_changes(root: Path, base: str, target: str = "HEAD") -> dict:
     result = classify_changes(paths)
     result.update({"base": base_sha, "target": target_sha, "paths": paths})
     return result
+
+
+# Exact reviewed API-only compatibility pairs shared by routing and frontend continuity.
+API_ONLY_PAIR = frozenset({
+    "9b01a07df26943ac8f59970a89fd757db0acb7cbe0c021f175789b3b3261baf2",
+    "800bb2238764b40f417c9ffe46bff06facc92ded2225915513121a011c20d3f4",
+})
+
+
+# Reviewed production-activity pair: exactly accounts.py and its read-only
+# projection module; no production writers, workers, schema or config changes.
+ACTIVITY_API_ONLY_PAIR = frozenset({
+    "800bb2238764b40f417c9ffe46bff06facc92ded2225915513121a011c20d3f4",
+    "c2c53ddf70c12ba45b9f21371b341fff2f0b5fa2418e30a1494d56e590c11844",
+})
+
+
+# Image materialization only: same provider observation/IDs/schema/Runner;
+# persist URLs before downloads, then fence each result against old API writes.
+IMAGE_API_ONLY_PAIR = frozenset({
+    "c2c53ddf70c12ba45b9f21371b341fff2f0b5fa2418e30a1494d56e590c11844",
+    "851992dc658ddcb52fb59465b9198d64a8c8707c176becd08ee41abc8168346f",
+})
+
+
+# Only API enqueue gates and the durable config reader differ. No provider,
+# Worker, schema, or actual shared configuration mutation is part of this pair.
+RUNNER_COMPAT_API_PAIR = frozenset({
+    "851992dc658ddcb52fb59465b9198d64a8c8707c176becd08ee41abc8168346f",
+    "9fa2b54595dbb067ebd9c3bc691454e1d9ed9ec072d7527bb7a557e66554f7aa",
+})
+
+
+def reviewed_pair(first, second):
+    return frozenset((first, second)) in (
+        API_ONLY_PAIR, ACTIVITY_API_ONLY_PAIR, IMAGE_API_ONLY_PAIR, RUNNER_COMPAT_API_PAIR,
+    )
+
+
+
+def reviewed_api_path(first, second):
+    """Return the shortest chain of exact reviewed API-only pairs, or None."""
+    if not all(isinstance(v, str) and re.fullmatch(r"[0-9a-f]{64}", v) for v in (first, second)):
+        return None
+    pending = [[first]]
+    seen = {first}
+    pairs = (API_ONLY_PAIR, ACTIVITY_API_ONLY_PAIR, IMAGE_API_ONLY_PAIR, RUNNER_COMPAT_API_PAIR)
+    while pending:
+        chain = pending.pop(0)
+        if chain[-1] == second:
+            return chain
+        for pair in pairs:
+            if chain[-1] in pair:
+                for target in sorted(pair - seen):
+                    seen.add(target)
+                    pending.append(chain + [target])
+    return None

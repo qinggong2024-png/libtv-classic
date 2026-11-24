@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sqlite3
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, build_opener
@@ -36,6 +37,56 @@ def get_json(url: str) -> dict | None:
             return data if isinstance(data, dict) else None
     except (OSError, ValueError, HTTPError, URLError):
         return None
+
+
+def sqlite_write_only_unavailable(url: str) -> bool:
+    """Accept the exact documented write failure or a verified recovery on recheck."""
+    try:
+        with build_opener(ProxyHandler({})).open(url, timeout=3) as response:
+            data = json.load(response)
+            return (response.status == 200 and isinstance(data, dict)
+                    and data.get("status") == "ok"
+                    and data.get("checks") == {"postgresql": "ok", "databaseSchema": "ok", "sqliteWrite": "ok"})
+    except HTTPError as error:
+        try:
+            return error.code == 503 and json.loads(error.read(4096)) == {
+                "status": "degraded", "checks": {"sqliteWrite": "unavailable"},
+            }
+        except (OSError, ValueError):
+            return False
+        finally:
+            error.close()
+    except (OSError, ValueError):
+        return False
+
+
+def sqlite_contention_or_recovered(root: Path) -> bool:
+    """Read actual Classic schema, classify a bounded lock probe, never write rows.
+
+    A BUSY/LOCKED result is acceptable for static publication; disk I/O,
+    readonly, corruption and missing database errors remain failures.
+    """
+    path = (root / "var/classic-lan/classic.db").resolve()
+    try:
+        db = sqlite3.connect(path.as_uri() + "?mode=rw", uri=True, timeout=0.25)
+        try:
+            db.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
+            db.execute("SELECT id FROM parent_task LIMIT 0")
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                db.rollback()
+                return True
+            except sqlite3.Error as error:
+                code = getattr(error, "sqlite_errorcode", None)
+                return isinstance(code, int) and (code & 255) in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+        finally:
+            db.close()
+    except (OSError, sqlite3.Error):
+        return False
+
+
+def frontend_release_ready(state: dict) -> bool:
+    return state.get("frontendReady", state.get("ok")) is True
 
 
 def read_json_file(path: Path) -> dict | None:
@@ -171,10 +222,31 @@ def report(root: Path = ROOT) -> dict:
     if pending_admin_sync:
         issues.append("Latest main checkout is missing/different from active administrator-gallery source")
     entry = root / "frontend" / "dist" / "index.html"
+    identity_ok = (active_status is not None and manifest_matches is not False
+                   and blue_manifest_matches is not False
+                   and (active_disk_revision is None or active_disk_revision == running_revision))
+    strict_ok = identity_ok and health is not None
+    frontend_ok = strict_ok
+    write_warning = False
+    if (not strict_ok and identity_ok and active_disk_revision == running_revision
+            and active_disk_revision and health is None
+            and gate and gate.get("configured") is True
+            and gate.get("deploymentId") == "libtv-classic-lan-0e3d1c8"
+            and gate.get("newVideoAdmissionsPaused") is False
+            and route.get("configured") is True and route.get("hotRouteVersion") == 1
+            and route.get("allowedApiPorts") == [8002, 8003]
+            and sqlite_write_only_unavailable(URL + "/api/v1/health/ready")):
+        proxied = get_json(URL + "/api/v1/system/status")
+        if (proxied and all(active_status.get(k) and proxied.get(k) == active_status.get(k)
+                            for k in ("sourceRevision", "configRevision", "schemaRevision"))
+                and get_json(URL + "/api/v1/health/live") == {"status": "ok"}
+                and sqlite_contention_or_recovered(root)):
+            frontend_ok = True
+            write_warning = True
     return {
-        "ok": (active_status is not None and health is not None and manifest_matches is not False
-               and blue_manifest_matches is not False
-               and (active_disk_revision is None or active_disk_revision == running_revision)),
+        "ok": strict_ok,
+        "frontendReady": frontend_ok,
+        "frontendWarnings": ["SQLITE_WRITE_PROBE_UNAVAILABLE_READ_PATH_VERIFIED"] if write_warning else [],
         "userUrl": "http://192.168.30.126:5176/",
         "activeApiPort": active_port,
         "standbyApiPort": standby_port,

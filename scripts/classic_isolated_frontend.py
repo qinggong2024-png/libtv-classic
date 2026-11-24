@@ -17,8 +17,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.request import ProxyHandler, build_opener
 
-from classic_active_release_status import report, workspace_source_revision
-from classic_release_classifier import classify_changes, committed_changes
+from classic_active_release_status import report, workspace_source_revision, frontend_release_ready
+from classic_release_classifier import classify_changes, committed_changes, reviewed_api_path
 
 SHA40 = re.compile(r"[0-9a-f]{40}")
 SHA64 = re.compile(r"[0-9a-f]{64}")
@@ -87,7 +87,7 @@ def live_frontend_baseline(root, state):
         "activeConfigRevision": state.get("activeConfigRevision"),
         "activeSchemaRevision": state.get("activeSchemaRevision"),
     }
-    if (not state.get("ok") or active.get("diskMatchesRunning") is not True
+    if (not frontend_release_ready(state) or active.get("diskMatchesRunning") is not True
             or not isinstance(main, str) or not SHA40.fullmatch(main)
             or not isinstance(live_hash, str) or not SHA64.fullmatch(live_hash)
             or not all(pins.values()) or pins["activeApiPort"] not in (8002, 8003)):
@@ -120,6 +120,94 @@ def live_frontend_baseline(root, state):
     return None
 
 
+def recover_frontend_receipt(root, state, *, apply=False):
+    """Rebind a verified publication through exact, previously reviewed API pairs.
+
+    Read-only unless invoked under the existing activation lock. No build, route,
+    worker or database changes. Never infer compatibility from matching schema alone.
+    """
+    active = state.get("activeApi") or {}
+    main = (state.get("mainCheckout") or {}).get("gitHead")
+    live_hash = state.get("frontendIndexSha256")
+    target = active.get("sourceRevision")
+    config, schema = state.get("activeConfigRevision"), state.get("activeSchemaRevision")
+    port = state.get("activeApiPort")
+    if (not frontend_release_ready(state) or active.get("diskMatchesRunning") is not True
+            or state.get("admissionPaused") is not False or port not in (8002, 8003)
+            or not isinstance(main, str) or not SHA40.fullmatch(main)
+            or not isinstance(live_hash, str) or not SHA64.fullmatch(live_hash)
+            or not config or not schema or http_digest() != live_hash):
+        return None
+    dist = root / "frontend" / "dist"
+    for path in sorted(history(root).glob("*.json"), reverse=True):
+        try:
+            item = json.loads(path.read_text(encoding="utf-8-sig"))
+            if (not isinstance(item, dict) or item.get("ready") is not True
+                    or item.get("frontendPublished") is not True
+                    or item.get("frontendNew") != live_hash or item.get("servedFrontendSha256") != live_hash
+                    or item.get("activeConfigRevision") != config or item.get("activeSchemaRevision") != schema):
+                continue
+            chain = reviewed_api_path(item.get("activeApiRevision"), target)
+            if chain is None:
+                continue
+            source = item.get("artifactSourceHead") or item.get("candidateHead")
+            base = item.get("approvedFrontendHead") or item.get("mainHead")
+            if not all(isinstance(v, str) and SHA40.fullmatch(v) for v in (source, base)):
+                continue
+            git(root, "merge-base", "--is-ancestor", base, main)
+            if tree(root, source) != tree(root, base):
+                continue
+            files = item.get("artifactFileDigests")
+            if not isinstance(files, dict):
+                # Older verified receipts stored only the count. Recover the exact
+                # original staged bytes from its recorded Git worktree, not main.
+                files = None
+                for entry in git(root, "worktree", "list", "--porcelain").split("\n\n"):
+                    fields = entry.splitlines()
+                    if not fields or not fields[0].startswith("worktree ") or "HEAD " + source not in fields:
+                        continue
+                    stage = Path(fields[0][9:]) / "frontend" / "dist-build"
+                    if stage.is_dir() and (stage / "index.html").is_file() and digest(stage / "index.html") == live_hash:
+                        files = staged_files(stage, dist)
+                        break
+            if (not isinstance(files, dict) or files.get("index.html") != live_hash
+                    or len(files) != item.get("artifactFilesVerified")
+                    or not any(name.startswith("assets/") for name in files)):
+                continue
+            if any(not isinstance(name, str) or not name or "\\" in name or ":" in name
+                   or any(part in ("", ".", "..") for part in name.split("/"))
+                   or not isinstance(sha, str) or not SHA64.fullmatch(sha)
+                   or not (dist / name).is_file() or (dist / name).is_symlink()
+                   or digest(dist / name) != sha for name, sha in files.items()):
+                continue
+            if any(http_digest("/" + name) != sha for name, sha in files.items() if name.startswith("assets/")):
+                continue
+            # Recheck the live tuple after potentially slow asset reads.
+            if apply:
+                after = report(root)
+                if not frontend_release_ready(after) or any(after.get(k) != state.get(k) for k in (
+                         "activeApiPort", "activeApi", "activeConfigRevision", "activeSchemaRevision",
+                        "admissionPaused", "frontendIndexSha256", "mainCheckout")) or http_digest() != live_hash:
+                    return None
+            receipt = {"mode": "api-only-compatibility-reverified", "ready": True,
+                       "frontendPublished": False, "frontendNew": live_hash, "frontendOld": live_hash,
+                       "servedFrontendSha256": live_hash, "artifactSourceHead": source,
+                       "approvedFrontendHead": base, "mainHead": main, "priorReceipt": path.name,
+                       "previousApiRevision": chain[0], "reviewedApiPath": chain,
+                       "activeApiRevision": target, "activeApiPort": port,
+                       "activeConfigRevision": config, "activeSchemaRevision": schema,
+                       "artifactFilesVerified": len(files), "artifactFileDigests": files}
+            if apply:
+                saved = record_receipt(root, receipt)
+                return {"base": base, "artifactSourceHead": source, "receipt": Path(saved).name,
+                        "compatibilityRecovered": True, "reviewedApiPath": chain}
+            return {"base": base, "artifactSourceHead": source, "receipt": path.name,
+                    "recoveryRequired": True, "reviewedApiPath": chain, "artifactFilesVerified": len(files)}
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+            continue
+    return None
+
+
 def frontend_scope(root, base, approved):
     changes = committed_changes(root, base, approved)
     scope = classify_changes([p for p in changes["paths"] if p.startswith("frontend/")])
@@ -147,7 +235,7 @@ def assess_isolated(root, candidate, *, base, approved, main, api, old, candidat
         errors.append("FULL_PINNED_REVISIONS_REQUIRED")
         result["ready"] = False
         return result
-    if not state.get("ok") or active.get("diskMatchesRunning") is not True:
+    if not frontend_release_ready(state) or active.get("diskMatchesRunning") is not True:
         errors.append("LIVE_CLASSIC_UNHEALTHY_OR_API_DISK_DRIFT")
     if state.get("userUrl") != "http://192.168.30.126:5176/" or state.get("activeApiPort") not in (8002, 8003):
         errors.append("INVALID_CLASSIC_ROUTE")
@@ -195,7 +283,7 @@ def assess_isolated(root, candidate, *, base, approved, main, api, old, candidat
     except (OSError, ValueError, subprocess.SubprocessError):
         errors.append("CANDIDATE_OR_BASE_PROVENANCE_UNVERIFIED")
     result["ready"] = not errors
-    result["warnings"] = [] if result["fullMainApiMatches"] else ["UNRELATED_MAIN_API_DRIFT"]
+    result["warnings"] = list(state.get("frontendWarnings", [])) + ([] if result["fullMainApiMatches"] else ["UNRELATED_MAIN_API_DRIFT"])
     return result
 
 
@@ -208,7 +296,7 @@ def prepare_isolated(root, candidate, *, base, approved, main, api, old):
     if not all(isinstance(v, str) and SHA40.fullmatch(v) for v in (base, approved, main, active.get("gitHead"))) or not all(
             isinstance(v, str) and SHA64.fullmatch(v) for v in (api, old)):
         raise ValueError("FULL_PINNED_REVISIONS_REQUIRED")
-    if (not state.get("ok") or active.get("diskMatchesRunning") is not True
+    if (not frontend_release_ready(state) or active.get("diskMatchesRunning") is not True
             or active.get("sourceRevision") != api
             or (state.get("mainCheckout") or {}).get("gitHead") != main
             or state.get("frontendIndexSha256") != old or http_digest() != old):
@@ -239,6 +327,31 @@ def prepare_isolated(root, candidate, *, base, approved, main, api, old):
 
 def unchanged(before, after):
     return all(before.get(k) == after.get(k) for k in LIVE_KEYS)
+
+
+def preserve_verified_public_svg(root, stage, dist, receipt_name):
+    """Keep byte-identical live public SVGs when Git checkout only changed EOLs."""
+    if not receipt_name or Path(receipt_name).name != receipt_name:
+        return []
+    item = json.loads((history(root) / receipt_name).read_text(encoding="utf-8-sig"))
+    verified = item.get("artifactFileDigests") or {}
+    kept = []
+    for path in stage.rglob("*.svg"):
+        name = path.relative_to(stage).as_posix()
+        if name.startswith("assets/") or path.is_symlink():
+            continue
+        live = dist / name
+        if not live.is_file() or live.is_symlink():
+            continue
+        new, old = path.read_bytes(), live.read_bytes()
+        if new == old or new.replace(b"\r\n", b"\n") != old.replace(b"\r\n", b"\n"):
+            continue
+        sha = hashlib.sha256(old).hexdigest()
+        if verified.get(name) != sha or http_digest("/" + name) != sha:
+            continue
+        path.write_bytes(old)  # only the isolated build, never production
+        kept.append(name)
+    return kept
 
 
 def staged_files(stage, dist):
@@ -323,7 +436,7 @@ def refresh_main_pin(root, pins):
             return pins
         git(root, "merge-base", "--is-ancestor", old, current)
         git(root, "merge-base", "--is-ancestor", pins["approved"], old)
-        if tree(root, current) != tree(root, old) or tree(root, old) != tree(root, pins["approved"]):
+        if tree(root, current) != tree(root, old):
             return pins
     except (OSError, ValueError, subprocess.SubprocessError):
         return pins
@@ -346,6 +459,7 @@ def publish_isolated(root, candidate, *, lock, allow_main_advance=False, **pins)
         # Compile in the isolated candidate before taking the production lock.
         # No production assets are written during staging. Pin the staged bytes.
         subprocess.run([npm, "run", "build"], cwd=candidate / "frontend", check=True, timeout=240)
+        kept_public = preserve_verified_public_svg(root, stage, dist, before["baselineReceipt"])
         files = staged_files(stage, dist)
         with lock(root):
             if allow_main_advance:
@@ -415,7 +529,7 @@ def publish_isolated(root, candidate, *, lock, allow_main_advance=False, **pins)
                               mode="isolated-frontend-hot", frontendOld=pins["old"], frontendNew=expected,
                               expectedFrontendSha256=expected, servedFrontendSha256=expected,
                               artifactSourceHead=pins["candidate_head"], rollbackIndex=str(backup),
-                              artifactFilesVerified=len(files))
+                              artifactFilesVerified=len(files), artifactFileDigests=files, preservedPublicSvg=kept_public)
                 result["baselineReceipt"] = before["baselineReceipt"]
                 result["requestedMainHead"] = requested_main
                 result["receipt"] = record_receipt(root, result)

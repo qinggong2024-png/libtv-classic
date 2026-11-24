@@ -10,7 +10,14 @@ python scripts/classic_release.py deploy --apply --reviewed-api-compatible
 Preview is read-only; apply is an explicit approval of the exact reviewed UI/API
 combination. Optionally pin the reviewed main via `--expected-main-head` and
 active API via `--expected-api-revision`. No manual receipt, queue or candidate
-parameters are required. The command discovers the live baseline, skips an
+parameters are required. When the API has changed, the same entry can recover a
+verified frontend publication through the shared exact reviewed API-only pairs,
+with unchanged config/schema and verified original assets. Preview is read-only;
+apply records compatibility only, without changing routing or frontend bytes.
+Unknown pairs, missing original build evidence or differing files fail closed.
+If main contains another session's pending UI, select its already integrated,
+reviewed ancestor using `--approved-frontend-head <sha40>`; the exact frontend
+tree, not the entire current main tree, is staged. The command discovers the live baseline, skips an
 already-current frontend, prepares a new isolated worktree, installs locked
 npm dependencies, builds and uses existing atomic publication/rollback and
 receipt verification. A frontend success is not full backend activation.
@@ -28,7 +35,7 @@ strict Worker/schema/prompt procedures remain. The durable queue is internal;
 a pending or uncertain existing release must be inspected before new work, and
 only the command's own intent can be claimed. No background service, no fixed
 waiting period. If a command fails, inspect the reported blocker and live state;
-never replay an uncertain activation. This tool does not bypass readiness checks.
+never replay an uncertain activation. Backend releases retain strict readiness checks. For isolated frontend releases only, the exact SQLite write-probe 503 can be non-blocking after the live proxy, source/config/schema identity, and read/lock evidence are verified; other failures remain blocking. The report keeps strict `ok` false and exposes `frontendReady` and warnings separately.
 
 Stop expanding the release platform. Keep the existing detailed commands below
 for diagnostics and exceptional recovery, not everyday operation.

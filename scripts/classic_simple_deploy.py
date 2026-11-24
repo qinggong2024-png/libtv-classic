@@ -46,21 +46,39 @@ def plan_api(root):
                 note="Only the installed, explicitly reviewed API pair may be switched. Existing compatibility gate still runs.")
 
 
-def deploy(root: Path, *, apply=False, api_only=False, reviewed=False, expected_main=None, expected_api=None):
+def deploy(root: Path, *, apply=False, api_only=False, reviewed=False, expected_main=None, expected_api=None, approved=None):
     start = time.monotonic()
     try:
         if release.git(root, "branch", "--show-current") != "main" or not clean(root):
             return blocked("RUN_FROM_CLEAN_CLASSIC_MAIN")
-        plan = plan_api(root) if api_only else release.plan_live_frontend(root)
+        plan = plan_api(root) if api_only else release.plan_live_frontend(root, approved=approved)
         if not plan["ready"]:
             return dict(plan, action="blocked")
         if expected_main and plan.get("mainHead") != expected_main:
             return blocked("MAIN_CHANGED_SINCE_REVIEW")
         if expected_api and expected_api != (plan.get("pins", {}).get("target_revision") if api_only else plan.get("activeApiRevision")):
             return blocked("API_CHANGED_SINCE_REVIEW")
+        if plan.get("receiptRecoveryRequired") and apply:
+            if not reviewed:
+                return blocked("REVIEW_EXACT_DIFF_AND_API_COMPATIBILITY_FIRST", plan=plan)
+            with release.activation_lock(root):
+                state = release.report(root)
+                if ((state.get("activeApi") or {}).get("sourceRevision") != plan["activeApiRevision"]
+                        or (state.get("mainCheckout") or {}).get("gitHead") != plan["mainHead"]
+                        or state.get("frontendIndexSha256") != plan["frontendIndexSha256"]):
+                    return blocked("LIVE_BASELINE_CHANGED_SINCE_PREVIEW")
+                if not release.recover_frontend_receipt(root, state, apply=True):
+                    return blocked("FRONTEND_COMPATIBILITY_REVERIFICATION_FAILED")
+            original = plan
+            plan = release.plan_live_frontend(root, approved=approved)
+            if any(plan.get(k) != original.get(k) for k in ("mainHead", "activeApiRevision", "frontendIndexSha256")):
+                return blocked("LIVE_BASELINE_CHANGED_SINCE_REVIEW")
+            if not plan["ready"] or plan.get("receiptRecoveryRequired"):
+                return dict(plan, ready=False, action="blocked")
         if plan.get("nextAction") == "frontend-already-current" or plan.get("action") == "api-already-current":
             return dict(plan, action="no-change", deployed=False,
-                        backendPending=not plan.get("fullMainApiMatches", False))
+                        backendPending=not plan.get("fullMainApiMatches", False),
+                        receiptRecoveryRequired=plan.get("receiptRecoveryRequired", False))
         if not apply:
             return dict(plan, action="preview", deployed=False)
         if api_only and not expected_api:
@@ -74,7 +92,7 @@ def deploy(root: Path, *, apply=False, api_only=False, reviewed=False, expected_
         if api_only:
             row = manager.enqueue_api(root, plan["pins"])
         else:
-            pins = dict(base=plan["baseline"]["base"], approved=plan["mainHead"], main=plan["mainHead"],
+            pins = dict(base=plan["baseline"]["base"], approved=plan["approvedFrontendHead"], main=plan["mainHead"],
                         api=plan["activeApiRevision"], old=plan["frontendIndexSha256"])
             candidate = root.parent / ("allwe-classic-deploy-" + uuid.uuid4().hex[:12])
             prepared = release.prepare_isolated(root, candidate, **pins)

@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -18,12 +19,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.request import ProxyHandler, build_opener
 
-from classic_active_release_status import report, verify_release
+from classic_active_release_status import frontend_release_ready, report, verify_release
 from classic_v2_canary_preflight import check as check_tasks
 from classic_release_classifier import committed_changes
 from classic_isolated_frontend import (assess_isolated, prepare_isolated, publish_isolated,
                                       record_receipt, receipt_for, http_digest, frontend_scope,
-                                      live_frontend_baseline, tree)
+                                      live_frontend_baseline, recover_frontend_receipt, tree)
 
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE_PAID_UNKNOWN = 15
@@ -270,7 +271,7 @@ def plan_release(root: Path, *, base: str) -> dict:
     }
 
 
-def plan_live_frontend(root: Path) -> dict:
+def plan_live_frontend(root: Path, approved=None) -> dict:
     """Read-only discovery of exact pins for the next reviewed frontend release."""
     state = report(root)
     active = state.get("activeApi") or {}
@@ -282,11 +283,12 @@ def plan_live_frontend(root: Path) -> dict:
         "frontendIndexSha256": state.get("frontendIndexSha256"),
         "fullMainApiMatches": (state.get("mainCheckout") or {}).get("matchesRunning") is True,
         "liveHealthy": state.get("ok") is True,
+        "frontendReady": frontend_release_ready(state), "warnings": state.get("frontendWarnings", []),
         "ready": False, "blockers": [],
         "nextAction": "inspect-live-release-before-retry",
     }
     try:
-        if not state.get("ok") or active.get("diskMatchesRunning") is not True:
+        if not frontend_release_ready(state) or active.get("diskMatchesRunning") is not True:
             result["blockers"].append("LIVE_CLASSIC_UNHEALTHY_OR_API_DISK_DRIFT")
         elif state.get("admissionPaused") is not False:
             result["blockers"].append("ADMISSION_NOT_OPEN")
@@ -298,18 +300,27 @@ def plan_live_frontend(root: Path) -> dict:
         else:
             baseline = live_frontend_baseline(root, state)
             if not baseline:
+                baseline = recover_frontend_receipt(root, state)
+            if not baseline:
                 result["blockers"].append("LIVE_FRONTEND_SOURCE_RECEIPT_REQUIRED")
             else:
                 result["baseline"] = baseline
+                result["receiptRecoveryRequired"] = baseline.get("recoveryRequired", False)
                 base = baseline["base"]
-                if tree(root, base) == tree(root, main):
+                approved = approved or main
+                if not isinstance(approved, str) or not re.fullmatch(r"[0-9a-f]{40}", approved):
+                    raise ValueError("FULL_APPROVED_FRONTEND_HEAD_REQUIRED")
+                git(root, "merge-base", "--is-ancestor", approved, main)
+                git(root, "merge-base", "--is-ancestor", base, approved)
+                result["approvedFrontendHead"] = approved
+                if tree(root, base) == tree(root, approved):
                     result.update(ready=True, nextAction="frontend-already-current")
                 else:
-                    scope = frontend_scope(root, base, main)
+                    scope = frontend_scope(root, base, approved)
                     result["changes"] = scope
                     if scope["frontendHotEligible"]:
                         result.update(ready=True, nextAction="review-api-compatibility-and-prepare-isolated",
-                            prepareArgs=["--change-base", base, "--approved-frontend-head", main,
+                            prepareArgs=["--change-base", base, "--approved-frontend-head", approved,
                                 "--expected-main-head", main, "--expected-api-revision", active["sourceRevision"],
                                 "--expected-old-frontend", state["frontendIndexSha256"]])
                     else:
@@ -343,11 +354,11 @@ def main() -> int:
         from classic_simple_deploy import deploy
         result = deploy(ROOT, apply=args.apply, api_only=args.api_only,
                         reviewed=args.reviewed_api_compatible, expected_main=args.expected_main_head,
-                        expected_api=args.expected_api_revision)
+                        expected_api=args.expected_api_revision, approved=args.approved_frontend_head)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["ready"] else 2
     if args.command == "plan-live-frontend":
-        result = plan_live_frontend(ROOT)
+        result = plan_live_frontend(ROOT, approved=args.approved_frontend_head)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["ready"] else 2
     if args.command == "prepare-isolated":

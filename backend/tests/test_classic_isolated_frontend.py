@@ -219,3 +219,42 @@ def test_main_pin_never_advances_over_new_frontend(release):
     (root / "frontend/src/App.tsx").write_text("unreviewed")
     commit(root, "other UI")
     assert mod.refresh_main_pin(root, pins) == pins
+
+
+def test_main_pin_advances_backend_only_with_explicit_older_approved_frontend(release):
+    root, _, pins = release
+    # The operator deliberately selects an older frontend while another UI
+    # change is already integrated. A backend-only fast-forward is harmless.
+    requested = dict(pins, approved=pins["base"])
+    (root / "backend/api.py").write_text("unrelated backend")
+    head = commit(root, "backend only")
+    assert mod.refresh_main_pin(root, requested) == dict(requested, main=head)
+
+
+def test_public_svg_line_endings_preserve_verified_live_bytes(release, monkeypatch):
+    root, candidate, pins = release
+    prepare_stage(candidate, monkeypatch)
+    stage = candidate / "frontend/dist-build"
+    stage.mkdir(parents=True, exist_ok=True)
+    (stage / "favicon.svg").write_bytes(b"<svg>\r\n</svg>")
+    live = root / "frontend/dist/favicon.svg"
+    live.write_bytes(b"<svg>\n</svg>")
+    mod.record_receipt(root, {"candidateHead": pins["base"], "frontendNew": pins["old"],
+                              "servedFrontendSha256": pins["old"],
+                              "artifactFileDigests": {"favicon.svg": mod.digest(live)}})
+    result = mod.publish_isolated(root, candidate, lock=lambda _: nullcontext(), **pins)
+    assert result["ready"] and result["preservedPublicSvg"] == ["favicon.svg"]
+    assert live.read_bytes() == b"<svg>\n</svg>"
+
+
+def test_public_svg_actual_content_change_is_not_normalized(release, monkeypatch):
+    root, candidate, pins = release
+    prepare_stage(candidate, monkeypatch)
+    stage = candidate / "frontend/dist-build"
+    stage.mkdir(parents=True, exist_ok=True)
+    (stage / "favicon.svg").write_bytes(b"<svg>changed</svg>")
+    live = root / "frontend/dist/favicon.svg"
+    live.write_bytes(b"<svg>original</svg>")
+    with pytest.raises(ValueError, match="PUBLIC_FILE_CHANGE_REQUIRES_REVIEW"):
+        mod.publish_isolated(root, candidate, lock=lambda _: nullcontext(), **pins)
+    assert live.read_bytes() == b"<svg>original</svg>"
