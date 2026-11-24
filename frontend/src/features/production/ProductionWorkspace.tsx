@@ -30,6 +30,7 @@ import { autoCutflowCandidate, autoCutflowWaitDelayed, partialAutoCutflowKey } f
 import { taskTimingStoppedAt } from '../../domain/taskTimingPresentation'
 import { TaskDetailDisclosure } from './TaskDetailDisclosure'
 import './taskDetailLayout.css'
+import './taskTimingRail.css'
 import './taskDetailA.css'
 
 const motionAwareScroll = (): ScrollBehavior => window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
@@ -421,6 +422,7 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
           </aside> : null}
           </div></section>
         </> : null}
+        <TaskTimingTimeline task={task} cutflowStates={cutflowStates} multiCutflows={editingBatches} />
         <TaskDetailDisclosure title="生成参数" hint="参考素材与生成设置 · 提示词">
           {sourceContent}
           {isCompleted ? <section className="task-a-prompts" aria-label="本次提示词与历史方案"><h3>本次提示词与历史方案</h3>
@@ -429,7 +431,7 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
                 </div> : <p className="task-materials__empty">本次任务没有已保存的提示词。</p>}
           </section> : null}
         </TaskDetailDisclosure>
-        <TaskDetailDisclosure title="制作记录" hint="剪辑记录 · 历史版本 · 制作耗时" id="task-cutflow-records">
+        <TaskDetailDisclosure title="制作记录" hint="剪辑记录 · 历史版本" id="task-cutflow-records">
           {!hasOlderVersions && editingBatches.length === 1 ? <section className="task-history-workspace task-history-workspace--compact" aria-label="剪辑记录">
             <h3>剪辑记录（1）</h3>
             <div className="task-history-workspace__compact-content"><TaskCutflowActivity batches={editingBatches} inlineHistory /></div>
@@ -467,8 +469,6 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
             </div>
           </section>}
 
-          <h3>制作过程与耗时</h3>
-          <TaskTimingTimeline task={task} cutflowStates={cutflowStates} multiCutflows={editingBatches} />
           <section className="technical-details" aria-label="任务编号与技术信息"><h3><MoreHorizontal size={17} />任务详情</h3>{taskTechnicalContent}</section>
         </TaskDetailDisclosure>
         {task.phase === 'ANALYZING' ? <details className="task-detail-timing"><summary>查看分析详情 <ChevronRight size={15} /></summary><AnalysisProgress task={task} /></details> : null}

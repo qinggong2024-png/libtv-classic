@@ -87,14 +87,18 @@ describe('task timing at interruption', () => {
 
 
 describe('compact task timing presentation', () => {
-  it('keeps the full history collapsed and retains meaningful short stages', () => {
+  it('shows the real stage rail immediately, with only the breakdown collapsed', () => {
     const markup = renderToStaticMarkup(<TaskTimingTimeline task={task('DELIVERABLE')} />)
     expect(markup).toContain('task-timing--condensed')
-    expect(markup).toContain('task-timing-compact__steps')
-    expect(markup).toContain('查看详细耗时与各阶段记录')
+    expect(markup).toContain('task-timing-stages--rail')
+    expect(markup).toContain('制作阶段与耗时')
+    expect(markup).toContain('耗时明细 · 处理与等待')
+    expect(markup.indexOf('task-timing-stages--rail')).toBeLessThan(markup.indexOf('<details class="task-timing-breakdown">'))
+    expect(markup).not.toContain('task-timing-compact__steps')
     expect(markup).toMatch(/<details class="task-timing-breakdown">/)
     expect(markup).toContain('实际总耗时')
     expect(markup).toContain('处理耗时')
+    expect(markup.match(/id="task-timing-title"/g)).toHaveLength(1)
   })
 })
 
@@ -186,7 +190,7 @@ describe('editing in task progress', () => {
   ] as const)('shows %s from the linked editing handoff', (status, finished, label, cssStatus) => {
     const html = renderToStaticMarkup(<TaskTimingTimeline task={sourceTask()} cutflowStates={{ 'variant-1': { enabled: true, handoffs: [handoff(status, finished)] } }} />)
     expect(html).toContain(`task-timing-stage--cutflow is-${cssStatus}`)
-    expect(html).toContain(`<h3 id="task-timing-title">${label}</h3>`)
+    expect(html).toContain(`<strong id="task-timing-title">${label}</strong>`)
   })
   it('does not use an edit from an older source artifact', () => {
     const old = { ...handoff('EDITING'), sourceArtifactId: 'old-original' }
@@ -201,7 +205,7 @@ describe('editing in task progress', () => {
       'variant-1': { enabled: true, handoffs: [handoff('PENDING_REVIEW', true)] },
       'variant-2': { enabled: true, handoffs: [{ ...handoff('EDITING'), sourceArtifactId: 'original-2' }] },
     }} />)
-    expect(html).toContain('<h3 id="task-timing-title">正在剪辑</h3>')
+    expect(html).toContain('<strong id="task-timing-title">正在剪辑</strong>')
     expect(html).toContain('1/2 个原片已剪辑')
   })
   it('shows one task-level status for a multi-source edit', () => {
@@ -221,7 +225,7 @@ describe('editing in task progress', () => {
       outputs: [{ id: 'merged-1', sha256: 'a'.repeat(64), reviewStatus: 'PENDING', durationSeconds: 9, width: 720, height: 1280, createdAt: STOP, mediaUrl: '/merged.mp4' }],
     } as MultiCutflowTask
     const html = renderToStaticMarkup(<TaskTimingTimeline task={source} multiCutflows={[batch]} />)
-    expect(html).toContain('<h3 id="task-timing-title">合并剪辑完成</h3>')
+    expect(html).toContain('<strong id="task-timing-title">合并剪辑完成</strong>')
     expect(html).toContain('2 条原片合并')
     expect(html).toContain('aria-label="剪辑，成片待审核"')
   })
@@ -258,7 +262,7 @@ describe('editing in task progress', () => {
       outputs: [],
     } as MultiCutflowTask
     const html = renderToStaticMarkup(<TaskTimingTimeline task={source} multiCutflows={[batch]} />)
-    expect(html).toContain('<h3 id="task-timing-title">合并剪辑中</h3>')
+    expect(html).toContain('<strong id="task-timing-title">合并剪辑中</strong>')
     expect(html).toContain('等待 CUT 接单超时，正在核对')
     expect(html).not.toContain('待送剪辑')
   })

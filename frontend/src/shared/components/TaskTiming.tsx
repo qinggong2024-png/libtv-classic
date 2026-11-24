@@ -237,62 +237,21 @@ export function TaskTimingTimeline({ task, cutflowStates = {}, multiCutflows = [
   const confirmationStage = confirmationVisible ? stagesByKey.get('CONFIRMATION') : undefined
   const confirmationSeconds = confirmationStage ? stageElapsedSeconds(confirmationStage, now) ?? 0 : 0
 
-  const generationMiniStatus = stagesByKey.get('GENERATION')?.status
-    ?? (task.variants.some(variant => variant.downloadArtifactId) ? 'COMPLETED' : 'PENDING')
-  const analysisMiniStatus = stagesByKey.get('ANALYSIS')?.status
-    ?? (generationMiniStatus !== 'PENDING' ? 'COMPLETED' : 'PENDING')
-  const miniStages = [
-    { key: 'analysis', label: '分析', status: analysisMiniStatus },
-    { key: 'generation', label: '生成', status: generationMiniStatus },
-    ...(latestMultiCutflow || cutflowVariants.length
-      ? [{ key: 'cutflow', label: '剪辑', status: cutflowStatus }]
-      : []),
-  ]
   const mainStatus = showCutflowHeading ? cutflowLabel
     : currentStage ? providerTimingStageLabel(currentStage.key, task.generationProvider)
       : taskStatus(task).label
-  const miniStatusClass = (status: string) => {
-    if (status === 'COMPLETED') return 'is-complete'
-    if (status === 'ACTIVE') return 'is-current'
-    if (['UNKNOWN', 'INTERRUPTED', 'FAILED', 'CANCELLED'].includes(status)) return 'is-issue'
-    return 'is-pending'
-  }
-
   return <section className="task-timing task-timing--condensed" aria-labelledby="task-timing-title">
     <div className="task-timing-compact">
       <div className="task-timing-compact__status">
-        <span>制作状态</span>
+        <span>制作进度</span>
         <strong id="task-timing-title">{mainStatus}</strong>
         <small>总历时 {totalSeconds !== null ? formatDurationSeconds(totalSeconds) : '未完整记录'}</small>
       </div>
-      <ol className="task-timing-compact__steps" aria-label="制作阶段概览">
-        {miniStages.map(step => <li key={step.key} className={miniStatusClass(step.status)}>
-          <span className="task-timing-compact__mark" aria-hidden="true" />
-          <span>{step.label}</span>
-        </li>)}
-      </ol>
+      {stoppedStage && !activeStage ? <span className="task-timing-compact__warning" role="status">{stoppedLabel}</span> : null}
     </div>
-    <details className="task-timing-breakdown">
-      <summary><span>查看详细耗时与各阶段记录</span><ChevronDown size={15} aria-hidden="true" /></summary>
-      <header className="task-timing-header">
-      <div>
-        <span>{showCutflowHeading ? cutflowStatus === 'ACTIVE' ? '当前阶段' : '剪辑状态' : activeStage ? '当前阶段' : stoppedStage ? '停止阶段' : COMPLETED_PHASES.has(task.phase) ? cutflowStatus === 'PENDING' && cutflowVariants.length ? '视频生成完成' : '任务已完成' : task.phase === 'PARTIALLY_DELIVERABLE' ? '部分结果已就绪' : '执行状态'}</span>
-        <h3 id="task-timing-title">
-          {showCutflowHeading ? cutflowLabel : currentStage ? providerTimingStageLabel(currentStage.key, task.generationProvider) : taskStatus(task).label}
-        </h3>
-        {activeStage ? <p>已进行 {formatDurationSeconds(stageElapsedSeconds(activeStage.stage, now) ?? 0)}</p> : stoppedStage ? <p>{stoppedLabel}</p> : null}
-      </div>
-      <dl className="task-timing-summary" aria-label="任务耗时汇总">
-        <div title="从任务提交到当前阶段或最后成片的真实经过时间；不重复累计并行任务"><dt>实际总耗时</dt><dd>{totalSeconds !== null ? formatDurationSeconds(totalSeconds) : '暂无记录'}</dd></div>
-        <div title="已记录的阶段占用时间（含后台准备过程，以及尚无法拆分的云端或 CUT 内部排队）；对并行阶段去重"><dt>{stoppedStage && !activeStage ? '停止前处理耗时' : '累计处理耗时'}</dt><dd>{processingSeconds > 0 ? formatDurationSeconds(processingSeconds) : '暂无记录'}</dd></div>
-        <div title="各处理阶段之外的等待及衔接间隔，包括本地排队、人工确认；可灵或 CUT 内部排队暂包含在阶段耗时中"><dt>累计等待耗时</dt><dd>{waitingSeconds !== null ? formatDurationSeconds(waitingSeconds) : '待独立记录'}</dd></div>
-
-
-        {confirmationVisible ? <div title="等待确认视频动作方案的累计时长"><dt>等待方案确认</dt><dd>{formatDurationSeconds(confirmationSeconds)}</dd></div> : null}
-      </dl>
-    </header>
     <ol
-      className="task-timing-stages"
+      className="task-timing-stages task-timing-stages--rail"
+      aria-label="制作阶段与耗时"
       style={{ gridTemplateColumns: `repeat(${stages.length + (cutflowVariants.length || latestMultiCutflow ? 1 : 0)}, minmax(0, 1fr))` }}
     >
       {stages.map(({ key, category, stage }, index) => {
@@ -324,6 +283,18 @@ export function TaskTimingTimeline({ task, cutflowStates = {}, multiCutflows = [
         <span className="task-timing-duration">{cutflowLabel}{editingHasTiming ? ` · ${formatCompactDurationSeconds(editingSeconds)}` : ''}</span>
       </li> : null}
     </ol>
+    <details className="task-timing-breakdown">
+      <summary><span>耗时明细 · 处理与等待</span><ChevronDown size={15} aria-hidden="true" /></summary>
+      <div className="task-timing-breakdown__content">
+      <dl className="task-timing-summary" aria-label="任务耗时汇总">
+        <div title="从任务提交到当前阶段或最后成片的真实经过时间；不重复累计并行任务"><dt>实际总耗时</dt><dd>{totalSeconds !== null ? formatDurationSeconds(totalSeconds) : '暂无记录'}</dd></div>
+        <div title="已记录的阶段占用时间（含后台准备过程，以及尚无法拆分的云端或 CUT 内部排队）；对并行阶段去重"><dt>{stoppedStage && !activeStage ? '停止前处理耗时' : '累计处理耗时'}</dt><dd>{processingSeconds > 0 ? formatDurationSeconds(processingSeconds) : '暂无记录'}</dd></div>
+        <div title="各处理阶段之外的等待及衔接间隔，包括本地排队、人工确认；可灵或 CUT 内部排队暂包含在阶段耗时中"><dt>累计等待耗时</dt><dd>{waitingSeconds !== null ? formatDurationSeconds(waitingSeconds) : '待独立记录'}</dd></div>
+
+
+        {confirmationVisible ? <div title="等待确认视频动作方案的累计时长"><dt>等待方案确认</dt><dd>{formatDurationSeconds(confirmationSeconds)}</dd></div> : null}
+      </dl>
+      </div>
     </details>
   </section>
 }

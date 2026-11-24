@@ -1,0 +1,179 @@
+/* Task progress is part of the task itself; only the time breakdown is collapsible. */
+.task-timing--condensed {
+  overflow: hidden;
+  margin: 14px 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+.task-timing--condensed .task-timing-compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 15px 18px 12px;
+}
+.task-timing--condensed .task-timing-compact__status {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: 5px 12px;
+}
+.task-timing--condensed .task-timing-compact__status > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+.task-timing--condensed .task-timing-compact__status > strong {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+.task-timing--condensed .task-timing-compact__status > small {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.task-timing--condensed .task-timing-compact__warning {
+  max-width: 100%;
+  padding: 5px 10px;
+  border-radius: 7px;
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 12px;
+  font-weight: 650;
+}
+.task-timing--condensed .task-timing-stages--rail {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0 18px 16px;
+}
+.task-timing--condensed .task-timing-stages--rail .task-timing-stage {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  justify-items: stretch;
+  align-content: start;
+  gap: 2px 7px;
+  min-width: 0;
+  padding: 10px 2px 0;
+  border-top: 4px solid var(--line);
+  border-radius: 2px 2px 0 0;
+  text-align: left;
+}
+.task-timing--condensed .task-timing-stages--rail .task-timing-stage::after { content: none; }
+.task-timing--condensed .task-timing-stages--rail .task-timing-stage.is-completed { border-top-color: var(--success); }
+.task-timing--condensed .task-timing-stages--rail .task-timing-stage.is-active { border-top-color: var(--primary); }
+.task-timing--condensed .task-timing-stages--rail .task-timing-stage.is-unknown,
+.task-timing--condensed .task-timing-stages--rail .task-timing-stage.is-interrupted { border-top-color: var(--warning); }
+.task-timing--condensed .task-timing-stages--rail .task-timing-stage.is-failed { border-top-color: var(--danger); }
+.task-timing--condensed .task-timing-stages--rail .task-timing-stage.is-cancelled { border-top-color: var(--muted); }
+.task-timing--condensed .task-timing-stages--rail .task-timing-marker {
+  grid-row: 1 / 3;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  box-shadow: none;
+  font-size: 11px;
+}
+.task-timing--condensed .task-timing-stages--rail .task-timing-copy {
+  display: grid;
+  justify-items: start;
+  gap: 2px;
+  min-width: 0;
+}
+.task-timing--condensed .task-timing-stages--rail .task-timing-copy strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.task-timing--condensed .task-timing-stages--rail .task-timing-copy small {
+  max-width: 100%;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.task-timing--condensed .task-timing-stages--rail .task-timing-duration {
+  grid-column: 2;
+  max-width: 100%;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.task-timing--condensed .task-timing-stages--rail .task-timing-stage.is-active .task-timing-duration { color: var(--primary); }
+.task-timing--condensed .task-timing-stages--rail .task-timing-stage.is-failed .task-timing-duration { color: var(--danger); }
+.task-timing--condensed .task-timing-stages--rail .task-timing-stage.is-unknown .task-timing-duration,
+.task-timing--condensed .task-timing-stages--rail .task-timing-stage.is-interrupted .task-timing-duration { color: var(--warning); }
+.task-timing--condensed .task-timing-breakdown { border-top: 1px solid var(--line); }
+.task-timing--condensed .task-timing-breakdown > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  padding: 10px 18px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+.task-timing--condensed .task-timing-breakdown > summary:hover {
+  color: var(--text);
+  background: var(--surface-soft);
+}
+.task-timing--condensed .task-timing-breakdown > summary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -3px;
+}
+.task-timing--condensed .task-timing-breakdown > summary::-webkit-details-marker { display: none; }
+.task-timing--condensed .task-timing-breakdown > summary svg {
+  color: var(--muted);
+  transition: transform .15s ease;
+}
+.task-timing--condensed .task-timing-breakdown[open] > summary svg { transform: rotate(180deg); }
+.task-timing--condensed .task-timing-breakdown__content {
+  padding: 13px 18px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-soft);
+}
+.task-timing--condensed .task-timing-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+.task-timing--condensed .task-timing-summary > div {
+  min-width: 0;
+  padding: 0 0 0 14px;
+  border-left: 2px solid var(--line);
+}
+.task-timing--condensed .task-timing-summary dt { color: var(--muted); font-size: 11px; }
+.task-timing--condensed .task-timing-summary dd {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  white-space: normal;
+}
+@media (max-width: 920px) {
+  .task-timing--condensed .task-timing-stages--rail { gap: 7px; padding-inline: 12px; }
+  .task-timing--condensed .task-timing-stages--rail .task-timing-stage { grid-template-columns: minmax(0, 1fr); }
+  .task-timing--condensed .task-timing-stages--rail .task-timing-marker { display: none; }
+  .task-timing--condensed .task-timing-stages--rail .task-timing-duration { grid-column: 1; }
+  .task-timing--condensed .task-timing-label-full { display: none; }
+  .task-timing--condensed .task-timing-label-short { display: inline; }
+}

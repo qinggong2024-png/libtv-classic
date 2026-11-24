@@ -159,24 +159,28 @@ describe('经典版自适应任务详情', () => {
     expect(singleHtml).toContain('task-direct-cut-button')
   })
 
-  it('参数与制作记录默认独立收起，并保留素材、原始提示词、耗时和任务信息', () => {
+  it('进度默认可见，参数与制作记录独立收起，并保留素材和历史信息', () => {
     const example = { ...task, variants: [{ ...variant, promptText: 'Keep garment print exact.' }] } as Task
     const html = renderDetail(example, true)
-    const section = html.slice(html.indexOf('<details class="task-a-disclosure"'))
+    const disclosureStart = html.indexOf('<details class="task-a-disclosure"')
+    const progressStart = html.indexOf('class="task-timing task-timing--condensed"')
+    expect(progressStart).toBeGreaterThanOrEqual(0)
+    expect(progressStart).toBeLessThan(disclosureStart)
+    expect(html).toContain('耗时明细 · 处理与等待')
+    const section = html.slice(disclosureStart)
     expect(section).toContain('<strong>生成参数</strong>')
     expect(section).toContain('<strong>制作记录</strong>')
     expect(section.match(/<details class="task-a-disclosure"/g)).toHaveLength(2)
     expect(section).not.toContain('<details class="task-a-disclosure" open=')
     expect(section).toContain('参考素材与生成设置')
     expect(section).toContain('本次提示词与历史方案')
-    expect(section).toContain('制作过程与耗时')
     expect(section).toContain('任务编号与技术信息')
     expect(section).toContain('Keep garment print exact.')
     expect(section).toContain('任务编号')
     expect(section).not.toContain('task-technical-group')
     expect(section).not.toContain('task-detail-source')
     expect(section.indexOf('参考素材与生成设置')).toBeLessThan(section.indexOf('本次提示词与历史方案'))
-    expect(section.indexOf('本次提示词与历史方案')).toBeLessThan(section.indexOf('制作过程与耗时'))
+    expect(section.indexOf('本次提示词与历史方案')).toBeLessThan(section.indexOf('<strong>制作记录</strong>'))
   })
 
   it('自动送剪设置不代表剪辑端已经有接单回执', () => {
