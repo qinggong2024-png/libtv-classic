@@ -56,8 +56,11 @@ from libtv_agent.services.analysis_lifecycle import (
     StaleAnalysisRunError,
     claim_analysis_run,
     fail_active_analysis,
+    requeue_unstarted_durable_analysis,
 )
+from libtv_agent.services.classic_durable_config import require_acceptance
 from libtv_agent.services.confirmation import confirm_task
+from libtv_agent.services.durable_confirmation import enqueue_confirmation
 from libtv_agent.services.feedback_learning import (
     feedback_context_for_task,
     queue_feedback_learning_job,
@@ -120,6 +123,10 @@ async def _persist_analysis_failure(
 ) -> None:
     async def persist() -> None:
         async with app.state.database.session_factory() as recovery_session:
+            if reason_code == "ANALYSIS_CANCELLED" and await requeue_unstarted_durable_analysis(
+                recovery_session, task_id, analysis_run_id
+            ):
+                return
             await fail_active_analysis(
                 recovery_session,
                 task_id,
@@ -1014,12 +1021,15 @@ async def post_analyze(
         session, actor.id, f"ANALYZE_TASK:{task_id}", idempotency_key, payload_json
     ):
         return cached
+    require_acceptance(_settings(request), "analysis")
     try:
         analysis_run_id = await claim_analysis_run(
             session,
             task_id,
             actor.id,
             payload.expected_state_version,
+            durable=_settings(request).classic_durable_analysis_enabled,
+            commit=not _settings(request).classic_durable_analysis_enabled,
         )
     except VersionConflictError as exc:
         current = await get_task(session, actor.id, task_id)
@@ -1043,9 +1053,12 @@ async def post_analyze(
         response_body=result.model_dump(mode="json", by_alias=True),
     )
     await session.commit()
-    job = asyncio.create_task(_run_analysis_job(request.app, task_id, actor.id, analysis_run_id))
-    request.app.state.analysis_jobs.add(job)
-    job.add_done_callback(request.app.state.analysis_jobs.discard)
+    if not _settings(request).classic_durable_analysis_enabled:
+        job = asyncio.create_task(
+            _run_analysis_job(request.app, task_id, actor.id, analysis_run_id)
+        )
+        request.app.state.analysis_jobs.add(job)
+        job.add_done_callback(request.app.state.analysis_jobs.discard)
     return result
 
 
@@ -1075,6 +1088,31 @@ async def post_confirm(
             },
         )
     settings = _settings(request)
+    require_acceptance(settings, "confirmation")
+    if (
+        settings.classic_durable_confirmation_enabled
+        and task.phase == ParentTaskPhase.AWAITING_CONFIRMATION
+    ):
+        try:
+            await enqueue_confirmation(session, task, actor_id, payload)
+            result = await _read(session, task, settings)
+            await store_idempotent_response(
+                session,
+                tenant_id=str(actor_id),
+                operation_type=f"CONFIRM_TASK:{task_id}",
+                key=idempotency_key,
+                payload=payload_json,
+                response_status=200,
+                response_body=result.model_dump(mode="json", by_alias=True),
+            )
+            await session.commit()
+            return result
+        except ValueError as exc:
+            await session.rollback()
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={"code": "CONSISTENCY_REVIEW_REQUIRED", "message": str(exc)},
+            ) from exc
     background_confirmation = (
         settings.libtv_adapter_mode == "real"
         and task.phase == ParentTaskPhase.AWAITING_CONFIRMATION

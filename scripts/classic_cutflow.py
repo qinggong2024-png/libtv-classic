@@ -111,8 +111,8 @@ def main() -> None:
     )
     os.environ.clear()
     os.environ.update(environment)
-    sys.path.insert(0, str(root / "backend" / "src"))
     if args.action == "migrate":
+        sys.path.insert(0, str(root / "backend" / "src"))
         from alembic import command
         from alembic.config import Config
 
@@ -120,9 +120,17 @@ def main() -> None:
     else:
         if not configured:
             raise SystemExit("Classic CUT is not configured.")
+        from classic_worker_lease import exclusive_classic_worker
+        from classic_worker_source import worker_source
+
+        release, revision = worker_source("cutflow", storage / "runtime", root)
+        sys.path.insert(0, str(release / "backend" / "src"))
+        from libtv_agent.runner.classic_checkpoint import CheckpointStop
         from libtv_agent.runner.cutflow_worker import run
 
-        asyncio.run(run(once=False))
+        with exclusive_classic_worker("cutflow", storage / "runtime"):
+            stopping = CheckpointStop(storage / "runtime", "cutflow", revision)
+            asyncio.run(run(once=False, stopping=stopping))
 
 
 if __name__ == "__main__":

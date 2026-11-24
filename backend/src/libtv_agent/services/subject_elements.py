@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from libtv_agent.domain.models import SubjectElementJob
+from libtv_agent.services.classic_process_lock import job_lock
 from libtv_agent.services.kling_elements import KlingElementError, create_element
 from libtv_agent.services.tasks import get_task
 from sqlalchemy import and_, or_, select
@@ -70,6 +71,7 @@ async def _record_subject_element_failure(
     *,
     job_id: uuid.UUID,
     cause: Exception,
+    dispatch_started: bool = False,
 ) -> bool:
     async with app.state.database.session_factory() as session:
         job = await session.get(SubjectElementJob, job_id)
@@ -83,6 +85,14 @@ async def _record_subject_element_failure(
         transient = not isinstance(cause, (ValueError, TypeError))
         if isinstance(cause, KlingElementError):
             transient = cause.status_code in {408, 429, 500, 502, 503, 504}
+        settings = getattr(app.state, "settings", None)
+        guarded = getattr(settings, "classic_api_route_file", None) is not None
+        # A transport failure after dispatch does not prove rejection. Keep the
+        # original external ID and require receipt reconciliation before retry.
+        if guarded and dispatch_started and transient:
+            job.last_error_code = "SUBJECT_ELEMENT_RESULT_UNKNOWN"
+            job.last_error_message = "Provider response uncertain; reconcile original external ID"
+            transient = False
         retryable = transient and job.attempt_count < SUBJECT_ELEMENT_MAX_ATTEMPTS
         job.next_attempt_at = (
             datetime.now(UTC) + timedelta(seconds=_retry_delay(job.attempt_count))
@@ -110,6 +120,14 @@ async def _run_subject_element_attempt(
         )
         if job is None or job.status in {"SUBMITTED", "SUCCEEDED"}:
             return None, False
+        if job.status == "PROCESSING" and app.state.settings.classic_api_route_file is not None:
+            # The previous owner is gone, but the provider might have received its request.
+            job.status = "FAILED"
+            job.last_error_code = "SUBJECT_ELEMENT_RESULT_UNKNOWN"
+            job.last_error_message = "Interrupted provider request requires receipt reconciliation"
+            job.next_attempt_at = None
+            await session.commit()
+            return job.id, False
         if job.status == "FAILED" and job.next_attempt_at is None:
             return job.id, False
         if job.attempt_count >= SUBJECT_ELEMENT_MAX_ATTEMPTS:
@@ -122,6 +140,7 @@ async def _run_subject_element_attempt(
         job_id = job.id
         await session.commit()
 
+    dispatch_started = False
     try:
         if not callable(getattr(app.state.kling_adapter, "create_element", None)):
             raise KlingElementError(
@@ -157,6 +176,7 @@ async def _run_subject_element_attempt(
                 for index, object_key in enumerate(object_keys, start=1)
             )
         )
+        dispatch_started = True
         result = await create_element(
             app.state.kling_adapter,
             {
@@ -194,12 +214,20 @@ async def _run_subject_element_attempt(
         async with app.state.database.session_factory() as session:
             job = await session.get(SubjectElementJob, job_id)
             if job is not None and job.status == "PROCESSING":
-                job.status = "PENDING"
-                job.next_attempt_at = datetime.now(UTC)
+                if app.state.settings.classic_api_route_file is not None:
+                    job.status = "FAILED"
+                    job.last_error_code = "SUBJECT_ELEMENT_RESULT_UNKNOWN"
+                    job.last_error_message = "Interrupted provider request requires reconciliation"
+                    job.next_attempt_at = None
+                else:
+                    job.status = "PENDING"
+                    job.next_attempt_at = datetime.now(UTC)
                 await session.commit()
         raise
     except Exception as exc:
-        retryable = await _record_subject_element_failure(app, job_id=job_id, cause=exc)
+        retryable = await _record_subject_element_failure(
+            app, job_id=job_id, cause=exc, dispatch_started=dispatch_started
+        )
         logger.exception(
             "automatic subject element creation failed",
             extra={"task_id": str(task_id), "retryable": retryable},
@@ -259,9 +287,11 @@ def schedule_subject_element_job(
     if key in app.state.subject_element_job_keys:
         return False
     app.state.subject_element_job_keys.add(key)
-    task = asyncio.create_task(
-        create_subject_element_for_task(app, task_id=task_id, user_id=user_id)
-    )
+    async def run_owned():
+        async with job_lock(app.state.settings, "subject", key):
+            await create_subject_element_for_task(app, task_id=task_id, user_id=user_id)
+
+    task = asyncio.create_task(run_owned())
     app.state.subject_element_jobs.add(task)
 
     def finished(completed: asyncio.Task[None]) -> None:
@@ -291,7 +321,11 @@ async def recover_subject_element_jobs(app: Any) -> int:
             )
         )
         for job in jobs:
-            if job.status == "PROCESSING":
+            settings = getattr(app.state, "settings", None)
+            if (
+                job.status == "PROCESSING"
+                and getattr(settings, "classic_api_route_file", None) is None
+            ):
                 job.status = "PENDING"
         await session.commit()
     return sum(

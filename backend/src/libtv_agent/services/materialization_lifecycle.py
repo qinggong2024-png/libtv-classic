@@ -21,6 +21,13 @@ async def recover_stale_materializations(
         .where(
             ParentTask.phase == ParentTaskPhase.PREPARING,
             ParentTask.updated_at < stale_before,
+            # Only the dedicated Runner may resolve durable confirmation claims.
+            (
+                ParentTask.phase_reason_code.is_(None)
+                | ~ParentTask.phase_reason_code.in_(
+                    ("DURABLE_CONFIRM_QUEUED", "DURABLE_CONFIRM_RUNNING")
+                )
+            ),
         )
         .values(
             phase=ParentTaskPhase.ACTION_REQUIRED,

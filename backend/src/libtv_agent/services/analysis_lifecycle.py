@@ -9,6 +9,8 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 ANALYSIS_STAGE_QUEUED = "QUEUED"
+DURABLE_ANALYSIS_QUEUED = "DURABLE_QUEUED"
+DURABLE_ANALYSIS_CLAIMED = "DURABLE_CLAIMED"
 ANALYSIS_STAGE_PREPARING_IMAGES = "PREPARING_IMAGES"
 ANALYSIS_STAGE_PROVIDER_RUNNING = "PROVIDER_RUNNING"
 ANALYSIS_STAGE_VALIDATING = "VALIDATING"
@@ -43,6 +45,9 @@ async def claim_analysis_run(
     task_id: uuid.UUID,
     user_id: uuid.UUID,
     expected_state_version: int,
+    *,
+    durable: bool = False,
+    commit: bool = True,
 ) -> uuid.UUID:
     snapshot = await session.scalar(
         select(ParentTask).where(ParentTask.id == task_id, ParentTask.user_id == user_id)
@@ -75,7 +80,7 @@ async def claim_analysis_run(
             analysis_result_hash=None,
             consistency_level=None,
             analysis_run_id=run_id,
-            analysis_stage=ANALYSIS_STAGE_QUEUED,
+            analysis_stage=DURABLE_ANALYSIS_QUEUED if durable else ANALYSIS_STAGE_QUEUED,
             analysis_started_at=now,
             analysis_heartbeat_at=now,
             analysis_attempt_count=ParentTask.analysis_attempt_count + 1,
@@ -99,7 +104,8 @@ async def claim_analysis_run(
             evidence_refs_json=[f"analysisRun:{run_id}"],
         )
     )
-    await session.commit()
+    if commit:
+        await session.commit()
     return run_id
 
 
@@ -128,6 +134,34 @@ async def touch_analysis_run(
         await session.rollback()
         raise StaleAnalysisRunError(f"analysis run {analysis_run_id} is no longer current")
     await session.commit()
+
+
+async def requeue_unstarted_durable_analysis(
+    session: AsyncSession, task_id: uuid.UUID, run_id: uuid.UUID
+) -> bool:
+    """Graceful shutdown may release a claim only before analysis entry."""
+    now = datetime.now(UTC)
+    requeued = await session.scalar(
+        update(ParentTask)
+        .where(
+            ParentTask.id == task_id,
+            ParentTask.phase == ParentTaskPhase.ANALYZING,
+            ParentTask.analysis_run_id == run_id,
+            ParentTask.analysis_stage == DURABLE_ANALYSIS_CLAIMED,
+        )
+        .values(
+            analysis_stage=DURABLE_ANALYSIS_QUEUED,
+            analysis_run_id=uuid.uuid4(),
+            analysis_heartbeat_at=now,
+            updated_at=now,
+        )
+        .returning(ParentTask.id)
+    )
+    if requeued is None:
+        await session.rollback()
+        return False
+    await session.commit()
+    return True
 
 
 async def fail_active_analysis(
@@ -187,10 +221,16 @@ async def recover_stale_analyses(
 ) -> list[uuid.UUID]:
     recovered_at = now or datetime.now(UTC)
     stale_before = recovered_at - timedelta(seconds=settings.analysis_stale_after_seconds)
+    # Durable queued/claimed work is recovered by the worker, not by API sweeps.
+    durable_filter = or_(
+        ParentTask.analysis_stage.is_(None),
+        ~ParentTask.analysis_stage.in_((DURABLE_ANALYSIS_QUEUED, DURABLE_ANALYSIS_CLAIMED)),
+    )
     candidates = list(
         await session.execute(
             select(ParentTask.id, ParentTask.analysis_run_id).where(
                 ParentTask.phase == ParentTaskPhase.ANALYZING,
+                durable_filter,
                 or_(
                     ParentTask.workflow_kind != "FIXED_TEMPLATE",
                     ParentTask.analysis_stage.is_(None),
@@ -206,6 +246,7 @@ async def recover_stale_analyses(
         statement = update(ParentTask).where(
             ParentTask.id == task_id,
             ParentTask.phase == ParentTaskPhase.ANALYZING,
+            durable_filter,
             or_(
                 ParentTask.workflow_kind != "FIXED_TEMPLATE",
                 ParentTask.analysis_stage.is_(None),

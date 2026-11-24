@@ -34,6 +34,16 @@ from libtv_agent.services.confirmation_recovery import (
     recover_stale_confirmation_claims,
 )
 from libtv_agent.services.credentials import load_admin_credentials
+from libtv_agent.services.durable_analysis import (
+    recovery_loop as manual_analysis_recovery_loop,
+)
+from libtv_agent.services.durable_analysis import (
+    worker_loop as manual_analysis_worker_loop,
+)
+from libtv_agent.services.durable_confirmation import (
+    confirmation_worker_loop,
+    reconcile_abandoned_confirmations,
+)
 from libtv_agent.services.idempotency import release_stale_idempotency_claims
 from libtv_agent.services.kling_config import (
     kling_admin_config_signature,
@@ -166,6 +176,23 @@ async def run_service_loop(stopping: Event, project_root: Path) -> None:
     os.chdir(project_root)
     settings = Settings()
     settings.validate_shared_environment()
+    from libtv_agent.runner.classic_checkpoint import CheckpointStop
+    from libtv_agent.services.classic_durable_config import matches_loaded, read_config
+
+    durable_config = None
+    if settings.classic_durable_config_file is not None:
+        durable_config = read_config(settings.classic_durable_config_file)
+        if not matches_loaded(settings, durable_config):
+            raise RuntimeError("Runner durable configuration changed before startup")
+        if durable_config["analysis"] or durable_config["confirmation"]:
+            if (
+                not isinstance(stopping, CheckpointStop)
+                or os.environ.get("CLASSIC_DURABLE_RUNNER_SINGLETON") != "1"
+                or stopping.identity["sourceRevision"] != durable_config["runnerSourceRevision"]
+                or settings.deployment_source_revision != durable_config["runnerSourceRevision"]
+            ):
+                raise RuntimeError("Runner source or singleton proof does not match configuration")
+
     _refresh_ai_credentials(settings)
     admin_credentials_signature = _admin_credentials_signature(settings.admin_credentials_file)
     provider_config_signatures = _load_video_provider_admin_configs(settings)
@@ -225,6 +252,36 @@ async def run_service_loop(stopping: Event, project_root: Path) -> None:
             if not processed:
                 await asyncio.sleep(max(1.0, settings.runner_poll_seconds))
 
+    durable_analysis_tasks = []
+    if settings.classic_durable_analysis_enabled:
+        durable_analysis_tasks = [
+            asyncio.create_task(
+                manual_analysis_worker_loop(
+                    database, settings, object_store, kling_adapter, stopping
+                ),
+                name=f"manual-analysis-{number}",
+            )
+            for number in range(settings.classic_durable_analysis_concurrency)
+        ]
+        durable_analysis_tasks.append(
+            asyncio.create_task(
+                manual_analysis_recovery_loop(database, settings, stopping),
+                name="manual-analysis-recovery",
+            )
+        )
+    if settings.classic_durable_confirmation_enabled:
+        # Production entry is classic_runner.py, which holds the OS lifetime lock.
+        # Explicitly require that launcher proof before reconciling orphaned jobs.
+        if os.environ.get("CLASSIC_DURABLE_RUNNER_SINGLETON") == "1":
+            await reconcile_abandoned_confirmations(database)
+        durable_analysis_tasks.append(
+            asyncio.create_task(
+                confirmation_worker_loop(
+                    database, settings, adapter, object_store, lambda: kling_adapter, stopping
+                ),
+                name="durable-confirmation",
+            )
+        )
     delivery_tasks = [
         asyncio.create_task(delivery_worker(number), name=f"classic-delivery-{number}")
         for number in (
@@ -233,6 +290,15 @@ async def run_service_loop(stopping: Event, project_root: Path) -> None:
             else ()
         )
     ]
+    readiness_task = None
+    if durable_config and (durable_config["analysis"] or durable_config["confirmation"]):
+        from libtv_agent.runner.classic_durable_readiness import publish_readiness
+
+        readiness_task = asyncio.create_task(
+            publish_readiness(database, settings, stopping, durable_analysis_tasks),
+            name="durable-readiness",
+        )
+    clean_stop = False
     try:
         while not stopping.is_set():
             try:
@@ -327,6 +393,12 @@ async def run_service_loop(stopping: Event, project_root: Path) -> None:
                             limit=global_limit,
                         )
                         backlog_count = await operational_backlog_count(session)
+                        # Commit any auto-confirm writes and queue-snapshot read
+                        # transaction before running the potentially slow
+                        # provider/remote observation cycle. A still-open
+                        # SQLite transaction can block both API and CUT writes.
+                        # This is a transaction boundary, NOT a provider retry.
+                        await session.commit()
                         await supervisor.run_ready(session)
                         pending_video_ids = await pending_automatic_video_ids(
                             session, limit=settings.classic_auto_plan_concurrency
@@ -411,6 +483,8 @@ async def run_service_loop(stopping: Event, project_root: Path) -> None:
                     await session.commit()
                 # Never hold the runner's database transaction during a remote AI call.
                 for video_id in pending_video_ids:
+                    if stopping.is_set():
+                        break
                     if (
                         video_id in active_video_preparations
                         or len(active_video_preparations) >= settings.classic_auto_plan_concurrency
@@ -430,25 +504,47 @@ async def run_service_loop(stopping: Event, project_root: Path) -> None:
             except Exception:
                 logger.exception("runner service cycle failed")
             await asyncio.to_thread(stopping.wait, settings.runner_poll_seconds)
+        clean_stop = True
     finally:
-        if active_video_preparations:
-            # Join workers before requeueing their CAS-protected pre-paid leases.
-            stopping_workers = list(active_video_preparations.items())
-            for pending_worker, _ in (entry for _, entry in stopping_workers):
-                pending_worker.cancel()
-            await asyncio.gather(
-                *(entry[0] for _, entry in stopping_workers), return_exceptions=True,
+        if readiness_task is not None:
+            readiness_task.cancel()
+            await asyncio.gather(readiness_task, return_exceptions=True)
+        if isinstance(stopping, CheckpointStop) and clean_stop and stopping.is_set():
+            stopping.publish("DRAINING")
+            # No cancellation of in-flight paid preparation or file writes.
+            # Idle polling sleeps may delay exit; a stuck operation blocks the
+            # upgrade rather than causing an ambiguous replay.
+            jobs = [entry[0] for entry in active_video_preparations.values()]
+            results = await asyncio.gather(
+                *jobs, *durable_analysis_tasks, *delivery_tasks, return_exceptions=True
             )
-            try:
-                async with database.session_factory() as session:
-                    for video_id, (_, run_id) in stopping_workers:
-                        await release_stopped_automatic_plan(
-                            session, task_id=video_id, run_id=run_id,
-                        )
-            except Exception:
-                # The next runner will recover expired leases via durable state.
-                logger.exception("could not release cancelled Sol planning leases")
-        for worker in delivery_tasks:
-            worker.cancel()
-        await asyncio.gather(*delivery_tasks, return_exceptions=True)
-        await database.dispose()
+            await database.dispose()
+            if any(isinstance(result, BaseException) for result in results):
+                stopping.publish("DRAIN_FAILED")
+                raise RuntimeError("worker checkpoint contains an unhandled operation failure")
+            stopping.publish("DRAINED")
+        else:
+            if active_video_preparations:
+                # Join workers before requeueing their CAS-protected pre-paid leases.
+                stopping_workers = list(active_video_preparations.items())
+                for pending_worker, _ in (entry for _, entry in stopping_workers):
+                    pending_worker.cancel()
+                await asyncio.gather(
+                    *(entry[0] for _, entry in stopping_workers), return_exceptions=True,
+                )
+                try:
+                    async with database.session_factory() as session:
+                        for video_id, (_, run_id) in stopping_workers:
+                            await release_stopped_automatic_plan(
+                                session, task_id=video_id, run_id=run_id,
+                            )
+                except Exception:
+                    # The next runner will recover expired leases via durable state.
+                    logger.exception("could not release cancelled Sol planning leases")
+            for worker in durable_analysis_tasks:
+                worker.cancel()
+            await asyncio.gather(*durable_analysis_tasks, return_exceptions=True)
+            for worker in delivery_tasks:
+                worker.cancel()
+            await asyncio.gather(*delivery_tasks, return_exceptions=True)
+            await database.dispose()

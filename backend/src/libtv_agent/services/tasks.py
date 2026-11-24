@@ -688,7 +688,11 @@ def _build_task_timing(
         if (normalized := _timestamp(attempt.completed_at)) is not None
     ]
     ready_artifacts = [artifact for artifact in artifacts if artifact.status.value == "READY"]
-    analysis_finished = task.analysis_heartbeat_at if task.analysis_stage != "QUEUED" else None
+    analysis_finished = (
+        task.analysis_heartbeat_at
+        if task.analysis_stage not in ("QUEUED", "DURABLE_QUEUED", "DURABLE_CLAIMED")
+        else None
+    )
     analysis_duration = task.analysis_duration_seconds
     if analysis_duration <= 0 and task.phase != ParentTaskPhase.ANALYZING:
         analysis_duration = _duration(task.analysis_started_at, analysis_finished) or 0

@@ -29,6 +29,8 @@ from libtv_agent.services.bach_config import (
     bach_admin_config_signature,
     load_bach_admin_config,
 )
+from libtv_agent.services.classic_api_active_role import api_owns_background_recovery
+from libtv_agent.services.classic_process_lock import try_lock
 from libtv_agent.services.confirmation_recovery import (
     recover_stale_batch_confirmation_claims,
     recover_stale_confirmation_claims,
@@ -101,10 +103,67 @@ async def _recover_stale_confirmation_claims(app: FastAPI) -> None:
         logger.exception("stale confirmation recovery failed")
 
 
+class ClassicRequestDrainMiddleware:
+    """Count ASGI requests until the application returns, even after disconnect."""
+    def __init__(self, app, *, state):
+        self.app = app
+        self.state = state
+
+    async def __call__(self, scope, receive, send):
+        tracked = (
+            scope["type"] == "http"
+            and scope.get("path") != "/api/v1/system/classic-api-drain"
+        )
+        if tracked:
+            self.state.classic_http_in_flight += 1
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            if tracked:
+                self.state.classic_http_in_flight -= 1
+
+
+async def _owned_recovery(app: FastAPI, operation) -> int | None:
+    settings = app.state.settings
+    if not api_owns_background_recovery(settings):
+        return None
+    try:
+        with try_lock(settings, "recovery") as acquired:
+            if not acquired or not api_owns_background_recovery(settings):
+                return None
+            app.state.classic_recovery_in_flight += 1
+            try:
+                return await operation(app)
+            finally:
+                app.state.classic_recovery_in_flight -= 1
+    except OSError:
+        logger.exception("classic recovery lock unavailable; recovery deferred")
+        return None
+
+
+async def _recover_local_jobs(app: FastAPI) -> None:
+    await _recover_stale_analyses(app)
+    # A standby that becomes active after startup must also discover durable jobs.
+    # Existing in-process key sets and cross-process job locks serialize execution.
+    if app.state.settings.classic_api_route_file is not None:
+        await _recover_optional_jobs(app)
+
+
+async def _recover_optional_jobs(app: FastAPI) -> None:
+    for operation in (recover_subject_element_jobs, recover_feedback_learning_jobs):
+        try:
+            await operation(app)
+        except Exception:
+            logger.exception("optional background recovery failed: %s", operation.__name__)
+
+
 async def _analysis_recovery_loop(app: FastAPI) -> None:
     while True:
         await asyncio.sleep(app.state.settings.analysis_recovery_poll_seconds)
-        await _recover_stale_analyses(app)
+        try:
+            await _owned_recovery(app, _recover_local_jobs)
+        except Exception:
+            logger.exception("classic recovery cycle failed")
 
 
 async def _refresh_active_image_generation_batches(app: FastAPI) -> int:
@@ -127,7 +186,7 @@ async def _refresh_active_image_generation_batches(app: FastAPI) -> int:
 async def _image_generation_recovery_loop(app: FastAPI) -> None:
     while True:
         await asyncio.sleep(app.state.settings.wavespeed_video_poll_interval_seconds)
-        await _refresh_active_image_generation_batches(app)
+        await _owned_recovery(app, _refresh_active_image_generation_batches)
 
 
 async def _shutdown_analysis_jobs(app: FastAPI) -> None:
@@ -248,28 +307,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.database = Database(app_settings.database_url)
-        await _recover_stale_analyses(app)
-        await _recover_stale_materialization_tasks(app)
-        await _recover_stale_confirmation_claims(app)
+        async def recover_startup(application):
+            await _recover_local_jobs(application)
+            await _recover_stale_materialization_tasks(application)
+            await _recover_stale_confirmation_claims(application)
+            if app_settings.classic_api_route_file is None:
+                await _recover_optional_jobs(application)
+
         try:
-            recovered_subject_jobs = await recover_subject_element_jobs(app)
-            if recovered_subject_jobs:
-                logger.warning(
-                    "recovered reusable Kling subject jobs",
-                    extra={"recovered_subject_jobs": recovered_subject_jobs},
-                )
+            await _owned_recovery(app, recover_startup)
         except Exception:
-            # Database readiness remains the health endpoint's responsibility.
-            logger.exception("reusable Kling subject job recovery failed")
-        try:
-            recovered_feedback_jobs = await recover_feedback_learning_jobs(app)
-            if recovered_feedback_jobs:
-                logger.info(
-                    "recovered feedback learning jobs",
-                    extra={"recovered_feedback_learning_jobs": recovered_feedback_jobs},
-                )
-        except Exception:
-            logger.exception("feedback learning job recovery failed")
+            logger.exception("startup recovery deferred")
         if app_settings.kling_enabled:
             try:
                 availability = await app.state.kling_adapter.check_availability()
@@ -287,7 +335,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "WaveSpeed read-only verification failed at startup: %s",
                     availability.status,
                 )
-        recovered_image_batches = await _refresh_active_image_generation_batches(app)
+        recovered_image_batches = await _owned_recovery(
+            app, _refresh_active_image_generation_batches
+        )
         if recovered_image_batches:
             logger.warning(
                 "refreshed persisted WaveSpeed image batches",
@@ -339,6 +389,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.kling_config_signature = kling_admin_config_signature(app_settings)
     app.state.wavespeed_config_signature = wavespeed_admin_config_signature(app_settings)
     app.state.bach_config_signature = bach_admin_config_signature(app_settings)
+    app.state.classic_http_in_flight = 0
+    app.state.classic_recovery_in_flight = 0
     app.state.analysis_jobs = set()
     app.state.confirmation_jobs = set()
     app.state.subject_element_jobs = set()
@@ -346,6 +398,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.feedback_learning_jobs = set()
     app.state.feedback_learning_job_keys = set()
     app.state.image_generation_refresh_lock = asyncio.Lock()
+    app.add_middleware(ClassicRequestDrainMiddleware, state=app.state)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=app_settings.app_public_origins,

@@ -240,13 +240,17 @@ async def test_default_off_preserves_existing_runner_sequence(lab, monkeypatch):
         sequence.append(provider)
         return 1
 
+    async def balance(_session):
+        sequence.append("balance")
+
     monkeypatch.setattr(launch_recovery, "recover_abandoned_claims", recover)
+    monkeypatch.setattr(supervisor, "requeue_confirmed_balance_rejections", balance)
     monkeypatch.setattr(supervisor, "resume_incomplete_downloads", download)
     monkeypatch.setattr(supervisor, "observe_command_hosts", observe)
     monkeypatch.setattr(supervisor, "poll_kling_tasks", poll)
     monkeypatch.setattr(supervisor, "_run_ready_provider", submit)
     assert await supervisor.run_ready(None) == 4
-    assert sequence == ["recover", "download", "observe", "poll", "libtv", "kling"]
+    assert sequence == ["recover", "balance", "download", "observe", "poll", "libtv", "kling"]
 
 async def test_runner_admits_before_and_after_polls(lab, monkeypatch):
     from libtv_agent.runner import launch_recovery
@@ -269,9 +273,43 @@ async def test_runner_admits_before_and_after_polls(lab, monkeypatch):
         sequence.append(provider)
         return 1
 
+    async def balance(_session):
+        sequence.append("balance")
+
     monkeypatch.setattr(launch_recovery, "recover_abandoned_claims", recover)
+    monkeypatch.setattr(supervisor, "requeue_confirmed_balance_rejections", balance)
     monkeypatch.setattr(supervisor, "observe_command_hosts", observe)
     monkeypatch.setattr(supervisor, "poll_kling_tasks", poll)
     monkeypatch.setattr(supervisor, "_run_ready_provider", submit)
     assert await supervisor.run_ready(None) == 4
-    assert sequence == ["recover", "observe", "kling", "poll", "kling", "libtv"]
+    assert sequence == ["recover", "balance", "observe", "kling", "poll", "kling", "libtv"]
+
+
+
+async def test_fresh_runner_queries_original_cloud_handle_without_new_command(lab):
+    factory, settings = lab
+    async with factory() as session:
+        _, _, attempt, command, _ = await _stranded_command(
+            session, provider=settings.kling_cli_provider_name, lease_expires_at=None
+        )
+        attempt.status = AttemptStatus.RUNNING
+        attempt.task_id = "existing-cloud-handle"
+        command.status = CommandStatus.PROCESS_STARTED
+        attempt_id, command_id = attempt.id, command.id
+        await session.commit()
+    # No in-memory state from the first Runner is provided to the replacement.
+    fresh = RunnerSupervisor(object(), object(), settings)
+    adapter = SimpleNamespace(query=AsyncMock(
+        return_value=ProviderTaskResult("running", "RUNNING", (), {})
+    ))
+    fresh._kling_adapters[settings.kling_cli_provider_name] = adapter
+    async with factory() as session:
+        assert await fresh.poll_kling_tasks(session) == 1
+    adapter.query.assert_awaited_once_with("existing-cloud-handle")
+    async with factory() as session:
+        current = await session.get(GenerationAttempt, attempt_id)
+        assert current.task_id == "existing-cloud-handle"
+        assert current.status == AttemptStatus.RUNNING
+        from libtv_agent.domain.models import GenerationCommand
+        commands = list(await session.scalars(select(GenerationCommand)))
+        assert [c.id for c in commands] == [command_id]

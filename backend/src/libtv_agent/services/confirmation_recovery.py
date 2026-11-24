@@ -97,6 +97,13 @@ async def recover_stale_confirmation_claims(
             replayed += 1
             continue
 
+        if task.phase == ParentTaskPhase.PREPARING and task.phase_reason_code in {
+            "DURABLE_CONFIRM_QUEUED", "DURABLE_CONFIRM_RUNNING"
+        }:
+            # This response-less legacy claim is not the durable worker's lease.
+            await session.delete(record)
+            released += 1
+            continue
         if task.phase == ParentTaskPhase.PREPARING:
             previous_phase = task.phase.value
             task.phase = ParentTaskPhase.ACTION_REQUIRED

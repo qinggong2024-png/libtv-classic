@@ -11,13 +11,73 @@ from libtv_agent.services.ai_creative_planner import (
     V25_EXPERIMENTAL_VERSION,
     production_v25_enabled,
 )
+from libtv_agent.services.classic_admission_gate import new_video_admission_paused
+from libtv_agent.services.classic_api_active_role import api_owns_background_recovery
+from libtv_agent.services.classic_durable_config import acceptance_status
 from libtv_agent.services.cutflow_multi_worker import multi_worker_ready
 from libtv_agent.services.cutflow_protocol import JOB_CONTRACT
 from libtv_agent.services.database_schema import inspect_database_schema
-from libtv_agent.services.ootd_simple import PROFILE as OOTD_PROFILE
 from libtv_agent.services.generation_safety import paid_generation_authorized
+from libtv_agent.services.ootd_simple import PROFILE as OOTD_PROFILE
 
 router = APIRouter(prefix="/system", tags=["system"])
+
+@router.get("/classic-new-video-admission")
+async def classic_new_video_admission_status(request: Request) -> dict[str, object]:
+    """Safe read-only handshake for the local intake operator utility."""
+    settings = request.app.state.settings
+    return {
+        "gateVersion": 1,
+        "deploymentId": settings.deployment_id,
+        "configured": settings.classic_new_video_pause_file is not None,
+        "newVideoAdmissionsPaused": new_video_admission_paused(settings),
+        "scope": "new-video-create-only",
+    }
+
+
+@router.get("/classic-durable-execution")
+async def classic_durable_execution(request: Request) -> dict[str, object]:
+    settings = request.app.state.settings
+    return {
+        "contractVersion": 1,
+        "deploymentId": settings.deployment_id,
+        "configRevision": settings.classic_durable_config_revision,
+        "analysis": acceptance_status(settings, "analysis"),
+        "confirmation": acceptance_status(settings, "confirmation"),
+        "analysisConcurrency": settings.classic_durable_analysis_concurrency,
+    }
+
+
+@router.get("/classic-api-drain")
+async def classic_api_drain(request: Request) -> dict[str, object]:
+    """Aggregate process-local work; no task IDs, credentials or mutations."""
+    state = request.app.state
+    settings = state.settings
+    counts = {
+        name: sum(not job.done() for job in getattr(state, name))
+        for name in ("analysis_jobs", "confirmation_jobs", "subject_element_jobs",
+                     "feedback_learning_jobs")
+    }
+    counts["http"] = state.classic_http_in_flight
+    counts["recovery"] = state.classic_recovery_in_flight
+    counts["imageRefresh"] = int(state.image_generation_refresh_lock.locked())
+    counts["login"] = int(await state.libtv_login_manager.in_progress())
+    owns_recovery = api_owns_background_recovery(settings)
+    return {
+        "contractVersion": 1,
+        "recoveryLockVersion": 1,
+        "deploymentId": settings.deployment_id,
+        "port": settings.app_port,
+        "sourceRevision": settings.deployment_source_revision,
+        "ownsRecovery": owns_recovery,
+        "workCounts": counts,
+        "durableAnalysis": settings.classic_durable_analysis_enabled,
+        "durableConfirmation": settings.classic_durable_confirmation_enabled,
+        "retirementReady": (
+            settings.classic_api_route_file is not None and not owns_recovery
+            and all(count == 0 for count in counts.values())
+        ),
+    }
 
 
 def _runtime_version() -> str:
@@ -45,6 +105,14 @@ def _config_revision(settings: Settings) -> str:
             "downloadConcurrency": settings.download_concurrency,
             "technicalValidationConcurrency": settings.technical_validation_concurrency,
             "outputRetentionDays": settings.output_retention_days,
+            **({"durableAnalysis": True} if settings.classic_durable_analysis_enabled else {}),
+            **({"durableConfirmation": True}
+               if settings.classic_durable_confirmation_enabled else {}),
+            **(
+                {"durableConfigRevision": settings.classic_durable_config_revision}
+                if settings.classic_durable_analysis_enabled
+                or settings.classic_durable_confirmation_enabled else {}
+            ),
         }
     )
 

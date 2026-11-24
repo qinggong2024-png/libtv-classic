@@ -109,6 +109,8 @@ export const ANALYSIS_FAILURE_CODES = new Set([
 
 export const analysisStageLabels: Record<string, string> = {
   QUEUED: '等待后台分析',
+  DURABLE_QUEUED: '等待后台分析',
+  DURABLE_CLAIMED: '正在准备分析',
   RUNNING: 'AI 正在分析素材并编排视频',
   PREPARING_IMAGES: '正在准备图片',
   PROVIDER_RUNNING: '大模型正在分析素材',

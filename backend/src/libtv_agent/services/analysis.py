@@ -304,6 +304,9 @@ async def _await_provider_with_heartbeat(
     prompt: str,
     images: list[AnalysisImageInput],
 ):
+    # Fence each dispatch, including a fallback. A previous run may have expired
+    # while the provider or validation was returning; it must not start another call.
+    await touch_analysis_run(session, task_id, analysis_run_id, ANALYSIS_STAGE_PROVIDER_RUNNING)
     provider_task = asyncio.create_task(adapter.analyze(prompt, images))
     try:
         while True:
@@ -562,6 +565,8 @@ async def analyze_task(
                     result.model_dump(mode="json", by_alias=True)
                 )
                 _validated_analysis_timelines(analysis_json, required_ids)
+            except StaleAnalysisRunError:
+                raise
             except (RuntimeError, ValueError) as exc:
                 if fallback_model is None:
                     raise

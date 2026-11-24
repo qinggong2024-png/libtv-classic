@@ -225,6 +225,9 @@ const ANALYSIS_FAILURE_LABELS: Record<string, string> = {
   ANALYSIS_TIMEOUT: '方案分析超时',
   ANALYSIS_CANCELLED: '方案分析中断',
   ANALYSIS_PROVIDER_FAILED: '分析暂时没成功',
+  DURABLE_CONFIRM_QUEUED: '等待生成准备',
+  DURABLE_CONFIRM_RUNNING: '正在生成准备',
+  DURABLE_CONFIRM_REVIEW: '生成准备待核对',
   ANALYSIS_STALE_RECOVERED: '方案分析待重试',
   ANALYSIS_SCHEMA_INVALID: '分析结果不完整',
 }

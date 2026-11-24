@@ -69,7 +69,14 @@ async def confirm_task(
     allow_materialization_recovery: bool = False,
     automatic: bool = False,
     on_preparing: Callable[[], None] | None = None,
+    durable_preclaimed: bool = False,
 ) -> None:
+    if durable_preclaimed and (
+        task.phase != ParentTaskPhase.PREPARING
+        or task.phase_reason_code != "DURABLE_CONFIRM_RUNNING"
+        or task.state_version != expected_state_version
+    ):
+        raise ValueError("durable confirmation claim is no longer current")
     available_variant_kinds = {variant.variant_type for variant in task.variants}
     requested_variant_kinds = (
         set(selected_variant_kinds)
@@ -82,6 +89,7 @@ async def confirm_task(
         raise ValueError("selected variants are not available on this task")
     if (
         task.phase != ParentTaskPhase.AWAITING_CONFIRMATION
+        and not durable_preclaimed
         and requested_variant_kinds != available_variant_kinds
     ):
         raise ValueError("variant selection can only change while awaiting confirmation")
@@ -144,6 +152,7 @@ async def confirm_task(
         task.phase != ParentTaskPhase.AWAITING_CONFIRMATION
         and not recovering
         and not prepared_dispatch
+        and not durable_preclaimed
     ):
         raise ValueError("task is not awaiting confirmation")
     if task.consistency_level == ConsistencyLevel.SYSTEM_BLOCK:
@@ -173,13 +182,14 @@ async def confirm_task(
         expected_phase = (
             ParentTaskPhase.ACTION_REQUIRED if recovering else ParentTaskPhase.AWAITING_CONFIRMATION
         )
-        await cas_task_phase(
-            session,
-            task.id,
-            expected_phase.value,
-            expected_state_version,
-            ParentTaskPhase.PREPARING.value,
-        )
+        if not durable_preclaimed:
+            await cas_task_phase(
+                session,
+                task.id,
+                expected_phase.value,
+                expected_state_version,
+                ParentTaskPhase.PREPARING.value,
+            )
         if requested_variant_kinds != available_variant_kinds:
             task.variants = selected_variants
         await session.commit()
@@ -381,6 +391,8 @@ async def confirm_task(
         task.phase = ParentTaskPhase.QUEUED
         task.phase_reason_code = None
         task.state_version += 1
+    if durable_preclaimed and task.phase_reason_code == "DURABLE_CONFIRM_RUNNING":
+        task.phase_reason_code = None
     variants = {variant.variant_type.value: variant for variant in task.variants}
     primary_variant = variants.get("STABLE") or variants["DYNAMIC"]
     stable_variant = variants.get("STABLE", primary_variant)

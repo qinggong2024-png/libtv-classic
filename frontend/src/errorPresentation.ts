@@ -167,3 +167,7 @@ export function validationMessage(details: unknown[]): string {
   })
   return [...new Set(copy)].join('') || messages.VALIDATION_FAILED
 }
+
+register('DURABLE_CONFIRM_REVIEW', '生成准备结果待核对，已保留原任务，请勿重复提交。')
+
+register('DURABLE_EXECUTION_UNAVAILABLE', '后台执行器暂未就绪，当前操作未被接收。原有任务不受影响，请稍后重试。')

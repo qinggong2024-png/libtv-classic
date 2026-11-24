@@ -88,7 +88,14 @@ def owned_process(record: dict) -> psutil.Process | None:
         if abs(process.create_time() - record["created"]) > 0.1:
             return None
         command = " ".join(process.cmdline()).lower().replace("\\", "/")
-        if ROOT.as_posix().lower() not in command:
+        if record.get("name") == "api" and record.get("releaseRoot"):
+            release = Path(record["releaseRoot"]).resolve()
+            if release.parent != ROOT.resolve().parent:
+                return None
+            source = (release / "backend" / "src").as_posix().lower()
+            if source not in command or "uvicorn" not in command or "--port 8002" not in command:
+                return None
+        elif ROOT.as_posix().lower() not in command:
             return None
         return process
     except (psutil.Error, KeyError):

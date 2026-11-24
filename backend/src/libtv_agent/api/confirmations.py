@@ -5,13 +5,17 @@ from fastapi import APIRouter, Header, HTTPException, Request, status
 from libtv_agent.adapters.kling_official_cli import KlingCliError
 from libtv_agent.adapters.libtv import LibTVError
 from libtv_agent.api.dependencies import Actor, Session
+from libtv_agent.domain.enums import ParentTaskPhase
 from libtv_agent.domain.schemas import (
     BatchConfirmationRequest,
     BatchConfirmationResponse,
     BatchConfirmationResult,
+    ConfirmRequest,
 )
 from libtv_agent.runner.supervisor import RunnerSupervisor
+from libtv_agent.services.classic_durable_config import require_acceptance
 from libtv_agent.services.confirmation import confirm_task
+from libtv_agent.services.durable_confirmation import enqueue_confirmation
 from libtv_agent.services.idempotency import (
     IdempotencyConflictError,
     IdempotencyInProgressError,
@@ -19,7 +23,6 @@ from libtv_agent.services.idempotency import (
     release_idempotency_claim,
     store_idempotent_response,
 )
-
 from libtv_agent.services.runtime_control import RuntimeControlBlockedError
 from libtv_agent.services.state_machine import VersionConflictError
 from libtv_agent.services.tasks import TaskNotFoundError, get_task, task_to_read
@@ -86,6 +89,72 @@ async def execute_confirmations(
         ) from exc
     if cached:
         return BatchConfirmationResponse.model_validate(cached[1])
+    require_acceptance(settings, "confirmation")
+    if settings.classic_durable_confirmation_enabled:
+        # Ordinary batch confirmations share one acceptance transaction. Keep
+        # the legacy prepared-dispatch path for WAITING_FOR_SEAL batches.
+        use_legacy = False
+        for item in payload.tasks:
+            try:
+                task = await get_task(session, actor_id, item.task_id)
+            except TaskNotFoundError:
+                continue
+            if task.phase == ParentTaskPhase.WAITING_FOR_SEAL:
+                use_legacy = True
+                break
+        if not use_legacy:
+            results = []
+            for item in payload.tasks:
+                try:
+                    async with session.begin_nested():
+                        task = await get_task(session, actor_id, item.task_id)
+                        if task.state_version != item.expected_state_version:
+                            raise VersionConflictError("task state changed")
+                        if task.phase != ParentTaskPhase.AWAITING_CONFIRMATION:
+                            raise ValueError("task is not awaiting confirmation")
+                        await enqueue_confirmation(
+                            session,
+                            task,
+                            actor_id,
+                            ConfirmRequest(
+                                expected_state_version=item.expected_state_version,
+                                accept_risk=item.accept_risk,
+                            ),
+                        )
+                        result = BatchConfirmationResult(
+                            task_id=item.task_id,
+                            status="SUCCEEDED",
+                            task=await task_to_read(
+                                session, task, settings.daily_user_points_limit
+                            ),
+                        )
+                    results.append(result)
+                except (TaskNotFoundError, VersionConflictError, ValueError) as exc:
+                    results.append(
+                        BatchConfirmationResult(
+                            task_id=item.task_id,
+                            status="FAILED",
+                            error_code=_confirmation_error_code(exc),
+                            message=str(exc),
+                        )
+                    )
+            response = BatchConfirmationResponse(
+                results=results,
+                succeeded_count=sum(result.status == "SUCCEEDED" for result in results),
+                failed_count=sum(result.status == "FAILED" for result in results),
+            )
+            await store_idempotent_response(
+                session,
+                tenant_id=str(actor_id),
+                operation_type="BATCH_CONFIRM",
+                key=idempotency_key,
+                payload=payload_json,
+                response_status=200,
+                response_body=response.model_dump(mode="json", by_alias=True),
+            )
+            await session.commit()
+            return response
+
     # A per-task budget rejection rolls back the session. Persist the claim first
     # so failed batches still get a stable, replayable idempotent response.
     await session.commit()

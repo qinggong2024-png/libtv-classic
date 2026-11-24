@@ -6,6 +6,7 @@ from libtv_agent.adapters.wavespeed_video import WaveSpeedVideoAdapter
 from libtv_agent.api.dependencies import Actor, Session
 from libtv_agent.domain.schemas import DeepVideoTaskCreate, TaskRead, VideoTaskCreate
 from libtv_agent.services.async_video_submission import accept_automatic_video_submission
+from libtv_agent.services.classic_admission_gate import require_new_video_admission
 from libtv_agent.services.deep_video_tasks import create_deep_video_task
 from libtv_agent.services.fixed_video_tasks import (
     FixedVideoTaskValidationError,
@@ -19,11 +20,13 @@ from libtv_agent.services.idempotency import (
     release_idempotency_claim,
     store_idempotent_response,
 )
-from libtv_agent.services.video_type_release import (
-    UNBOXING_PAUSED_CODE, UNBOXING_PAUSED_MESSAGE, unboxing_submission_paused,
-)
 from libtv_agent.services.subject_elements import schedule_subject_element_job
 from libtv_agent.services.tasks import task_to_read
+from libtv_agent.services.video_type_release import (
+    UNBOXING_PAUSED_CODE,
+    UNBOXING_PAUSED_MESSAGE,
+    unboxing_submission_paused,
+)
 
 router = APIRouter(prefix="/video-tasks", tags=["video-tasks"])
 
@@ -54,6 +57,9 @@ async def create_deep_task(
     request: Request,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
 ) -> TaskRead:
+    # Admission freeze must occur before claiming the idempotency key or
+    # beginning any paid provider activity. Existing task queries are unaffected.
+    require_new_video_admission(request.app.state.settings)
     actor_id = actor.id
     operation = "CREATE_DEEP_VIDEO_TASK"
     payload_json = payload.model_dump(mode="json", by_alias=True)
@@ -124,6 +130,9 @@ async def create_video_task(
     request: Request,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
 ) -> TaskRead:
+    # File-backed runtime check is performed on every new POST, independently
+    # of Runner/CUT processing and without a database mutation.
+    require_new_video_admission(request.app.state.settings)
     # Reject frozen modes before idempotency claims, upload claims or paid work.
     if unboxing_submission_paused(payload.video_type):
         raise HTTPException(

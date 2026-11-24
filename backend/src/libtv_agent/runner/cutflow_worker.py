@@ -432,17 +432,18 @@ async def _worker_pulse(settings: Settings) -> None:
         await asyncio.sleep(15)
 
 
-async def run(once: bool) -> None:
+async def run(once: bool, stopping=None) -> None:
     settings = get_settings()
     require_configuration(settings)
     database = Database(settings.database_url)
     pulse = asyncio.create_task(_worker_pulse(settings)) if not once else None
+    clean_stop = False
     try:
         store = create_object_store(settings)
         last_receipt_sweep = 0.0
         last_coord_sweep = 0.0
         last_auto_sweep = 0.0
-        while True:
+        while stopping is None or not stopping.is_set():
             failed = False
             for operation_name, operation in (
                 ("enqueue_completed", enqueue_completed_v2
@@ -451,6 +452,8 @@ async def run(once: bool) -> None:
                 ("single_source_poll", tick),
                 ("multi_source_poll", tick_multi),
             ):
+                if stopping is not None and stopping.is_set():
+                    break
                 if operation_name == "enqueue_completed":
                     # Automatic admission is a separate, low-frequency sweep;
                     # never starve normal CUT status polling.
@@ -475,6 +478,8 @@ async def run(once: bool) -> None:
                         error_code,
                     )
                     failed = True
+            if stopping is not None and stopping.is_set():
+                break
             if once or monotonic() - last_receipt_sweep >= 30:
                 try:
                     await ensure_receipts(database, settings)
@@ -504,13 +509,19 @@ async def run(once: bool) -> None:
                 last_coord_sweep = monotonic()
             if once:
                 break
-            await asyncio.sleep(15 if failed else 1)
+            if stopping is None:
+                await asyncio.sleep(15 if failed else 1)
+            else:
+                await asyncio.to_thread(stopping.wait, 15 if failed else 1)
+        clean_stop = True
     finally:
         if pulse is not None:
             pulse.cancel()
             with suppress(asyncio.CancelledError):
                 await pulse
         await database.dispose()
+        if stopping is not None and clean_stop and stopping.is_set():
+            stopping.publish("DRAINED")
 
 
 if __name__ == "__main__":

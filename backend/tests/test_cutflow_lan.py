@@ -138,7 +138,7 @@ async def test_real_http_notification_progress_and_verified_nas_return(
                 }
                 assert manifest["edit_intent"] == {
                     "mode": "guided_auto",
-                    "video_type": "fashion_product_video",
+                    "video_type": "ootd",
                     "remove_visual_failures": True,
                     "remove_slow_or_redundant_shots": True,
                     "remove_unclear_product_shots": True,
@@ -148,6 +148,8 @@ async def test_real_http_notification_progress_and_verified_nas_return(
                     "bgm": "auto_match",
                     "beat_sync": True,
                 }
+                assert manifest["source"]["video_type"] == "ootd"
+                assert manifest["source"]["videoType"] == "ootd"
                 assert manifest["source"]["site_profile_id"] is None
                 for item in [*manifest["assets"], *manifest["product_references"]]:
                     assert sha256_file(package / item["relative_path"]) == item["sha256"]
@@ -173,7 +175,9 @@ async def test_real_http_notification_progress_and_verified_nas_return(
         await cutflow_worker.tick(database, settings, store)
         async with database.session_factory() as session:
             saved = await session.get(CutflowHandoff, row.id)
-            assert saved.status == "EDITING" and saved.error_code is None
+            assert saved.status == "EDITING" and saved.error_code is None, (
+                saved.error_code, saved.error_message, failures,
+            )
             assert saved.cutflow_editor_url is None
         # An accepted LAN job polls status without another submission, even without batchId.
         await due(database, row)

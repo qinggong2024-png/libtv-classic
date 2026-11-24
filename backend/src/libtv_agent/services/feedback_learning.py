@@ -20,6 +20,7 @@ from libtv_agent.domain.models import (
     User,
     UserVideoLearningProfile,
 )
+from libtv_agent.services.classic_process_lock import job_lock
 from libtv_agent.services.feedback import FEEDBACK_REASON_GUIDANCE, feedback_context
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, Field
@@ -410,6 +411,13 @@ async def _run_feedback_learning_job(
             )
             if job is None or profile is None:
                 return
+            if job.status == "SUCCEEDED" and job.profile_version == profile.version:
+                return
+            if (
+                job.status == "FAILED"
+                and job.attempt_count >= settings.feedback_learning_max_attempts
+            ):
+                return
             target_version = profile.version
             job.status = "RUNNING"
             job.profile_version = target_version
@@ -499,7 +507,11 @@ def schedule_feedback_learning_job(
     if key in app.state.feedback_learning_job_keys:
         return
     app.state.feedback_learning_job_keys.add(key)
-    task = asyncio.create_task(_run_feedback_learning_job(app, user_id, scope_key))
+    async def run_owned():
+        async with job_lock(settings, "feedback", f"{user_id}:{scope_key}"):
+            await _run_feedback_learning_job(app, user_id, scope_key)
+
+    task = asyncio.create_task(run_owned())
     app.state.feedback_learning_jobs.add(task)
 
     def finished(completed: asyncio.Task[None]) -> None:

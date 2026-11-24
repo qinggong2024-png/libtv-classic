@@ -230,6 +230,12 @@ def start() -> None:
 
 
 def stop() -> None:
+    # An active green route must first be explicitly switched back while
+    # preserving the original request identity; never stop its supervisor.
+    from classic_green_api import read_manifest, web_route
+
+    if read_manifest() and web_route()["activeApiPort"] == 8003:
+        raise SystemExit("Active green API must be routed back before stopping classic")
     RUNTIME.mkdir(parents=True, exist_ok=True)
     STOP_FILE.touch()
     deadline = time.monotonic() + 100
@@ -323,7 +329,7 @@ def start_with_retry(env: dict[str, str], timeout_seconds: float = 300) -> bool:
             result = subprocess.run(
                 [str(PYTHON), str(ROOT / "scripts" / "classic_lan.py"), "start"],
                 cwd=ROOT,
-                env=env,
+                env={**env, "CLASSIC_MANAGED_GREEN_RECOVERY": "1"},
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -348,6 +354,13 @@ def start_with_retry(env: dict[str, str], timeout_seconds: float = 300) -> bool:
 
 
 def recover_processes(node: str | None = None) -> list[str]:
+    from classic_worker_lease import exclusive_classic_worker
+
+    with exclusive_classic_worker("api-blue", classic_lan.STATE.parent):
+        return _recover_processes_locked(node)
+
+
+def _recover_processes_locked(node: str | None = None) -> list[str]:
     state = json.loads(classic_lan.STATE.read_text(encoding="utf-8"))
     if state.get("generationAuthorized", False) != classic_lan.generation_authorized():
         raise RuntimeError("Generation policy changed; use the stop/start scripts to apply it.")
@@ -363,12 +376,32 @@ def recover_processes(node: str | None = None) -> list[str]:
             break
         if owned_process(record):
             continue
+        if record["name"] == "api":
+            from classic_blue_api import read_pin
+
+            pin = read_pin(classic_lan.STATE.parent, classic_lan.ROOT)
+            if pin and record.get("sourceRevision") != pin["sourceRevision"]:
+                raise RuntimeError("unfinished blue replacement requires operator review")
+        if record["name"] in {"runner", "cutflow"}:
+            from classic_worker_handoff import restart_held
+
+            if restart_held(record["name"]):
+                logging.warning("Worker restart held for safe handoff: %s", record["name"])
+                continue
         logging.error("Process exited: name=%s pid=%s", record["name"], record["pid"])
         replacement = classic_lan.spawn_process(record["name"], commands[record["name"]], env)
         state["processes"][index] = replacement
         classic_lan.save_state(state)
         logging.info("Process recovered: name=%s pid=%s", replacement["name"], replacement["pid"])
         recovered.append(record["name"])
+    # The green API has an independent PID + source manifest and never owns a
+    # Runner or CUT worker. Only resurrect the SAME pinned release if it is
+    # already selected by the installed 5176 atomic API route.
+    from classic_green_api import maybe_recover_green
+
+    if not STOP_FILE.exists() and maybe_recover_green():
+        logging.warning("Recovered active green API without replaying any HTTP request")
+        recovered.append("api-green")
     return recovered
 
 
@@ -449,6 +482,7 @@ def run(independent: bool = False) -> bool:
                 "pid": process.pid, "created": process.create_time(),
                 "parentPid": process.ppid(), **isolation,
                 "checkIntervalSeconds": CHECK_INTERVAL_SECONDS,
+                "blueSlotContractVersion": 1,
             }
             SUPERVISOR.write_text(json.dumps(record, indent=2), encoding="utf-8")
             logging.info("Independent supervisor started: %s", record)

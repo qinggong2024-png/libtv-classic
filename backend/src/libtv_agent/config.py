@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     shared_authentication_enabled: bool = False
 
     database_url: str = "postgresql+asyncpg://libtv_agent:libtv_agent@localhost:5432/libtv_agent"
+    # Classic 5176 only: optional runtime file to reject *new* video creation.
+    # No file and no configured path mean normal unrestricted behavior.
+    classic_new_video_pause_file: Path | None = None
+    # Cooperative owner for Classic LAN API background recovery, 8002/8003.
+    # Unconfigured for every other deployment.
+    classic_api_route_file: Path | None = None
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "libtv_agent"
     minio_secret_key: str = "change-me-before-shared-use"
@@ -93,6 +99,11 @@ class Settings(BaseSettings):
     openai_analysis_timeout_max_seconds: float = Field(default=600.0, gt=0, le=1800)
     analysis_stale_after_seconds: float = Field(default=660.0, gt=0, le=3600)
     analysis_recovery_poll_seconds: float = Field(default=30.0, gt=0, le=300)
+    classic_durable_config_file: Path | None = None
+    classic_durable_config_revision: str | None = None
+    classic_durable_confirmation_enabled: bool = False
+    classic_durable_analysis_enabled: bool = False
+    classic_durable_analysis_concurrency: int = Field(default=4, ge=1, le=32)
     analysis_shutdown_grace_seconds: float = Field(default=15.0, gt=0, le=300)
     materialization_stale_after_seconds: float = Field(default=300.0, gt=0, le=3600)
     feedback_learning_enabled: bool = True
