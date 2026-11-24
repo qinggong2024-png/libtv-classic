@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import uuid
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
@@ -25,6 +26,7 @@ from libtv_agent.domain.models import (
 from libtv_agent.domain.schemas import ReconcileRequest
 from libtv_agent.runner.supervisor import RunnerSupervisor
 from libtv_agent.services.admin_video_review import get_admin_video_artifact, list_admin_videos
+from libtv_agent.services.admin_video_tasks import admin_cut_media_output, list_admin_video_tasks
 from libtv_agent.services.admin_video_trace import get_admin_video_reference, get_admin_video_trace
 from libtv_agent.services.bach_config import (
     bach_admin_config_signature,
@@ -948,6 +950,74 @@ async def admin_recent_videos(
         session, days=days, limit=limit, offset=offset,
         search=search, brand_id=brand_id,
         health_filter=health, sort=sort,
+    )
+
+
+@router.get("/video-tasks")
+async def admin_video_task_gallery(
+    actor: Actor,
+    session: Session,
+    days: int = Query(default=7, ge=1, le=90),
+    limit: int = Query(default=24, ge=1, le=60),
+    offset: int = Query(default=0, ge=0, le=10000),
+    search: str = Query(default="", max_length=80),
+    brand_id: uuid.UUID | None = None,
+    health: Literal["all", "critical", "warning", "normal"] = "all",
+    sort: Literal["priority", "newest"] = "newest",
+) -> dict[str, Any]:
+    _require_management_admin(actor)
+    if days not in {1, 7, 30, 90}:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "unsupported review window")
+    return await list_admin_video_tasks(
+        session, days=days, limit=limit, offset=offset,
+        search=search, brand_id=brand_id,
+        health_filter=health, sort=sort,
+    )
+
+
+@router.get("/video-tasks/{task_id}/cut/{kind}/{batch_id}/{output_id}/{media}")
+async def admin_video_task_cut_media(
+    task_id: uuid.UUID, kind: Literal["single", "multi"],
+    batch_id: uuid.UUID, output_id: str, media: Literal["play", "thumbnail"],
+    actor: Actor, session: Session, request: Request,
+) -> FileResponse:
+    _require_management_admin(actor)
+    output = await admin_cut_media_output(session, task_id, kind, batch_id, output_id)
+    safe = hashlib.sha256(f"{kind}:{batch_id}:{output_id}".encode()).hexdigest()[:24]
+    cache = request.app.state.settings.artifact_root / "cache"
+    try:
+        local = await request.app.state.object_store.localize(
+            output["object_key"], cache / "admin-cut-videos" / f"{safe}.mp4",
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status.HTTP_410_GONE, "CUT output unavailable") from exc
+    if media == "play":
+        return FileResponse(
+            local, media_type="video/mp4",
+            headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+        )
+    thumbnail = cache / "admin-cut-thumbnails" / f"{safe}.jpg"
+    if not await asyncio.to_thread(thumbnail.is_file):
+        try:
+            data = await media_command(
+                "ffmpeg", "-v", "error", "-i", str(local), "-frames:v", "1",
+                "-vf", "scale='min(360,iw)':'min(480,ih)':force_original_aspect_ratio=decrease",
+                "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
+            )
+            if not data:
+                raise ValueError("empty thumbnail")
+        except (ValueError, TimeoutError) as exc:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "CUT thumbnail unavailable") from exc
+        await asyncio.to_thread(thumbnail.parent.mkdir, parents=True, exist_ok=True)
+        temp = thumbnail.with_name(f"{safe}-{uuid.uuid4()}.tmp")
+        try:
+            await asyncio.to_thread(temp.write_bytes, data)
+            await asyncio.to_thread(temp.replace, thumbnail)
+        finally:
+            await asyncio.to_thread(temp.unlink, missing_ok=True)
+    return FileResponse(
+        thumbnail, media_type="image/jpeg",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
     )
 
 

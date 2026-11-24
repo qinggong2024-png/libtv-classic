@@ -1,0 +1,102 @@
+/* Active task-based video inspection: portrait media and task-center density. */
+.admin-task-gallery{container-type:inline-size}
+.admin-task-gallery .admin-video-grid{grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;align-items:start}
+.admin-task-gallery .admin-task-card{min-width:0;border-radius:12px;box-shadow:var(--shadow-xs);transition:border-color .16s,box-shadow .16s}
+.admin-task-gallery .admin-task-card:hover{border-color:color-mix(in srgb,var(--primary) 24%,var(--line));box-shadow:var(--shadow-sm)}
+.admin-task-gallery .admin-task-card[data-health="critical"]{border-color:color-mix(in srgb,var(--danger) 33%,var(--line))}
+.admin-task-gallery .admin-task-card[data-health="warning"]{border-color:color-mix(in srgb,var(--warning) 32%,var(--line))}
+.admin-task-gallery .admin-task-card .admin-video-preview{position:relative;display:block;width:100%;height:auto;aspect-ratio:9/16;padding:0;background:#171b24;overflow:hidden}
+.admin-task-gallery .admin-task-card .admin-video-preview img{display:block;width:100%;height:100%;object-fit:cover}
+.admin-task-gallery .admin-task-card .admin-video-preview[data-orientation="landscape"] img{object-fit:contain}
+.admin-task-gallery .admin-task-card .admin-video-play{width:40px;height:40px}
+.admin-task-gallery .admin-task-card .admin-video-play svg{width:19px;height:19px}
+.admin-task-gallery .admin-task-card .admin-video-card-body{display:grid;gap:6px;padding:11px}
+.admin-task-gallery .admin-task-card .admin-video-card-body>strong{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;min-height:0;line-height:1.45;font-size:12px;overflow-wrap:anywhere}
+.admin-task-gallery .admin-task-card .admin-video-card-body>span:not(.admin-task-issue){font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.admin-task-gallery .admin-task-card .admin-video-card-body>small{font-size:10px;line-height:1.5}
+.admin-task-gallery .admin-task-card .admin-task-issue{font-size:10px}
+.admin-task-gallery .admin-task-card .admin-video-card-actions{margin-top:3px}
+.admin-task-gallery .admin-task-card .admin-video-card-actions .text-button{font-size:11px;padding:6px 0;white-space:nowrap}
+.admin-task-gallery .admin-task-card .admin-video-duration{font-size:10px}
+.admin-task-gallery .admin-task-detail{max-width:1380px;margin-inline:auto;gap:13px}
+.admin-task-gallery .admin-task-layout{grid-template-columns:minmax(0,250px) minmax(0,1fr);gap:22px}
+.admin-task-gallery .admin-task-media-column{min-width:0;align-self:start}
+.admin-task-gallery .admin-task-video-cover,.admin-task-gallery .admin-task-video video,.admin-task-gallery .admin-task-video-missing{aspect-ratio:9/16}
+.admin-task-gallery .admin-task-video-cover img{object-fit:cover}
+.admin-task-gallery .admin-task-media-strip{gap:6px}
+.admin-task-gallery .admin-task-media-strip button{flex-basis:69px}
+.admin-task-gallery .admin-task-media-strip img{aspect-ratio:9/16;object-fit:cover}
+.admin-task-gallery .admin-task-inspector{gap:15px}
+.admin-task-gallery .admin-task-detail-section{padding-top:12px}
+.admin-task-gallery .admin-task-reference-grid{grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}
+.admin-task-gallery .admin-task-reference-card{grid-template-rows:150px auto;border-radius:10px}
+.admin-task-gallery .admin-task-reference-image img{object-fit:contain}
+.admin-task-gallery .admin-task-parameter-disclosure{border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--surface)}
+.admin-task-gallery .admin-task-parameter-disclosure>summary{cursor:pointer;padding:11px 13px;font-size:12px;font-weight:650;color:var(--text-secondary)}
+.admin-task-gallery .admin-task-parameter-disclosure>.admin-task-parameter-list{margin:0 12px 12px}
+.admin-task-gallery .admin-task-prompt-pair details{background:var(--surface);border-radius:9px}
+.admin-task-gallery .admin-task-prompt-pair summary{padding:12px;font-size:12px}
+@container (max-width:1180px){.admin-task-gallery .admin-video-grid{grid-template-columns:repeat(5,minmax(0,1fr))}}
+@container (max-width:990px){.admin-task-gallery .admin-video-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@container (max-width:785px){.admin-task-gallery .admin-video-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@container (max-width:650px){.admin-task-gallery .admin-task-layout{grid-template-columns:1fr}.admin-task-gallery .admin-task-media-column{max-width:260px}}
+@container (max-width:515px){.admin-task-gallery .admin-video-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container (max-width:310px){.admin-task-gallery .admin-video-grid{grid-template-columns:minmax(0,1fr)}}
+
+/* Quiet, interactive production rail. Equal segments represent recorded milestones, not elapsed proportions. */
+.admin-task-gallery .admin-review-timeline{padding:20px;border:1px solid var(--line);border-radius:16px;background:var(--surface);gap:17px;box-shadow:0 2px 8px #17203305}
+.admin-task-gallery .admin-review-timeline-header strong{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:650;letter-spacing:-.02em}
+.admin-task-gallery .admin-review-timeline-header strong svg{color:#258b6c}
+.admin-task-gallery .admin-review-timeline-header span[data-attention="true"]{color:#a66a24}
+.admin-review-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;padding:3px 0 15px;border-bottom:1px solid var(--line)}
+.admin-review-metrics>div{display:grid;gap:6px;min-width:0;padding:0 12px;border-left:1px solid var(--line)}
+.admin-review-metrics>div:first-child{padding-left:0;border:0}
+.admin-review-metrics small{font-size:11px;color:var(--text-secondary)}
+.admin-review-metrics strong{font-size:clamp(17px,1.55vw,25px);font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-.045em;line-height:1.2;white-space:nowrap}
+.admin-review-metrics [data-tone="warning"] strong{color:#a66a24}
+.admin-task-gallery .admin-review-timeline-steps{grid-template-columns:repeat(8,minmax(0,1fr));min-width:0;overflow:visible;gap:4px;padding:0}
+.admin-task-gallery .admin-review-step{min-width:0;display:block}
+.admin-review-segment{display:grid;grid-template-rows:7px auto auto;gap:6px;width:100%;min-width:0;padding:6px 3px 7px;border:0;border-radius:8px;background:transparent;text-align:left;color:var(--text);cursor:pointer;transition:background .18s ease,transform .18s ease}
+.admin-review-segment-bar{display:block;height:7px;width:100%;border-radius:4px;background:#67b69d;transition:background .18s ease,transform .18s ease,opacity .18s ease;transform-origin:left}
+.admin-review-step[data-tone="warning"] .admin-review-segment-bar{background:#d9a458}
+.admin-review-step[data-tone="critical"] .admin-review-segment-bar{background:#d86a6a}
+.admin-review-step[data-tone="missing"] .admin-review-segment-bar{background:var(--line)}
+.admin-review-segment strong{font-size:11px;font-weight:600;line-height:1.4;overflow-wrap:anywhere}
+.admin-review-segment small{font-size:10px;color:var(--text-secondary);font-variant-numeric:tabular-nums;line-height:1.3}
+.admin-review-step[data-tone="warning"] .admin-review-segment small{color:#a66a24}
+.admin-review-segment:hover:not(:disabled),.admin-review-segment[aria-pressed="true"]{background:var(--surface-soft)}
+.admin-review-segment:hover:not(:disabled) .admin-review-segment-bar{transform:scaleY(1.3)}
+.admin-review-segment[aria-pressed="true"] .admin-review-segment-bar{box-shadow:0 0 0 2px color-mix(in srgb,currentColor 9%,transparent);opacity:1}
+.admin-review-segment:active:not(:disabled){transform:scale(.98)}
+.admin-review-segment:disabled{cursor:default}
+.admin-review-selected{display:flex;align-items:center;gap:14px;padding:11px 13px;border-radius:10px;background:var(--surface-soft);font-size:12px;font-variant-numeric:tabular-nums;min-height:40px}
+.admin-review-selected>strong{font-weight:650;flex:1;min-width:0}
+.admin-review-selected time{color:var(--text-secondary)}
+.admin-review-selected-state{font-size:11px;color:#258b6c}
+.admin-review-selected[data-tone="warning"] .admin-review-selected-state{color:#a66a24}
+.admin-review-selected[data-tone="critical"] .admin-review-selected-state{color:var(--danger)}
+.admin-review-selected[data-tone="missing"] .admin-review-selected-state{color:var(--text-secondary)}
+.admin-task-gallery .admin-task-layout{gap:24px}
+.admin-task-gallery .admin-task-inspector{gap:16px}
+.admin-task-gallery .admin-task-detail-section{padding:18px;border:1px solid var(--line);border-radius:16px;background:var(--surface);gap:12px;box-shadow:0 2px 8px #17203304}
+.admin-task-gallery .admin-task-video-cover,.admin-task-gallery .admin-task-video video,.admin-task-gallery .admin-task-video-missing{border-radius:14px}
+.admin-task-gallery .admin-task-card{border-radius:14px;transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease}
+.admin-task-gallery .admin-task-card:hover{transform:translateY(-2px)}
+.admin-task-gallery .admin-video-preview img{transition:transform .24s cubic-bezier(.2,.7,.2,1)}
+.admin-task-gallery .admin-video-preview:hover img{transform:scale(1.018)}
+.admin-task-gallery .admin-task-media-strip button,.admin-task-gallery .admin-task-clip-switch button,.admin-task-gallery .admin-task-filter-row button,.admin-task-gallery .secondary-button{transition:background .18s ease,border-color .18s ease,color .18s ease,box-shadow .18s ease}
+.admin-task-gallery .admin-task-video-cover,.admin-task-gallery .admin-task-video video,.admin-task-gallery .admin-task-detail,.admin-review-selected{animation:admin-inspection-enter .2s cubic-bezier(.2,.7,.2,1) both}
+@keyframes admin-inspection-enter{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
+.admin-task-gallery details[open]>:not(summary){animation:admin-inspection-enter .18s ease both}
+@container (max-width:950px){.admin-task-gallery .admin-review-timeline{padding:14px;gap:12px}.admin-task-gallery .admin-review-timeline-steps{grid-template-columns:repeat(4,minmax(0,1fr))}.admin-task-gallery .admin-task-detail-section{padding:14px}}
+@media(prefers-reduced-motion:reduce){.admin-task-gallery *, .admin-task-gallery *::before,.admin-task-gallery *::after{animation-duration:0.01ms!important;transition-duration:0.01ms!important}}
+
+/* Stable media geometry across CUT / raw switches, including loading and errors. */
+.admin-task-gallery .admin-task-video-frame{position:relative;aspect-ratio:9/16;min-width:0;overflow:hidden;border-radius:14px;background:#171b24}
+.admin-task-gallery .admin-task-video-frame>button,.admin-task-gallery .admin-task-video-frame>video,.admin-task-gallery .admin-task-video-frame>.admin-task-video-missing{position:absolute;inset:0;width:100%;height:100%;aspect-ratio:auto;border-radius:0;animation:none;transform:none}
+.admin-task-gallery .admin-task-video-frame>button img{animation:admin-inspection-fade .16s ease both}
+.admin-task-gallery .admin-task-video-error{position:absolute;inset:auto 8px 8px;margin:0;padding:8px;border-radius:8px;background:#151b24e8;color:white;font-size:12px}
+.admin-task-gallery .admin-task-reference-grid{display:grid;grid-auto-flow:column;grid-template-columns:none;grid-auto-columns:minmax(130px,calc((100% - 30px)/4));grid-template-rows:1fr;overflow-x:auto;min-height:210px;align-items:stretch;scrollbar-gutter:stable}
+.admin-task-gallery .admin-task-reference-empty{min-height:40px}
+.admin-task-gallery .admin-task-detail{overflow-anchor:none}
+@keyframes admin-inspection-fade{from{opacity:.65}to{opacity:1}}

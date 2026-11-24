@@ -101,6 +101,10 @@ it('separates saved prompt from submission evidence and shows references and mea
   expect(document.body.textContent).toContain('image_1')
   expect(document.body.textContent).toContain('供应商确认提交')
   expect(document.body.textContent).toContain('1 分 14 秒')
+  expect(document.querySelector('.admin-trace-poster[aria-label="播放当前原片"] img')?.getAttribute('src')).toContain('saved-video-id/thumbnail')
+  expect(document.querySelectorAll('.admin-trace-duration-track')).toHaveLength(2)
+  expect(document.querySelector<HTMLDetailsElement>('.admin-trace-disclosure')?.open).toBe(false)
+  expect(document.body.textContent).toContain('不是任务进度')
   expect(document.body.textContent).toContain('未找到与这条原片直接关联的 CUT')
 })
 

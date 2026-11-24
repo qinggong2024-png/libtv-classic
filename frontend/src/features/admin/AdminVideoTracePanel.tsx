@@ -1,12 +1,13 @@
 import { AlertTriangle, Clapperboard, Clock3, FileText, Image, Play, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { fetchAdminReferenceObjectUrl, getAdminVideoTrace } from '../../api'
+import { adminVideoThumbnailUrl, fetchAdminReferenceObjectUrl, getAdminVideoTrace } from '../../api'
 import { errorMessage } from '../../errorPresentation'
 import { useMediaObjectUrl } from '../../shared/hooks/useMediaObjectUrl'
 import { useDismiss } from '../../shared/hooks/useDismiss'
 import type { AdminVideoRecord, AdminVideoTrace } from '../../types'
 import './adminVideoTrace.css'
+import './adminVideoTraceCompact.css'
 
 const time = (value: string | null) => {
   if (!value) return '未记录'
@@ -96,12 +97,13 @@ export function AdminVideoTracePanel({ adminId, item, onPlay, onClose }: {
     || v.label === '云端完成至原片记录建立'
   )) || []
   const longest = [...primaryIntervals].sort((a, b) => (b.seconds ?? 0) - (a.seconds ?? 0))[0]
+  const maxDuration = Math.max(1, ...(trace?.durations.map(d => d.seconds ?? 0) ?? []))
 
   const content = <div className="admin-trace-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
     <section className="admin-trace-panel" ref={ref} role="dialog" aria-modal="true" aria-labelledby="admin-trace-title">
       <header className="admin-trace-header">
         <div><span className="section-kicker">管理员只读 · 生产链路追溯</span>
-          <h2 id="admin-trace-title">这条视频是怎么生成的？</h2>
+          <h2 id="admin-trace-title">视频详情 · 生产巡检</h2>
           <p>{item.title} · {item.brandName || '未归属品牌'} · {item.username}</p>
         </div>
         <div className="admin-trace-actions">
@@ -122,6 +124,19 @@ export function AdminVideoTracePanel({ adminId, item, onPlay, onClose }: {
           </div>)}
           <p className="admin-trace-health-hint">只依据系统记录标记；不能代表已经自动检测出视频画面的穿帮或印花问题。</p>
         </section> : null}
+        <div className="admin-trace-hero">
+          <button type="button" className="admin-trace-poster" data-orientation={item.width && item.height && item.width > item.height ? 'landscape' : 'portrait'} onClick={onPlay} aria-label="播放当前原片">
+            <img src={adminVideoThumbnailUrl(item.artifactId)} alt={`${item.title} 原片封面`} />
+            <span className="admin-trace-poster-play"><Play size={21} fill="currentColor" /></span>
+            <span className="admin-trace-poster-caption">点击播放原片</span>
+          </button>
+          <div className="admin-trace-hero-content">
+            <div className="admin-trace-hero-heading">
+              <strong>{item.variant === 'STABLE' ? '原片 A' : item.variant === 'DYNAMIC' ? '原片 B' : '生成原片'} · {item.durationSeconds != null ? duration(item.durationSeconds) : '时长未记录'}</strong>
+              <span className={`admin-trace-health-status${item.health?.severity === 'critical' ? ' is-critical' : item.health?.severity === 'warning' ? ' is-warning' : ''}`}>
+                {item.health?.severity === 'critical' ? '发现明确异常' : item.health?.severity === 'warning' ? '存在待检查项' : item.health?.severity === 'normal' ? '暂无链路异常' : '链路状态未分类'}
+              </span>
+            </div>
         <section className="admin-trace-quick">
           <div><small>编排方式</small><strong>{directorLabel(trace.direction.directorMode)}</strong><span>{modeLabel(trace.direction.generationMode)}</span></div>
           <div><small>模型 / 生成时长</small><strong>{trace.direction.model || trace.direction.provider || '未记录'}</strong><span>计划 {trace.direction.durationSeconds ?? '—'} 秒 · {trace.direction.multiShot ? '多分镜' : trace.direction.multiShot === false ? '非多分镜' : '多分镜未记录'}</span></div>
@@ -134,8 +149,11 @@ export function AdminVideoTracePanel({ adminId, item, onPlay, onClose }: {
             <p>{longest ? `可计算区间中较长的是「${longest.label}」：${duration(longest.seconds)}。` : '这条原片暂缺足够时间边界，无法可靠比较阶段耗时。'} 这里是根据已保存时间点推算的区间，不等于已确定瓶颈；需要结合下方完整时间线判断。</p>
           </div>
         </div>
-        <section className="admin-trace-section">
-          <div className="admin-trace-section-title"><FileText size={17}/><h3>编排方式与提示词</h3></div>
+          </div>
+        </div>
+        <details className="admin-trace-disclosure">
+          <summary><FileText size={17}/><h3>生成参数与提示词</h3></summary>
+          <div className="admin-trace-disclosure-content">
           <dl className="admin-trace-meta">
             <div><dt>生成方式</dt><dd>{modeLabel(trace.direction.generationMode)}</dd></div>
             <div><dt>导演编排模式</dt><dd>{directorLabel(trace.direction.directorMode)}</dd></div>
@@ -175,9 +193,10 @@ export function AdminVideoTracePanel({ adminId, item, onPlay, onClose }: {
             </details>
           </div> : <p className="admin-trace-caution"><AlertTriangle size={14}/> 未找到与本片段供应商接单记录匹配的原始请求审计；只能展示数据库保存的提示词，不能确认图片或分镜是否实际转换。</p>}
           <p className="admin-trace-caution"><AlertTriangle size={14}/> 上方“当前数据库保存”的提示词可能不同于当时发出的实际请求，只有已核实的 Kling 提交快照能证明发送文本。</p>
-        </section>
-        <section className="admin-trace-section">
-          <div className="admin-trace-section-title"><Image size={17}/><h3>当时绑定或上传的参考图</h3></div>
+          </div>
+        </details>
+        <section className="admin-trace-section admin-trace-reference-section">
+          <div className="admin-trace-section-title"><Image size={17}/><h3>商品图与分镜参考图</h3></div>
           {!trace.references.length && <p className="admin-trace-blank">这条原片没有可追溯的参考图片记录。</p>}
           <div className="admin-trace-reference-grid">
             {trace.references.map(img => <div className="admin-trace-reference" key={img.id}>
@@ -194,15 +213,17 @@ export function AdminVideoTracePanel({ adminId, item, onPlay, onClose }: {
         <section className="admin-trace-section">
           <div className="admin-trace-section-title"><Clock3 size={17}/><h3>各环节耗时</h3></div>
           <div className="admin-trace-duration-grid">
-            {trace.durations.map((d, i) => <div key={i}>
-              <small>{d.label}</small><strong>{duration(d.seconds)}</strong>
+            {trace.durations.map((d, i) => <div key={i} className={`admin-trace-duration-row${d.seconds == null ? ' is-missing' : d.seconds === maxDuration ? ' is-longest' : ''}`}>
+              <div className="admin-trace-duration-top"><small>{d.label}</small><strong>{duration(d.seconds)}</strong></div>
+              <span className="admin-trace-duration-track" aria-hidden="true"><span className="admin-trace-duration-fill" style={{ width: `${d.seconds == null ? 0 : Math.min(100, Math.max(0, d.seconds / maxDuration * 100))}%` }} /></span>
               <span>{d.confidence === 'measured' ? '已有明确起止记录' : d.confidence === 'boundary' ? '两个时间点的间隔' : d.confidence === 'aggregate' ? '系统累计值，不能叠加计算' : '客户端上传时报告'}</span>
             </div>)}
           </div>
-          <p className="admin-trace-caution">这些区间可能有重叠；不能简单相加。尤其“提交前准备”和“云端生成”包含等待或轮询，需进一步证据才能归因。</p>
+          <p className="admin-trace-caution">横条按已记录区间的时长等比例显示，<b>不是任务进度</b>。区间可能重叠，不能相加；等待和轮询也不等于供应商实际处理时间。</p>
         </section>
-        <section className="admin-trace-section">
-          <div className="admin-trace-section-title"><Clock3 size={17}/><h3>实际生产时间线</h3></div>
+        <details className="admin-trace-disclosure">
+          <summary><Clock3 size={17}/><h3>完整生产时间线 · {trace.timeline.length} 条记录</h3></summary>
+          <div className="admin-trace-disclosure-content">
           <p className="admin-trace-hint">以下全部是数据库确实保存的阶段时间，按发生顺序排列。未记录的节点不会补造。</p>
           <ol className="admin-trace-timeline">
             {trace.timeline.map((ev, i) => <li key={i}>
@@ -213,7 +234,8 @@ export function AdminVideoTracePanel({ adminId, item, onPlay, onClose }: {
             </li>)}
           </ol>
           {trace.timeline.length === 0 && <p className="admin-trace-blank">没有足够的阶段时间记录。</p>}
-        </section>
+          </div>
+        </details>
         <section className="admin-trace-section">
           <div className="admin-trace-section-title"><Clapperboard size={17}/><h3>送剪记录</h3></div>
           {trace.cut.length ? trace.cut.map((c, i) => <p key={i} className="admin-trace-cut">{c.kind === 'multi' ? '多原片合剪' : '单原片送剪'} · {c.status} · 建单 {time(c.createdAt)} · 最近更新 {time(c.updatedAt)}{c.errorCode ? ` · 异常 ${c.errorCode}` : ''}</p>) : <p className="admin-trace-blank">未找到与这条原片直接关联的 CUT 交接记录；不代表整个任务没有其他送剪记录。</p>}

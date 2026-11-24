@@ -1,0 +1,27 @@
+/* Portrait-first inspection gallery; follow the Task Center's compact visual density. */
+.admin-video-review{container-type:inline-size}
+.admin-video-review .admin-video-grid{grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;align-items:start}
+.admin-video-review .admin-video-card{border-radius:12px;box-shadow:var(--shadow-xs);transition:border-color .15s,box-shadow .15s}
+.admin-video-review .admin-video-card:hover{border-color:color-mix(in srgb,var(--primary) 24%,var(--line));box-shadow:var(--shadow-sm)}
+.admin-video-review .admin-video-card[data-health="critical"]{border-color:color-mix(in srgb,var(--danger) 36%,var(--line))}
+.admin-video-review .admin-video-card[data-health="warning"]{border-color:color-mix(in srgb,var(--warning) 35%,var(--line))}
+.admin-video-review .admin-video-preview{display:block;width:100%;height:auto;aspect-ratio:9/16;background:#171b24}
+.admin-video-review .admin-video-preview img{display:block;width:100%;height:100%;object-fit:cover}
+.admin-video-review .admin-video-preview[data-orientation="landscape"] img{object-fit:contain}
+.admin-video-review .admin-video-play{width:39px;height:39px}
+.admin-video-review .admin-video-play svg{width:19px;height:19px}
+.admin-video-preview-kind{position:absolute;top:8px;left:8px;max-width:calc(100% - 16px);padding:4px 7px;border-radius:6px;background:rgba(17,24,39,.75);color:#fff;font-size:11px;font-weight:650;line-height:1.2}
+.admin-video-review .admin-video-duration{font-size:10px}
+.admin-video-review .admin-video-card-body{gap:6px;padding:10px}
+.admin-video-review .admin-video-card-body>strong{min-height:0;font-size:12px;line-height:1.45;-webkit-line-clamp:2}
+.admin-video-review .admin-video-card-body>span{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.admin-video-review .admin-video-card-body>small{font-size:10px;line-height:1.35}
+.admin-video-review .admin-video-card-actions{padding-top:6px;border-top:1px solid var(--line)}
+.admin-video-review .admin-video-card-actions .text-button{font-size:11px;min-height:26px}
+.admin-video-review .admin-video-issue summary{font-size:11px}
+.admin-video-review .admin-video-issue-expanded{max-height:180px;overflow-y:auto}
+@container (max-width:1170px){.admin-video-review .admin-video-grid{grid-template-columns:repeat(5,minmax(0,1fr))}}
+@container (max-width:975px){.admin-video-review .admin-video-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@container (max-width:770px){.admin-video-review .admin-video-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@container (max-width:520px){.admin-video-review .admin-video-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container (max-width:320px){.admin-video-review .admin-video-grid{grid-template-columns:minmax(0,1fr)}}

@@ -3,7 +3,7 @@ import { ChartNoAxesCombined, Clapperboard, History, KeyRound, LayoutDashboard, 
 import { type AuthUser, type SystemStatus } from '../../types'
 import { ErrorBoundary } from '../../ErrorBoundary'
 import { OperationsPanel } from '../../OperationsPanel'
-import { AdminVideoReview } from './AdminVideoReview'
+import { AdminVideoTaskReview } from './AdminVideoTaskReview'
 import { KlingProviderSettings } from './KlingProviderSettings'
 import { KlingBillingPanel } from './KlingBillingPanel'
 import { WaveSpeedProviderSettings } from './WaveSpeedProviderSettings'
@@ -81,7 +81,7 @@ export function AdminCenterView({
       {currentSection === 'overview' ? <>
         <section className="settings-section admin-operations-card"><OperationsPanel adminId={actor?.userId ?? null} onShowTasks={onShowTasks} onShowBilling={() => onSectionChange('usage')} /></section>
       </> : null}
-      {currentSection === 'quality' ? <section className="settings-section"><AdminVideoReview adminId={actor!.userId} /></section> : null}
+      {currentSection === 'quality' ? <section className="settings-section"><AdminVideoTaskReview adminId={actor!.userId} /></section> : null}
       {currentSection === 'accounts' || currentSection === 'usage' || currentSection === 'events' ? <UserManagement actor={actor!} section={currentSection} platform sharedAuthentication={system?.sharedAuthentication ?? false} /> : null}
       {currentSection === 'providers' ? isAdmin ? <>
         <details className="admin-disclosure" open><summary>服务路由</summary><div className="admin-disclosure-body"><ProviderRoutingSettings key={`routing-${activeVideo?.backend ?? 'unknown'}`} adminId={actor!.userId} onChanged={onKlingChanged} /></div></details>

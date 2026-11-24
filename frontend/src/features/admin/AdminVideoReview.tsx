@@ -7,6 +7,7 @@ import { AdminVideoTracePanel } from './AdminVideoTracePanel'
 import type { AdminVideoHealthFilter, AdminVideoPage, AdminVideoRecord, AdminVideoSort } from '../../types'
 import './adminVideoReview.css'
 import './adminVideoHealth.css'
+import './adminVideoReviewCompact.css'
 
 function ReviewedVideo({ adminId, item, onClose }: {
   adminId: string
@@ -176,15 +177,16 @@ export function AdminVideoReview({ adminId }: { adminId: string }) {
     {!loading && page?.items.length === 0 && !error ? <div className="admin-video-empty"><Clapperboard size={27} /><strong>这个时间段没有匹配的已保存原片</strong><small>可切换 30 天或清除搜索条件</small></div> : null}
     {!loading && !error ? <div className="admin-video-grid">
       {page?.items.map((item) => <article key={item.artifactId} className="admin-video-card" data-health={item.health?.severity ?? 'unavailable'}>
-        <button type="button" className="admin-video-preview" onClick={() => setSelected(item)} title={`播放 ${item.title}`} aria-label={`播放视频：${item.title}`}>
+        <button type="button" className="admin-video-preview" data-orientation={item.width && item.height && item.width > item.height ? 'landscape' : 'portrait'} onClick={() => setSelected(item)} title={`播放 ${item.title}`} aria-label={`播放视频：${item.title}`}>
           <img src={adminVideoThumbnailUrl(item.artifactId)} alt={`${item.title} 视频首帧`} loading="lazy" />
+          <span className="admin-video-preview-kind">{item.variant === 'STABLE' ? '原片 A' : item.variant === 'DYNAMIC' ? '原片 B' : '生成原片'}</span>
           <span className="admin-video-play"><Play size={23} fill="currentColor" /></span>
           {item.durationSeconds != null ? <span className="admin-video-duration">{Math.round(item.durationSeconds)}s</span> : null}
         </button>
         <div className="admin-video-card-body">
           <strong title={item.title}>{friendlyVideoTitle(item)}</strong>
           <span>{item.brandName || '未归属品牌'} · {item.username}</span>
-          <small>{readableDate(item.createdAt)} · {item.variant === 'STABLE' ? '原片 A' : item.variant === 'DYNAMIC' ? '原片 B' : '生成原片'}</small>
+          <small>{readableDate(item.createdAt)}</small>
           {item.health?.primary && <details className="admin-video-issue" title={`${item.health.primary.title}：${item.health.primary.detail}。建议：${item.health.primary.nextStep}`}>
             <summary>
               {item.health.severity === 'critical'

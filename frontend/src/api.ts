@@ -1,4 +1,4 @@
-import type { AdminCredentialsStatus, AdminUser, AuthUser, BachConfig, BachConfigPatch, BatchConfirmationResponse, FeedbackReason, FeedbackValue, FixedVideoTaskOptions, ImageGenerationBatch, ImageGenerationClientManifest, KlingConfig, KlingConfigPatch, KlingElement, KlingElementCreate, KlingElementList, KlingStatus, LibTVAccountStatus, LibTVAccountSwitch, LibTVLoginStart, MotionActionSummary, MotionActionWrite, AdminVideoPage, AdminVideoTrace, AdminVideoHealthFilter, AdminVideoSort, OperationsIssueCategory, OperationsIssuePage, OperationsSnapshot, PromptAssistantResponse, PromptPreset, PromptPresetWrite, Reconciliation, RuntimeConfigSnapshot, SiteStyleProfileSummary, SiteStyleProfileWrite, SystemStatus, Task, UploadResult, VariantKind, VideoLearningPreference, VideoTemplateSummary, WaveSpeedConfig, WaveSpeedConfigPatch } from './types'
+import type { AdminCredentialsStatus, AdminUser, AuthUser, BachConfig, BachConfigPatch, BatchConfirmationResponse, FeedbackReason, FeedbackValue, FixedVideoTaskOptions, ImageGenerationBatch, ImageGenerationClientManifest, KlingConfig, KlingConfigPatch, KlingElement, KlingElementCreate, KlingElementList, KlingStatus, LibTVAccountStatus, LibTVAccountSwitch, LibTVLoginStart, MotionActionSummary, MotionActionWrite, AdminVideoPage, AdminVideoTaskPage, AdminCutDeliverable, AdminVideoTrace, AdminVideoHealthFilter, AdminVideoSort, OperationsIssueCategory, OperationsIssuePage, OperationsSnapshot, PromptAssistantResponse, PromptPreset, PromptPresetWrite, Reconciliation, RuntimeConfigSnapshot, SiteStyleProfileSummary, SiteStyleProfileWrite, SystemStatus, Task, UploadResult, VariantKind, VideoLearningPreference, VideoTemplateSummary, WaveSpeedConfig, WaveSpeedConfigPatch } from './types'
 import { createUuid } from './uuid'
 import { userFacingError, validationMessage } from './errorPresentation'
 import type { AccountBrand, AccountEventReport, AccountPolicy, AccountUsageReport, GenerationBudget, GlobalUsagePricing } from './types'
@@ -640,6 +640,27 @@ export function getAdminVideos(
   if (search.trim()) params.set('search', search.trim())
   if (brandId) params.set('brand_id', brandId)
   return request(`/api/v1/admin/videos?${params.toString()}`, {}, { actorId: adminId })
+}
+
+export function getAdminVideoTasks(
+  adminId: string, days: 1 | 7 | 30 | 90, offset = 0, search = '',
+  health: AdminVideoHealthFilter = 'all', sort: AdminVideoSort = 'newest',
+): Promise<AdminVideoTaskPage> {
+  const params = new URLSearchParams({
+    days: String(days), offset: String(offset), limit: '24', health, sort,
+  })
+  if (search.trim()) params.set('search', search.trim())
+  return request(`/api/v1/admin/video-tasks?${params}`, {}, { actorId: adminId })
+}
+
+export function adminCutUrl(taskId: string, cut: AdminCutDeliverable, media: 'play' | 'thumbnail'): string {
+  return `/api/v1/admin/video-tasks/${encodeURIComponent(taskId)}/cut/${cut.kind}/${encodeURIComponent(cut.batchId)}/${encodeURIComponent(cut.outputId)}/${media}`
+}
+
+export async function fetchAdminCutObjectUrl(adminId: string, taskId: string, cut: AdminCutDeliverable): Promise<string> {
+  return URL.createObjectURL(await requestBlob(adminCutUrl(taskId, cut, 'play'), {
+    actorId: adminId, timeoutMs: DOWNLOAD_TIMEOUT_MS,
+  }))
 }
 
 export function getAdminVideoTrace(adminId: string, artifactId: string): Promise<AdminVideoTrace> {
