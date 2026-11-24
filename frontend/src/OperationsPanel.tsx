@@ -127,10 +127,9 @@ export function OperationsPanel({ adminId, onShowTasks, onShowBilling }: {
     <section className="ops-overview" aria-label="实时产能">
       {!health ? <p className="ops-data-warning" role="status">生产分类指标暂不可用，队列与异常数量不作推断。</p> : null}
       <div className="ops-key-metrics">
-        <div><small>生成中 / 上限</small><strong>{snapshot.queues.running}<span> / {config.generationConcurrency.global}</span></strong><em>{Math.round(snapshot.metrics.generationSlotUtilization * 100)}% 并发利用率</em></div>
-        <div><small>可执行排队</small><strong>{queue?.actionableTotal ?? '—'}</strong><em>不含预算受限任务</em></div>
-        <div><small>24 小时完成原片</small><strong>{pipeline.throughput.completedVideos24h}</strong><em>{pipeline.throughput.completedTasks24h} 个任务</em></div>
-        <div><small>在线后台节点</small><strong>{snapshot.metrics.runnerOnlineHosts ?? '—'}</strong><em>{snapshot.metrics.runnerActiveCommandHosts} 台执行中</em></div>
+        <div><small>正在生成</small><strong>{snapshot.queues.running}</strong></div>
+        <div><small>等待生成</small><strong>{queue?.actionableTotal ?? '—'}</strong></div>
+        <div><small>近 24 小时完成原片</small><strong>{pipeline.throughput.completedVideos24h}</strong><em>{pipeline.throughput.completedTasks24h} 个任务</em></div>
       </div>
     </section>
     <details className="ops-management-details">

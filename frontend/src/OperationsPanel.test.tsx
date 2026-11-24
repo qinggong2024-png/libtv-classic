@@ -124,8 +124,30 @@ describe('compact operations overview', () => {
     expect(host.querySelector('.ops-command-actions .secondary-button:not(.ops-refresh-action)')).toBeNull()
     expect(host.textContent).toContain('生产开关已暂停')
     expect(host.textContent).toContain('受调度暂停影响')
-    expect(host.querySelectorAll('.ops-key-metrics > div')).toHaveLength(4)
+    expect(host.querySelectorAll('.ops-key-metrics > div')).toHaveLength(3)
     expect(setOperationalPause).not.toHaveBeenCalled()
+  })
+
+  it('does not confuse a submission slot with the cloud task concurrency limit', async () => {
+    const snapshot = makeSnapshot()
+    // One local admission slot can release after submission while several
+    // already-accepted Kling tasks continue in the cloud.
+    snapshot.runtime.config.generationConcurrency.global = 1
+    snapshot.queues.running = 7
+    snapshot.metrics.generationSlotUtilization = 1
+    const { host } = await showOverview(snapshot)
+    const cards = [...host.querySelectorAll<HTMLElement>('.ops-key-metrics > div')]
+    expect(cards).toHaveLength(3)
+    expect(cards.map((card) => card.querySelector('small')?.textContent)).toEqual([
+      '正在生成', '等待生成', '近 24 小时完成原片',
+    ])
+    expect(cards.map((card) => card.querySelector('strong')?.textContent)).toEqual([
+      '7', '3', '12',
+    ])
+    expect(host.textContent).not.toContain('生成中 / 上限')
+    expect(host.textContent).not.toContain('并发利用率')
+    expect(host.textContent).not.toContain('在线后台节点')
+    expect(host.textContent).not.toContain('7 / 1')
   })
 
   it('requires explicit confirmation before pausing paid work', async () => {
