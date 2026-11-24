@@ -19,8 +19,8 @@ type Props = {
   actor: AuthUser | null
   system: SystemStatus | null
   error: string
-  sidebarInfo: 'account' | 'help' | null
-  onSidebarInfoChange: (next: 'account' | 'help' | null) => void
+  sidebarInfo: 'account' | null
+  onSidebarInfoChange: (next: 'account' | null) => void
   devActorRole: 'user' | 'admin'
   onSwitchDevelopmentActor: () => void
   onSignOut: () => void
@@ -47,6 +47,7 @@ export function AppShell({
   children,
   overlays,
 }: Props) {
+  const feedbackUrl = import.meta.env.VITE_FEEDBACK_URL?.trim()
   const mobileNav = nav
   const roleLabel = actor?.isBrandAdmin ? '品牌管理员' : actor ? accountRoleLabels[actor.role] : '普通账号'
   const sidebarPopoverRef = useRef<HTMLDivElement>(null)
@@ -86,8 +87,8 @@ export function AppShell({
         <DailyBudget onOpenUsage={() => onSwitchView('settings')} />
         <div className="sidebar-status"><span className={error ? 'is-offline' : ''} /><span>{error ? '暂时连不上网站' : '经典版'}</span></div>
         <button className={`sidebar-settings ${view === 'settings' ? 'is-active' : ''}`} onClick={() => onSwitchView('settings')}><Settings size={18} /><span>设置</span></button>
-        <div className="sidebar-utility" ref={sidebarUtilityRef}><button onClick={() => onSidebarInfoChange(sidebarInfo === 'help' ? null : 'help')} aria-label="帮助" title="帮助" aria-expanded={sidebarInfo === 'help'} aria-controls={sidebarInfo === 'help' ? 'sidebar-info-popover' : undefined}><HelpCircle size={17} /></button><button onClick={() => onSidebarInfoChange(sidebarInfo === 'account' ? null : 'account')} aria-label="账号" title="账号" aria-expanded={sidebarInfo === 'account'} aria-controls={sidebarInfo === 'account' ? 'sidebar-info-popover' : undefined}><UserRound size={17} /></button></div>
-        {sidebarInfo ? <div className="sidebar-popover" id="sidebar-info-popover" ref={sidebarPopoverRef} role="status"><strong>{sidebarInfo === 'help' ? '制作帮助' : '当前账号'}</strong><p>{sidebarInfo === 'help' ? '上传服装与参考图后，确认方案即可开始生成。历史视频可在记录中继续处理。' : `${actor?.username ?? '生产账号'} · ${roleLabel}${actor?.brandName ? ` · ${actor.brandName}` : ''}`}</p>{sidebarInfo === 'account' && system?.sharedAuthentication ? <button onClick={onSignOut}>退出登录</button> : sidebarInfo === 'account' && system?.phaseOneAdminId ? <button onClick={onSwitchDevelopmentActor}>切换为{devActorRole === 'admin' ? '普通用户' : '管理员'}</button> : <button onClick={() => onSidebarInfoChange(null)}>关闭</button>}</div> : null}
+        <div className="sidebar-utility" ref={sidebarUtilityRef}>{feedbackUrl ? <a href={feedbackUrl} target="_blank" rel="noopener noreferrer" aria-label="提交问题反馈（新窗口）" title="提交问题反馈"><HelpCircle size={17} /></a> : <button disabled aria-label="提交问题反馈" title="尚未配置反馈地址"><HelpCircle size={17} /></button>}<button onClick={() => onSidebarInfoChange(sidebarInfo === 'account' ? null : 'account')} aria-label="账号" title="账号" aria-expanded={sidebarInfo === 'account'} aria-controls={sidebarInfo === 'account' ? 'sidebar-info-popover' : undefined}><UserRound size={17} /></button></div>
+        {sidebarInfo ? <div className="sidebar-popover" id="sidebar-info-popover" ref={sidebarPopoverRef} role="status"><strong>当前账号</strong><p>{`${actor?.username ?? '生产账号'} · ${roleLabel}${actor?.brandName ? ` · ${actor.brandName}` : ''}`}</p>{sidebarInfo === 'account' && system?.sharedAuthentication ? <button onClick={onSignOut}>退出登录</button> : sidebarInfo === 'account' && system?.phaseOneAdminId ? <button onClick={onSwitchDevelopmentActor}>切换为{devActorRole === 'admin' ? '普通用户' : '管理员'}</button> : <button onClick={() => onSidebarInfoChange(null)}>关闭</button>}</div> : null}
       </div>
     </aside>
     <div className="app-body">

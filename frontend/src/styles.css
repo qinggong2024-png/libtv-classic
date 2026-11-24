@@ -199,9 +199,9 @@ h1, h2, h3, p { margin-top: 0; }
 .sidebar-status > span:first-child { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
 .sidebar-status > span:first-child.is-offline { background: var(--danger); }
 .sidebar-utility { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.sidebar-utility button { min-height: 44px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--muted); transition: transform .18s var(--ease-standard), box-shadow .18s ease, color .18s ease; }
-.sidebar-utility button:active { transform: scale(.96); }
-.sidebar-utility button:hover { background: var(--surface-soft); color: var(--text); }
+.sidebar-utility button, .sidebar-utility a { text-decoration: none; min-height: 44px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--muted); transition: transform .18s var(--ease-standard), box-shadow .18s ease, color .18s ease; }
+.sidebar-utility button:active, .sidebar-utility a:active { transform: scale(.96); }
+.sidebar-utility button:hover, .sidebar-utility a:hover { background: var(--surface-soft); color: var(--text); }
 .sidebar-popover { position: absolute; left: 0; right: 0; bottom: 98px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: var(--shadow-md); animation: popover-in .2s var(--ease-standard) both; }
 .sidebar-popover strong { font-size: 13px; }.sidebar-popover p { margin: 6px 0 9px; color: var(--text-secondary); font-size: 12px; line-height: 1.55; }.sidebar-popover button { min-height: 34px; padding: 0; border: 0; background: transparent; color: var(--primary); font-size: 12px; font-weight: 700; }
 .mobile-topbar { display: none; }

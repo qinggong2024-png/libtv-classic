@@ -44,7 +44,7 @@ function PageLoading() {
 
 function App() {
   const { view: requestedView, detailId, focusVariantId, adminSection, recordsFilter, recordsQuery, recordsRestoreScroll, setRecordsRestoreScroll, navigate, navigateRecords, openTaskFromRecords, closeTaskDetail } = useAppNavigation()
-  const [sidebarInfo, setSidebarInfo] = useState<'account' | 'help' | null>(null)
+  const [sidebarInfo, setSidebarInfo] = useState<'account' | null>(null)
   const [hasActiveImageTasks, setHasActiveImageTasks] = useState(false)
   const [imageNotificationTaskId, setImageNotificationTaskId] = useState<string | null>(null)
 
