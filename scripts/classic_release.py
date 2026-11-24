@@ -21,6 +21,9 @@ from urllib.request import ProxyHandler, build_opener
 from classic_active_release_status import report, verify_release
 from classic_v2_canary_preflight import check as check_tasks
 from classic_release_classifier import committed_changes
+from classic_isolated_frontend import (assess_isolated, prepare_isolated, publish_isolated,
+                                      record_receipt, receipt_for, http_digest, frontend_scope,
+                                      live_frontend_baseline, tree)
 
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE_PAID_UNKNOWN = 15
@@ -191,6 +194,15 @@ def publish_frontend(root: Path, expected_main: str, expected_api: str,
         if expected_sha != served_sha or expected_sha != disk_sha:
             result["blockers"].append("FRONTEND_HTTP_MISMATCH")
             result["ready"] = False
+        if result["ready"]:
+            result["receipt"] = record_receipt(root, {
+                "mode": result["releaseMode"], "candidateHead": expected_main,
+                "artifactSourceHead": expected_main, "frontendOld": before["frontendIndexSha256"],
+                "frontendNew": expected_sha, "servedFrontendSha256": served_sha,
+                "activeApiRevision": expected_api, "activeApiPort": result["activeApiPort"],
+                "activeConfigRevision": result["activeConfigRevision"], "activeSchemaRevision": result["activeSchemaRevision"],
+                "rollbackIndex": str(backup),
+            })
         return result
 
 
@@ -205,7 +217,8 @@ def plan_release(root: Path, *, base: str) -> dict:
     if changes["mode"] == "no-runtime-change":
         action = "no-deploy-needed"
     elif front:
-        action = "frontend-hot-publish-after-diff-and-api-review"
+        action = ("prepare-isolated-frontend-candidate" if "BACKEND_MAIN_NOT_ACTIVE" in reasons
+                  else "frontend-hot-publish-after-diff-and-api-review")
     elif changes["mode"] == "api-canary-review":
         action = "api-compatibility-review-and-standby-provenance-required"
     elif changes["mode"] == "worker-handoff-required":
@@ -214,8 +227,11 @@ def plan_release(root: Path, *, base: str) -> dict:
         action = "maintenance-or-manual-review-required"
     if not front and changes["mode"] != "no-runtime-change":
         reasons.append("NOT_AUTOMATICALLY_HOT_DEPLOYABLE")
+    projected = frontend_scope(root, base, changes["target"]) if "paths" in changes and not front and changes.get("base") else None
     return {
         "changes": changes,
+        "isolatedFrontendScope": projected,
+        "isolatedFrontendNextAction": "prepare-isolated" if projected and projected["frontendHotEligible"] else None,
         "online": live,
         "nextAction": action,
         "canHotPublishFrontend": front and not reasons,
@@ -223,9 +239,59 @@ def plan_release(root: Path, *, base: str) -> dict:
     }
 
 
+def plan_live_frontend(root: Path) -> dict:
+    """Read-only discovery of exact pins for the next reviewed frontend release."""
+    state = report(root)
+    active = state.get("activeApi") or {}
+    main = (state.get("mainCheckout") or {}).get("gitHead")
+    result = {
+        "releaseMode": "frontend-live-plan", "mainHead": main,
+        "activeApiHead": active.get("gitHead"), "activeApiPort": state.get("activeApiPort"),
+        "activeApiRevision": active.get("sourceRevision"),
+        "frontendIndexSha256": state.get("frontendIndexSha256"),
+        "fullMainApiMatches": (state.get("mainCheckout") or {}).get("matchesRunning") is True,
+        "liveHealthy": state.get("ok") is True,
+        "ready": False, "blockers": [],
+        "nextAction": "inspect-live-release-before-retry",
+    }
+    try:
+        if not state.get("ok") or active.get("diskMatchesRunning") is not True:
+            result["blockers"].append("LIVE_CLASSIC_UNHEALTHY_OR_API_DISK_DRIFT")
+        elif state.get("admissionPaused") is not False:
+            result["blockers"].append("ADMISSION_NOT_OPEN")
+        elif (git(root, "branch", "--show-current") != "main"
+              or git(root, "rev-parse", "HEAD") != main
+              or git(root, "diff", "--numstat", "HEAD", "--")
+              or git(root, "ls-files", "--others", "--exclude-standard")):
+            result["blockers"].append("PRODUCTION_MAIN_CHANGED_OR_DIRTY")
+        else:
+            baseline = live_frontend_baseline(root, state)
+            if not baseline:
+                result["blockers"].append("LIVE_FRONTEND_SOURCE_RECEIPT_REQUIRED")
+            else:
+                result["baseline"] = baseline
+                base = baseline["base"]
+                if tree(root, base) == tree(root, main):
+                    result.update(ready=True, nextAction="frontend-already-current")
+                else:
+                    scope = frontend_scope(root, base, main)
+                    result["changes"] = scope
+                    if scope["frontendHotEligible"]:
+                        result.update(ready=True, nextAction="review-api-compatibility-and-prepare-isolated",
+                            prepareArgs=["--change-base", base, "--approved-frontend-head", main,
+                                "--expected-main-head", main, "--expected-api-revision", active["sourceRevision"],
+                                "--expected-old-frontend", state["frontendIndexSha256"]])
+                    else:
+                        result["blockers"].append("FRONTEND_CHANGE_SCOPE_NOT_VERIFIED")
+                        result["nextAction"] = "manual-contract-or-dependency-review"
+    except (OSError, ValueError, subprocess.SubprocessError):
+        result["blockers"].append("LIVE_FRONTEND_PROVENANCE_UNVERIFIED")
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("status", "check", "plan", "publish", "publish-frontend", "verify"))
+    parser.add_argument("command", choices=("status", "check", "plan", "plan-live-frontend", "publish", "publish-frontend", "verify", "prepare-isolated", "plan-isolated", "publish-isolated", "verify-isolated"))
     parser.add_argument("--change-base", help="Approved prior commit for exact change-scope verification")
     parser.add_argument("--apply", action="store_true", help="Required for publish-frontend")
     parser.add_argument("--frontend-only", action="store_true", help="Approved API-compatible frontend-only release; task counts are informational")
@@ -234,9 +300,72 @@ def main() -> int:
     parser.add_argument("--expected-api-revision")
     parser.add_argument("--expected-frontend-sha256")
     parser.add_argument("--baseline-unknown", type=int, default=BASELINE_PAID_UNKNOWN)
+    parser.add_argument("--candidate-root", type=Path, help="Isolated checkout composed of live API base and approved frontend")
+    parser.add_argument("--expected-candidate-head", help="Full isolated candidate commit")
+    parser.add_argument("--approved-frontend-head", help="Full reviewed frontend source commit, ancestor of main")
+    parser.add_argument("--reviewed-api-compatible", action="store_true", help="Explicit approval of the exact frontend/API compatibility")
     args = parser.parse_args()
     if args.baseline_unknown < 0:
         parser.error("--baseline-unknown must be nonnegative")
+    if args.command == "plan-live-frontend":
+        result = plan_live_frontend(ROOT)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ready"] else 2
+    if args.command == "prepare-isolated":
+        if not args.candidate_root or not args.apply:
+            parser.error("prepare-isolated requires a new --candidate-root and --apply")
+        try:
+            result = prepare_isolated(ROOT, args.candidate_root, base=args.change_base,
+                approved=args.approved_frontend_head, main=args.expected_main_head,
+                api=args.expected_api_revision, old=args.expected_old_frontend)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            result = {"ready": False, "blockers": [str(error)], "frontendPublished": False}
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ready"] else 2
+    if args.command in {"plan-isolated", "publish-isolated"}:
+        if not args.candidate_root:
+            parser.error("isolated release requires --candidate-root")
+        pins = dict(base=args.change_base, approved=args.approved_frontend_head,
+                    main=args.expected_main_head, api=args.expected_api_revision,
+                    old=args.expected_old_frontend, candidate_head=args.expected_candidate_head)
+        if args.command == "publish-isolated":
+            if not args.apply or not args.reviewed_api_compatible:
+                parser.error("publish-isolated requires --apply and --reviewed-api-compatible")
+            try:
+                result = publish_isolated(ROOT, args.candidate_root, lock=release_lock, **pins)
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+                result = {"ready": False, "blockers": [str(error)], "frontendPublished": False,
+                          "nextAction": "inspect-release-status-and-receipt-before-retry"}
+        else:
+            result = assess_isolated(ROOT, args.candidate_root, **pins)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ready"] else 2
+    if args.command == "verify-isolated":
+        # Independent acceptance: verify exact published receipt and active API,
+        # not whether unrelated main backend work has been activated.
+        result = assess(ROOT, args.expected_main_head, args.expected_api_revision, frontend_only=True)
+        result["fullMainApiMatches"] = "BACKEND_MAIN_NOT_ACTIVE" not in result["blockers"]
+        result["warnings"] = [] if result["fullMainApiMatches"] else ["UNRELATED_MAIN_API_DRIFT"]
+        result["blockers"] = [b for b in result["blockers"] if b != "BACKEND_MAIN_NOT_ACTIVE"]
+        if result["admissionPaused"] is not False:
+            result["blockers"].append("ADMISSION_NOT_OPEN")
+        from classic_isolated_frontend import SHA40, SHA64
+        if not all(isinstance(v, str) and SHA40.fullmatch(v) for v in (args.expected_main_head, args.approved_frontend_head)) or not all(
+                isinstance(v, str) and SHA64.fullmatch(v) for v in (args.expected_api_revision, args.expected_frontend_sha256)):
+            result["blockers"].append("FULL_PINNED_REVISIONS_REQUIRED")
+        else:
+            try:
+                git(ROOT, "merge-base", "--is-ancestor", args.approved_frontend_head, args.expected_main_head)
+                if result["frontendIndexSha256"] != args.expected_frontend_sha256 or http_digest() != args.expected_frontend_sha256:
+                    result["blockers"].append("FRONTEND_HTTP_MISMATCH")
+                elif not receipt_for(ROOT, args.expected_frontend_sha256, args.approved_frontend_head, active=result):
+                    result["blockers"].append("LIVE_FRONTEND_SOURCE_RECEIPT_REQUIRED")
+            except (OSError, ValueError, subprocess.SubprocessError):
+                result["blockers"].append("FRONTEND_PROVENANCE_OR_HTTP_UNVERIFIED")
+        result["ready"] = not result["blockers"]
+        result["releaseMode"] = "isolated-frontend-hot"
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ready"] else 2
     if args.command == "plan":
         if not args.change_base:
             parser.error("plan requires --change-base (approved prior Git commit)")

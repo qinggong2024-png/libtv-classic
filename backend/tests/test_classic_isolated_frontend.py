@@ -1,0 +1,177 @@
+"""Independent frontend release tests use temporary Git and static trees only."""
+import hashlib
+import json
+import subprocess
+import sys
+from contextlib import nullcontext
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+import classic_isolated_frontend as mod
+
+
+def commit(root, message):
+    mod.git(root, "add", ".")
+    mod.git(root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", message)
+    return mod.git(root, "rev-parse", "HEAD")
+
+
+@pytest.fixture
+def release(tmp_path, monkeypatch):
+    root = tmp_path / "main"
+    root.mkdir()
+    mod.git(root, "init", "-b", "main")
+    (root / ".gitignore").write_text("var/\nfrontend/dist/\nfrontend/dist-build/\n")
+    (root / "frontend" / "src").mkdir(parents=True)
+    (root / "frontend" / "src" / "App.tsx").write_text("old")
+    (root / "backend").mkdir()
+    (root / "backend" / "api.py").write_text("active")
+    base = commit(root, "live")
+    (root / "backend" / "api.py").write_text("pending")
+    (root / "frontend" / "src" / "App.tsx").write_text("new")
+    main = commit(root, "mixed main")
+    candidate = tmp_path / "candidate"
+    mod.git(root, "worktree", "add", "--detach", str(candidate), base)
+    (candidate / "frontend" / "src" / "App.tsx").write_text("new")
+    candidate_head = commit(candidate, "approved frontend only")
+    dist = root / "frontend" / "dist"
+    dist.mkdir()
+    entry = dist / "index.html"
+    entry.write_bytes(b"old")
+    old = mod.digest(entry)
+    api = "a" * 64
+    mod.record_receipt(root, {"candidateHead": base, "frontendNew": old, "servedFrontendSha256": old})
+    def live(_):
+        return {"ok": True, "userUrl": "http://192.168.30.126:5176/", "activeApiPort": 8002,
+                "mainCheckout": {"gitHead": main, "matchesRunning": False},
+                "activeApi": {"sourceRevision": api, "diskMatchesRunning": True,
+                              "gitHead": base, "root": str(tmp_path / "running-api")},
+                "activeConfigRevision": "config", "activeSchemaRevision": "schema",
+                "admissionPaused": False, "frontendIndexSha256": mod.digest(entry)}
+    monkeypatch.setattr(mod, "report", live)
+    monkeypatch.setattr(mod, "workspace_source_revision", lambda _: api)
+    monkeypatch.setattr(mod, "http_digest", lambda path="/": mod.digest(entry if path == "/" else dist / path.lstrip("/")))
+    pins = dict(base=base, approved=main, main=main, api=api, old=old, candidate_head=candidate_head)
+    return root, candidate, pins
+
+
+def test_isolated_frontend_is_not_blocked_by_unrelated_main_api(release):
+    root, candidate, pins = release
+    result = mod.assess_isolated(root, candidate, **pins)
+    assert result["ready"], result
+    assert result["warnings"] == ["UNRELATED_MAIN_API_DRIFT"]
+    assert result["changes"]["excludedMainPaths"] == ["backend/api.py"]
+
+
+def test_refuses_dirty_candidate_or_api_fingerprint_mismatch(release, monkeypatch):
+    root, candidate, pins = release
+    (candidate / "backend" / "api.py").write_text("different")
+    monkeypatch.setattr(mod, "workspace_source_revision", lambda _: "b" * 64)
+    result = mod.assess_isolated(root, candidate, **pins)
+    assert not result["ready"]
+    assert "CANDIDATE_CHANGED_OR_DIRTY" in result["blockers"]
+    assert "CANDIDATE_API_FINGERPRINT_MISMATCH" in result["blockers"]
+
+
+def test_refuses_candidate_with_unreleased_backend_even_if_fingerprint_mock_matches(release):
+    root, candidate, pins = release
+    (candidate / "backend" / "api.py").write_text("different")
+    pins["candidate_head"] = commit(candidate, "not frontend only")
+    result = mod.assess_isolated(root, candidate, **pins)
+    assert "CANDIDATE_NON_FRONTEND_DIFFERS_FROM_ACTIVE" in result["blockers"]
+
+
+def test_refuses_missing_receipt_or_changed_live_index(release):
+    root, candidate, pins = release
+    for receipt in mod.history(root).glob("*.json"):
+        receipt.unlink()
+    assert "LIVE_FRONTEND_SOURCE_RECEIPT_REQUIRED" in mod.assess_isolated(root, candidate, **pins)["blockers"]
+    (root / "frontend" / "dist" / "index.html").write_bytes(b"changed")
+    assert "FRONTEND_BASELINE_CHANGED" in mod.assess_isolated(root, candidate, **pins)["blockers"]
+
+
+def prepare_stage(candidate, monkeypatch):
+    real_run = subprocess.run
+    def build(args, **kwargs):
+        if args[0] == "npm-test":
+            stage = candidate / "frontend" / "dist-build"
+            (stage / "assets").mkdir(parents=True, exist_ok=True)
+            (stage / "assets" / "index-new.js").write_bytes(b"new asset")
+            (stage / "index.html").write_text('<script src="/assets/index-new.js"></script>')
+            return subprocess.CompletedProcess(args, 0)
+        return real_run(args, **kwargs)
+    monkeypatch.setattr(mod.shutil, "which", lambda _: "npm-test")
+    monkeypatch.setattr(mod.subprocess, "run", build)
+
+
+def test_publish_installs_assets_and_records_verified_receipt(release, monkeypatch):
+    root, candidate, pins = release
+    prepare_stage(candidate, monkeypatch)
+    result = mod.publish_isolated(root, candidate, lock=lambda _: nullcontext(), **pins)
+    assert result["ready"] and result["frontendPublished"]
+    assert result["frontendNew"] == result["servedFrontendSha256"]
+    assert Path(result["rollbackIndex"]).read_bytes() == b"old"
+    assert mod.receipt_for(root, result["frontendNew"], pins["approved"], active=result)
+    assert (root / "frontend" / "dist" / "assets" / "index-new.js").read_bytes() == b"new asset"
+
+
+def test_failed_http_asset_check_restores_our_old_index(release, monkeypatch):
+    root, candidate, pins = release
+    prepare_stage(candidate, monkeypatch)
+    real_http = mod.http_digest
+    monkeypatch.setattr(mod, "http_digest", lambda path="/": "bad" if path.startswith("/assets/") else real_http(path))
+    with pytest.raises(RuntimeError, match="HTTP_ASSET_MISMATCH"):
+        mod.publish_isolated(root, candidate, lock=lambda _: nullcontext(), **pins)
+    assert (root / "frontend" / "dist" / "index.html").read_bytes() == b"old"
+
+
+def test_concurrent_frontend_switch_blocks_before_index_write(release, monkeypatch):
+    root, candidate, pins = release
+    prepare_stage(candidate, monkeypatch)
+    original = mod.assess_isolated
+    calls = 0
+    def assess(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            (root / "frontend" / "dist" / "index.html").write_bytes(b"other release")
+        return original(*args, **kwargs)
+    monkeypatch.setattr(mod, "assess_isolated", assess)
+    result = mod.publish_isolated(root, candidate, lock=lambda _: nullcontext(), **pins)
+    assert not result["ready"]
+    assert (root / "frontend" / "dist" / "index.html").read_bytes() == b"other release"
+
+
+def test_immutable_asset_collision_blocks_without_overwriting(tmp_path):
+    stage, dist = tmp_path / "stage", tmp_path / "dist"
+    for folder, data in ((stage, b"new"), (dist, b"old")):
+        (folder / "assets").mkdir(parents=True)
+        (folder / "assets" / "same.js").write_bytes(data)
+        (folder / "index.html").write_text('<script src="/assets/same.js"></script>')
+    with pytest.raises(ValueError, match="IMMUTABLE_ASSET_COLLISION"):
+        mod.staged_files(stage, dist)
+    assert (dist / "assets" / "same.js").read_bytes() == b"old"
+
+
+
+def test_prepare_builds_fresh_candidate_without_touching_main(release):
+    root, candidate, pins = release
+    new_path = candidate.parent / "fresh"
+    result = mod.prepare_isolated(root, new_path, **{k: v for k, v in pins.items() if k != "candidate_head"})
+    assert result["ready"], result
+    assert mod.git(root, "rev-parse", "HEAD") == pins["main"]
+    assert (new_path / "backend" / "api.py").read_text() == "active"
+    assert (new_path / "frontend" / "src" / "App.tsx").read_text() == "new"
+    with pytest.raises(ValueError, match="PATH_MUST_BE_NEW"):
+        mod.prepare_isolated(root, new_path, **{k: v for k, v in pins.items() if k != "candidate_head"})
+
+
+def test_frontend_api_contract_diff_still_blocks(release):
+    root, candidate, pins = release
+    for worktree in (root, candidate):
+        (worktree / "frontend" / "src" / "api.ts").write_text("new API contract")
+    pins["main"] = pins["approved"] = commit(root, "contract change")
+    pins["candidate_head"] = commit(candidate, "contract candidate")
+    assert not mod.frontend_scope(root, pins["base"], pins["approved"])["frontendHotEligible"]
