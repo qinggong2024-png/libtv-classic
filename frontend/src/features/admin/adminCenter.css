@@ -399,3 +399,56 @@
 
 /* Preserve the pinned administrator source; remove redundant breadcrumb visually. */
 .admin-view .admin-content-heading>span { display: none; }
+
+/* Admin wide workspace: let account tables use the desktop canvas rather than a centered 1280px cap. */
+.page-view.admin-view {
+  width: calc(100% - 48px);
+  max-width: none;
+  margin-inline: 24px;
+}
+.admin-view .admin-page-heading {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+.admin-view .admin-layout { grid-template-columns: 184px minmax(0, 1fr); gap: 20px; }
+.admin-view .admin-sidebar {
+  top: 20px;
+  padding: 6px 4px 10px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.admin-view .admin-main,
+.admin-view .admin-section-content,
+.admin-view .account-workspace,
+.admin-view .admin-usage-panel { min-width: 0; }
+.admin-view .admin-content-heading { padding: 3px 0 13px; margin-bottom: 13px; }
+.admin-view .admin-usage-table { width: 100%; min-width: 900px; }
+.admin-view .admin-usage-table :is(th, td) { padding-inline: 12px; }
+.admin-view .ops-overview { margin-bottom: 13px; }
+.admin-view .ops-key-metrics > div { min-height: 98px; }
+.admin-view .ops-management-details { margin-top: 6px; }
+@media (max-width: 1120px) {
+  .page-view.admin-view { width: calc(100% - 32px); margin-inline: 16px; }
+  .admin-view .admin-layout { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .admin-view .admin-sidebar {
+    position: static;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    padding: 8px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface);
+  }
+}
+@media (max-width: 760px) {
+  .admin-view .admin-sidebar { display: flex; gap: 12px; overflow-x: auto; }
+}
