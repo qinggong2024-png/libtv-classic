@@ -29,6 +29,7 @@ export function mergeImageHistory(tasks: ImageGenerationTask[], batches: ImageGe
         storyboardShots: item.storyboardShots?.map((shot) => ({ ...shot, id: `shot-${shot.order}` })) ?? local?.storyboardShots ?? [],
         status: item.status,
         batchId: batch.id,
+        batchName: batch.name ?? local?.batchName,
         clientBatchId: batch.clientBatchId ?? local?.clientBatchId ?? null,
         providerTaskId: item.providerTaskId,
         providerTaskIds: item.providerTaskIds ?? (item.providerTaskId ? [item.providerTaskId] : []),

@@ -3,6 +3,7 @@ import {
   History,
   LoaderCircle,
   PackageOpen,
+  Plus,
   UploadCloud,
   X,
 } from 'lucide-react'
@@ -197,6 +198,18 @@ export function SubjectInputPanel({
     onUploadedFilesChange(next)
   }
 
+  const uploadButton = <button type="button" className="upload-zone subject-unified-upload" disabled={disabled || references.length >= 2 + SUBJECT_MAX_DETAIL_IMAGES} onClick={() => inputRef.current?.click()} onDragOver={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        event.dataTransfer.dropEffect = disabled ? 'none' : 'copy'
+      }} onDrop={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        if (!disabled) selectPanelDropFiles(Array.from(event.dataTransfer.files))
+      }}>
+        <span className="upload-icon">{className.includes("v6-subject") ? <Plus size={22}/> : <UploadCloud size={22} />}</span>
+        <span><strong>{references.length ? (className.includes('v6-subject') ? '添加' : '继续添加参考图') : className.includes('v6-subject') ? '点击或拖入' : '拖拽或点击上传参考图'}</strong><small>第一张为主参考，其余补充细节</small></span>
+      </button>
   const errorId = `${id}-error`
   return <section
     className={panelClassName}
@@ -219,7 +232,7 @@ export function SubjectInputPanel({
   >
     <header className="subject-input-panel__header">
       <div>
-        <h2 id={`${id}-title`}>人物 / 商品参考图（选填）</h2>
+        <h2 id={`${id}-title`}>{className.includes("v6-subject") ? "商品 / 人物参考图" : "人物 / 商品参考图（选填）"}</h2>
         <p>让人物长相或商品外观更一致</p>
       </div>
       <div className="subject-input-panel__header-actions" role="group" aria-label="参考图来源">
@@ -251,18 +264,7 @@ export function SubjectInputPanel({
         selectPanelDropFiles(Array.from(event.currentTarget.files ?? []))
         event.currentTarget.value = ''
       }} />
-      <button type="button" className="upload-zone subject-unified-upload" disabled={disabled || references.length >= 2 + SUBJECT_MAX_DETAIL_IMAGES} onClick={() => inputRef.current?.click()} onDragOver={(event) => {
-        event.preventDefault()
-        event.stopPropagation()
-        event.dataTransfer.dropEffect = disabled ? 'none' : 'copy'
-      }} onDrop={(event) => {
-        event.preventDefault()
-        event.stopPropagation()
-        if (!disabled) selectPanelDropFiles(Array.from(event.dataTransfer.files))
-      }}>
-        <span className="upload-icon"><UploadCloud size={22} /></span>
-        <span><strong>{references.length ? '继续添加参考图' : '拖拽或点击上传参考图'}</strong><small>第一张为主参考，其余补充细节</small></span>
-      </button>
+      {(!className.includes("v6-subject") || !references.length) ? uploadButton : null}
       {references.length ? <div className="subject-reference-previews" role="list" aria-label="已上传的人物或商品参考图">
         {references.map((reference, index) => {
           const slot: SubjectDragSlot = reference.angle === 'FRONT' ? { slot: 'frontalImage' } : reference.angle === 'BACK' ? { slot: 'backImage' } : { slot: 'detailImages', index: uploadedFiles.detailImages.indexOf(reference.file) }
@@ -293,6 +295,7 @@ export function SubjectInputPanel({
             }}><X aria-hidden="true" size={15} /></button>
           </div>
         })}
+        {className.includes("v6-subject") && references.length < 2 + SUBJECT_MAX_DETAIL_IMAGES ? uploadButton : null}
       </div> : null}
     </div> : null}
 

@@ -81,6 +81,7 @@ export interface ImageGenerationTask {
   status: ImageTaskStatus
   batchId: string | null
   clientBatchId?: string | null
+  batchName?: string
   providerTaskId: string | null
   providerTaskIds: string[]
   modelId: string
@@ -113,6 +114,10 @@ export interface ImageCenterDraft {
   id: string
   name: string
   activeTab: ImageCenterTab
+  siteProfileId?: string
+  pendingDrafts?: ImageCenterDraftSnapshot[]
+  draftOrder?: string[]
+  pendingSubmission?: { draftId: string; clientBatchId: string } | null
   model: ImageAssetSet
   outfits: OutfitDraft[]
   config: ImageCenterConfig
@@ -120,6 +125,8 @@ export interface ImageCenterDraft {
   selectedOutputIds: string[]
   updatedAt: string
 }
+
+export type ImageCenterDraftSnapshot = Pick<ImageCenterDraft, 'id' | 'name' | 'siteProfileId' | 'model' | 'outfits' | 'config'>
 
 export interface StoryboardShot {
   id: string

@@ -2,12 +2,13 @@ import { ChevronRight, RotateCcw, SlidersHorizontal } from 'lucide-react'
 import type { ReactNode } from 'react'
 import './generationSettings.css'
 
-export function GenerationAdvancedSettings({ children, summary, customized, disabled, onReset }: {
+export function GenerationAdvancedSettings({ children, summary, customized, disabled, onReset, alwaysOpen = false }: {
   children: ReactNode
   summary: string
   customized: boolean
   disabled?: boolean
   onReset: () => void
+  alwaysOpen?: boolean
 }) {
   const scrollToOpenedSettings = (details: HTMLDetailsElement) => {
     if (!details.open) return
@@ -18,6 +19,10 @@ export function GenerationAdvancedSettings({ children, summary, customized, disa
     })
   }
 
+  if (alwaysOpen) return <div className="v6-config-controls">
+    <button type="button" className="text-button v6-reset" disabled={disabled} onClick={onReset}><RotateCcw size={14}/>恢复推荐</button>
+    <fieldset className="generation-advanced__fields" disabled={disabled}>{children}</fieldset>
+  </div>
   return <details className="generation-advanced" onToggle={(event) => {
     if (event.target === event.currentTarget) scrollToOpenedSettings(event.currentTarget)
   }}>

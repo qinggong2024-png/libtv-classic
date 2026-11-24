@@ -1,5 +1,5 @@
 import { errorMessage, plainText } from '../../errorPresentation'
-import { Film, Images, Lightbulb, LoaderCircle, RefreshCw, UploadCloud, X } from 'lucide-react'
+import { ArrowRight, Film, Images, LoaderCircle, Plus, RefreshCw, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, createDeepVideoTask, getDeepVideoStatus, getTask, querySubmissionRecovery, uploadReferenceVideo, uploadStoryboard, type DeepVideoMode, type DeepVideoStatus } from '../../api'
 import { IMAGE_FILE_ACCEPT, isSupportedImageFile } from '../../imageFiles'
@@ -17,6 +17,7 @@ import { DepthVideoHistoryPicker } from './DepthVideoHistoryPicker'
 import { AccountSiteField } from './CutflowSiteSelect'
 import { useAccountSiteSelection } from '../../useAccountSiteSelection'
 import { GenerationAdvancedSettings } from '../../shared/components/GenerationAdvancedSettings'
+import './creationRemix.css'
 
 const DEFAULT_PROMPT = '保持参考视频的镜头顺序、人物动作、运镜和节奏，用目标参考图中的人物与服装替换原主体。'
 
@@ -35,6 +36,8 @@ export function VideoRecreationPanel({ actorId, imageDraftScope = actorId, activ
   const [background, setBackground] = useState<Material | null>(() => seed?.background ? { id: createUuid(), file: seed.background } : null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [imagesDragging, setImagesDragging] = useState(false)
+  const [videoDragging, setVideoDragging] = useState(false)
+  const videoDragDepth = useRef(0)
   const imageInputRef = useRef<HTMLInputElement>(null)
   const backgroundInputRef = useRef<HTMLInputElement>(null)
   const imageDragDepth = useRef(0)
@@ -197,29 +200,25 @@ export function VideoRecreationPanel({ actorId, imageDraftScope = actorId, activ
   const videoError = metadataFailed ? '浏览器无法解码此视频，请更换有效的 MP4 或 MOV 文件。' : referenceVideoError(mode, metadata)
   const ready = Boolean(siteProfileId && reference && !videoError && !mentionError && status?.enabled && !locked && (mode === 'depth' || (images.length && prompt.trim())))
   return <section className="video-recreation" aria-label="爆款视频复刻配置">
-    <header className="video-recreation-head">
-      <div><span className="section-kicker">视频复刻</span><h2>上传参考视频，换成你的人物和商品</h2><p>按照参考视频的动作和拍摄方式，用你上传的人物、服装或商品图片生成新视频。</p></div>
-    </header>
-    <div className="video-recreation-body">
-      <fieldset className="recreation-paths" disabled={locked}><legend>选择复刻方式</legend>
-        <label><input type="radio" name="recreation-path" checked={path === 'quick'} onChange={() => { setPath('quick'); setMode('recreate'); if (referenceType !== 'original') { setReference(null); setMetadata(null); setMetadataFailed(false) }; setReferenceType('original'); setError('') }} /><span><strong>一键复刻爆款<em>新手推荐</em></strong><small>上传原片与目标图片，自动提取并完成复刻。</small></span></label>
-        <label><input type="radio" name="recreation-path" checked={path === 'deep'} onChange={() => { setPath('deep'); setMode('depth'); if (referenceType !== 'original') { setReference(null); setMetadata(null); setMetadataFailed(false) }; setReferenceType('original'); setError('') }} /><span><strong>深度提取与复刻</strong><small>分步查看深度结果，可重复用于不同人物与商品。</small></span></label>
-      </fieldset>
-      {path === 'deep' ? <div className="recreation-steps" role="group" aria-label="深度操作步骤">
-        <button type="button" aria-pressed={mode === 'depth'} disabled={locked} onClick={() => { if (referenceType !== 'original') { setReference(null); setMetadata(null); setMetadataFailed(false) }; setMode('depth'); setReferenceType('original'); setError('') }}><span>1</span>提取深度视频</button>
-        <button type="button" aria-pressed={mode === 'recreate'} disabled={locked} onClick={() => { if (referenceType !== 'depth') { setReference(null); setMetadata(null); setMetadataFailed(false) }; setMode('recreate'); setReferenceType('depth'); setError('') }}><span>2</span>用深度视频复刻</button>
-      </div> : <div className="creation-guidance"><RefreshCw size={17} /><p><strong>上传视频和目标图，即可开始。</strong> 深度提取与人物、商品替换会自动依次完成。</p></div>}
-      <div className={`video-recreation-grid${mode === 'depth' ? ' video-recreation-grid--depth' : ''}`}>
-
+    <div className="video-recreation-body recreation-workbench">
+      <div className="recreation-materials">
+        <h2>添加复刻素材</h2>
         <div className="video-reference-column">
-          <div className="deep-video-image-heading"><strong>{referenceType === 'depth' ? '① 添加已提取的深度视频' : '① 上传参考视频'}</strong><span>{mode === 'depth' ? '只需一段原片' : '保留镜头与节奏'}</span></div>
-        <section className={`video-reference-upload${reference ? ' has-video' : ''}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); selectVideo(event.dataTransfer.files[0]) }}>
+          <div className="deep-video-image-heading"><strong>{referenceType === 'depth' ? '深度视频' : '参考视频'}</strong></div>
+        <section className={`video-reference-upload${reference ? ' has-video' : ''}${videoDragging && !locked ? ' is-dragging' : ''}`}
+          onDragEnter={event => { event.preventDefault(); if (!locked && event.dataTransfer.types.includes('Files')) { videoDragDepth.current += 1; setVideoDragging(true) } }}
+          onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = locked ? 'none' : 'copy' }}
+          onDragLeave={event => { event.preventDefault(); videoDragDepth.current = Math.max(0, videoDragDepth.current - 1); if (!videoDragDepth.current) setVideoDragging(false) }}
+          onDrop={event => { event.preventDefault(); videoDragDepth.current = 0; setVideoDragging(false); selectVideo(event.dataTransfer.files[0]) }}>
           <input ref={inputRef} aria-label={referenceType === 'depth' ? '深度视频' : '参考视频'} hidden type="file" accept=".mp4,.mov,video/mp4,video/quicktime" disabled={locked} onChange={(event) => { selectVideo(event.target.files?.[0]); event.target.value = '' }} />
-          {reference ? <div className="video-reference-preview"><video ref={previewRef} controls playsInline preload="metadata" onLoadedMetadata={(event) => { const video = event.currentTarget; setMetadata({ duration: video.duration, width: video.videoWidth, height: video.videoHeight }); setMetadataFailed(false) }} onError={() => setMetadataFailed(true)} /><small>{reference.name} · {(reference.size / 1024 / 1024).toFixed(1)} MB{metadata ? ` · ${metadata.duration.toFixed(2)} 秒 · ${metadata.width} × ${metadata.height}` : ''}</small><button type="button" className="video-reference-replace" disabled={locked} onClick={() => inputRef.current?.click()}><RefreshCw size={15} />{referenceType === 'depth' ? '更换深度视频' : '更换参考视频'}</button></div> : <button type="button" className="video-reference-dropzone" disabled={locked} onClick={() => inputRef.current?.click()}><span className="video-reference-icon"><UploadCloud size={24} /></span><strong>{referenceType === 'depth' ? '拖拽或点击上传深度视频' : '拖拽或点击上传参考视频'}</strong><small>MP4、MOV · 最多 200 MB</small><small>{mode === 'recreate' ? '人物与商品替换支持 4–15 秒' : '深度提取最长 10 分钟'}</small></button>}
+          {reference ? <div className="video-reference-preview"><video ref={previewRef} controls playsInline preload="metadata" style={metadata && metadata.width > 0 && metadata.height > 0 ? { aspectRatio: String(metadata.width / metadata.height), width: "min(100%, calc(min(290px, 37vh) * " + metadata.width / metadata.height + "))", height: "auto" } : undefined} onLoadedMetadata={(event) => { const video = event.currentTarget; setMetadata({ duration: video.duration, width: video.videoWidth, height: video.videoHeight }); setMetadataFailed(false) }} onError={() => setMetadataFailed(true)} /><div className="recreation-video-meta"><div><strong title={reference.name}>{reference.name}</strong><small>{(reference.size / 1024 / 1024).toFixed(1)} MB{metadata ? ` · ${metadata.duration.toFixed(2)} 秒 · ${metadata.width} × ${metadata.height}` : ''}</small></div><button type="button" className="video-reference-replace" disabled={locked} onClick={() => inputRef.current?.click()}><RefreshCw size={15}/>更换</button><button type="button" className="recreation-icon-button" aria-label="移除参考视频" disabled={locked} onClick={() => { setReference(null); setMetadata(null); setMetadataFailed(false); setError(''); setNotice('') }}><X size={16}/></button></div></div> : <button type="button" className="video-reference-dropzone" disabled={locked} onClick={() => inputRef.current?.click()}><span className="video-reference-icon"><Plus size={24}/></span><strong>{videoDragging ? '松开即可上传' : '点击或拖入视频'}</strong><small>MP4 / MOV · 200 MB 以内 · {mode === 'recreate' ? '4–15 秒' : '最长 10 分钟'}</small></button>}
         </section>
         </div>
-        <div className="video-recreation-settings">
-          {mode === 'recreate' ? <>
+      {mode === 'recreate' && referenceType === 'depth' ? <div className="video-source-help">
+        <button type="button" className="text-button" disabled={locked} onClick={() => setDepthHistoryOpen(true)}><Film size={15} />从历史结果选择</button>
+
+      </div> : null}
+        {mode === 'recreate' ? <>
             <section className={`deep-video-image-upload${imagesDragging && !locked ? ' is-dragging' : ''}`} aria-label="目标人物 / 商品参考图" aria-disabled={locked}
               onDragEnter={(event) => {
                 event.preventDefault()
@@ -242,43 +241,48 @@ export function VideoRecreationPanel({ actorId, imageDraftScope = actorId, activ
                 setImagesDragging(false)
                 addImages(Array.from(event.dataTransfer.files))
               }}>
-              <div className="deep-video-image-heading"><strong>② 上传目标人物 / 商品图</strong><span aria-live="polite">{images.length}/{background ? 4 : 5} 张</span></div>
+              <div className="deep-video-image-heading"><strong>目标人物 / 商品图 <span className="recreation-count" aria-live="polite">{images.length}/{background ? 4 : 5}</span></strong><button type="button" className="text-button deep-video-history-button" disabled={locked || images.length >= (background ? 4 : 5) || !imageDraftScope} onClick={() => setHistoryOpen(true)}><Images size={15}/>生图记录</button></div>
               <input ref={imageInputRef} aria-label="目标参考图" hidden type="file" multiple accept={IMAGE_FILE_ACCEPT} disabled={locked || images.length >= (background ? 4 : 5)} onChange={(event) => {
                 addImages(Array.from(event.target.files ?? []))
                 event.target.value = ''
               }} />
-              <button type="button" className="deep-video-image-dropzone" disabled={locked || images.length >= (background ? 4 : 5)} onClick={() => imageInputRef.current?.click()}>
-                <UploadCloud size={23} />
-                <span><strong>{images.length >= (background ? 4 : 5) ? `已添加 ${background ? 4 : 5} 张参考图` : imagesDragging ? '松开即可添加参考图' : images.length ? '拖拽或点击继续添加' : '拖拽或点击上传参考图'}</strong><small>{images.length >= (background ? 4 : 5) ? '移除一张后可继续添加' : `1–${background ? 4 : 5} 张 JPG、PNG、WebP · 每张最多 10 MB`}</small></span>
-              </button>
-              <button type="button" className="text-button deep-video-history-button" disabled={locked || images.length >= (background ? 4 : 5) || !imageDraftScope} onClick={() => setHistoryOpen(true)}><Images size={16} />从生图记录选择</button>
-              {images.length ? <ol className="deep-video-images" aria-label="已添加的目标参考图">{images.map(({ id, file }, i) => <li key={id} title={`@Image ${i + 1} · ${file.name}`}><LocalImage file={file} alt={`参考图 ${i + 1}：${file.name}`} /><span>@Image {i + 1} · {file.name}</span><button type="button" className="material-remove" aria-label={`移除参考图 ${i + 1}`} disabled={locked} onClick={() => { setPrompt((current) => removeImageMentions(current, i)); setCreativeBrief((current) => removeImageMentions(current, i)); setImages((current) => current.filter((_, index) => index !== i)) }}><X size={15} /></button></li>)}</ol> : null}
+              <div className="recreation-target-strip">{images.length ? <ol className="deep-video-images" aria-label="已添加的目标参考图">{images.map(({ id, file }, i) => <li key={id} title={`@Image ${i + 1} · ${file.name}`}><LocalImage file={file} alt={`参考图 ${i + 1}：${file.name}`} /><span>@Image {i + 1}</span><button type="button" className="material-remove" aria-label={`移除参考图 ${i + 1}`} disabled={locked} onClick={() => { setPrompt((current) => removeImageMentions(current, i)); setCreativeBrief((current) => removeImageMentions(current, i)); setImages((current) => current.filter((_, index) => index !== i)) }}><X size={15} /></button></li>)}</ol> : null}{images.length < (background ? 4 : 5) ? <button type="button" className="deep-video-image-dropzone" disabled={locked || images.length >= (background ? 4 : 5)} onClick={() => imageInputRef.current?.click()}>
+                <span className="recreation-add-icon"><Plus size={21}/></span>
+                <span><strong>{images.length >= (background ? 4 : 5) ? `已添加 ${background ? 4 : 5} 张参考图` : imagesDragging ? '松开即可添加参考图' : images.length ? '添加' : '点击或拖入'}</strong><small>{images.length >= (background ? 4 : 5) ? '移除一张后可继续添加' : `1–${background ? 4 : 5} 张 JPG、PNG、WebP · 每张最多 10 MB`}</small></span>
+              </button> : null}</div>
             </section>
-            <ImageMentionInput label="补充要求（可选）" help="用自己的话描述人物、服装或场景要求，留空也能复刻。" placeholder="例如：用第一张图的人物，穿第二张图的衣服。留空也能复刻。" maxLength={600} value={creativeBrief} images={images} disabled={locked} onChange={setCreativeBrief} />
-            {mentionError ? <p className="inline-alert inline-alert--danger" role="alert">{mentionError}</p> : null}
-          </> : <><div className="deep-video-image-heading"><strong>提取说明</strong></div><div className="recreation-explainer"><Lightbulb size={20} /><h3>提取一次，可多次复刻</h3><p>提取原片的动作和空间信息，生成灰度深度视频。可预览、下载，也可用于下一步复刻。</p><small>已有深度视频可直接进入第 2 步。提取与复刻分别计费。</small></div></>}
-        </div>
-      </div>
-      {mode === 'recreate' && referenceType === 'depth' ? <div className="video-source-help">
-        <button type="button" className="text-button" disabled={locked} onClick={() => setDepthHistoryOpen(true)}><Film size={15} />从历史结果选择</button>
-        <small>{reference ? '已选深度视频 · 将直接进入替换' : '选择已提取的深度视频，跳过深度提取，仅计替换费用。'}</small>
-      </div> : null}
-      <AccountSiteField value={siteProfileId} onChange={setSiteProfileId} choices={choices} error={siteError} disabled={locked} />
-      <GenerationAdvancedSettings summary={mode === 'recreate' ? '背景参考图、输出画幅与复刻要求' : '提取模型与输出说明'} customized={mode === 'recreate' && (Boolean(background) || ratio !== '9:16' || siteProfileId !== defaultSiteProfileId || prompt !== DEFAULT_PROMPT)} disabled={locked} onReset={() => { setBackground(null); setRatio('9:16'); setSiteProfileId(defaultSiteProfileId); setPrompt(DEFAULT_PROMPT) }}>
-        <p className="generation-model-note">{mode === 'recreate' ? `生成模型：${status?.recreateModel || 'Seedance 2.0'} · 输出 720p` : '提取模型：Depth Anything · 输出沿用原片时长与尺寸'}</p>
-        {mode === 'recreate' ? <>
           <section className="deep-video-background-upload" aria-label="背景参考图">
-            <div className="deep-video-image-heading"><strong>背景参考图（可选）</strong><span>{background ? '已添加 1 张' : '未添加'}</span></div>
+            <div className="deep-video-image-heading"><strong>背景参考图 <span className="recreation-optional">选填</span></strong><span className="recreation-count">{background ? 1 : 0}/1</span></div>
             <input ref={backgroundInputRef} aria-label="背景参考图" hidden type="file" accept={IMAGE_FILE_ACCEPT} disabled={locked} onChange={(event) => { selectBackground(event.target.files?.[0]); event.target.value = '' }} />
             <div className="deep-video-background-control">
-              {background ? <div className="deep-video-background-preview"><LocalImage file={background.file} alt={`背景参考图：${background.file.name}`} /><span title={background.file.name}>{background.file.name}</span><button type="button" className="material-remove" aria-label="移除背景参考图" disabled={locked} onClick={() => setBackground(null)}><X size={15} /></button></div> : <button type="button" className="secondary-button" disabled={locked} onClick={() => backgroundInputRef.current?.click()}><UploadCloud size={18} />上传背景参考图</button>}
-              <p>默认使用模特参考图的原有背景；上传后优先参考此图</p>
+              {background ? <div className="deep-video-background-preview"><LocalImage file={background.file} alt={`背景参考图：${background.file.name}`} /><span title={background.file.name}>{background.file.name}</span><button type="button" className="material-remove" aria-label="移除背景参考图" disabled={locked} onClick={() => setBackground(null)}><X size={15} /></button></div> : <button type="button" className="secondary-button recreation-background-add" title="不添加时使用模特参考图的原有背景" disabled={locked} onClick={() => backgroundInputRef.current?.click()}><Plus size={16}/>添加背景</button>}
+
             </div>
           </section>
+        </> : null}
+      </div>
+      <div className="recreation-config">
+        <h2>复刻配置</h2>
+      <fieldset className="recreation-paths" disabled={locked}><legend>复刻方式</legend><div className="recreation-segment" data-active={path === 'deep' ? 'right' : 'left'}><span className="recreation-segment-thumb" aria-hidden="true"/>
+        <label><input type="radio" name="recreation-path" checked={path === 'quick'} onChange={() => { setPath('quick'); setMode('recreate'); if (referenceType !== 'original') { setReference(null); setMetadata(null); setMetadataFailed(false) }; setReferenceType('original'); setError('') }} /><span><strong>一键复刻</strong></span></label>
+        <label><input type="radio" name="recreation-path" checked={path === 'deep'} onChange={() => { setPath('deep'); setMode('depth'); if (referenceType !== 'original') { setReference(null); setMetadata(null); setMetadataFailed(false) }; setReferenceType('original'); setError('') }} /><span><strong>深度提取与复刻</strong></span></label>
+      </div></fieldset>
+      {path === 'deep' ? <div className="recreation-steps" data-active={mode === 'recreate' ? 'right' : 'left'} role="group" aria-label="深度操作步骤"><span className="recreation-segment-thumb" aria-hidden="true"/>
+        <button type="button" aria-pressed={mode === 'depth'} disabled={locked} onClick={() => { if (referenceType !== 'original') { setReference(null); setMetadata(null); setMetadataFailed(false) }; setMode('depth'); setReferenceType('original'); setError('') }}><span>1</span>提取深度视频</button>
+        <button type="button" aria-pressed={mode === 'recreate'} disabled={locked} onClick={() => { if (referenceType !== 'depth') { setReference(null); setMetadata(null); setMetadataFailed(false) }; setMode('recreate'); setReferenceType('depth'); setError('') }}><span>2</span>用深度视频复刻</button>
+      </div> : null}
+      <AccountSiteField compact value={siteProfileId} onChange={setSiteProfileId} choices={choices} error={siteError} disabled={locked} />
+      <GenerationAdvancedSettings alwaysOpen summary={mode === 'recreate' ? '背景参考图、输出画幅与复刻要求' : '提取模型与输出说明'} customized={mode === 'recreate' && (Boolean(background) || ratio !== '9:16' || siteProfileId !== defaultSiteProfileId || prompt !== DEFAULT_PROMPT)} disabled={locked} onReset={() => { setBackground(null); setRatio('9:16'); setSiteProfileId(defaultSiteProfileId); setPrompt(DEFAULT_PROMPT) }}>
+        <p className="generation-model-note">{mode === 'recreate' ? `生成模型：${status?.recreateModel || 'Seedance 2.0'} · 输出 720p` : '提取模型：Depth Anything · 输出沿用原片时长与尺寸'}</p>
+        {mode === 'recreate' ? <>
           <div className="video-recreation-options"><label className="video-recreation-field"><span>输出画幅</span><select value={ratio} disabled={locked} onChange={(event) => setRatio(event.target.value as typeof ratio)}><option value="9:16">竖屏 9:16 · 720 × 1280</option><option value="16:9">横屏 16:9 · 1280 × 720</option></select></label></div>
-          <ImageMentionInput label="复刻要求" value={prompt} images={images} disabled={locked} onChange={setPrompt} />
+          <ImageMentionInput label="复刻要求" value={prompt} placeholder="输入 @ 引用图片" images={images} disabled={locked} onChange={setPrompt} />
         </> : null}
       </GenerationAdvancedSettings>
+        {mode === 'recreate' ? <>
+            <ImageMentionInput label="补充要求" placeholder="选填 · 输入 @ 引用图片" maxLength={600} value={creativeBrief} images={images} disabled={locked} onChange={setCreativeBrief} />
+            {mentionError ? <p className="inline-alert inline-alert--danger" role="alert">{mentionError}</p> : null}
+        </> : null}
       {mode === 'recreate' && !prompt.trim() ? <p className="inline-alert" role="status">复刻要求为空，请填写，或恢复推荐设置。</p> : null}
       {reference && videoError ? <p className="inline-alert" role="status">{videoError}</p> : null}
       {!status?.enabled ? <p className="inline-alert" role="status">{statusError || plainText(status?.reason, '正在读取 WaveSpeed 服务状态…')}</p> : null}
@@ -286,9 +290,11 @@ export function VideoRecreationPanel({ actorId, imageDraftScope = actorId, activ
       {error ? <p className="inline-alert inline-alert--danger" role="alert">{error}</p> : null}
       {notice ? <p className="inline-alert" role="status">{notice}</p> : null}
       {pending ? <button type="button" className="secondary-button" disabled={busy} onClick={() => void recover()}>核对原任务状态</button> : null}
+    <footer className="video-recreation-footer" role="group" aria-label="生成操作"><span><Film size={16} />{mode === 'depth' ? '预计 1 条深度视频 · 仅提取费用' : referenceType === 'original' ? '预计 1 条复刻视频 · 含提取与复刻费用' : '预计 1 条复刻视频 · 仅复刻费用'}</span><button type="button" className="primary-button primary-button--large generation-priced-button" disabled={!ready} onClick={() => void submit()}>{busy ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />}<span>{busy ? stage || '正在核对' : mode === 'recreate' ? referenceType === 'depth' ? '开始深度复刻' : '一键复刻' : '提取深度视频'}</span><GenerationCostBadge additionalCategory={mode === 'recreate' && referenceType === 'original' ? 'depthVideoPricePerSecondUsd' : undefined} category={mode === 'recreate' ? 'recreateVideoPricePerSecondUsd' : 'depthVideoPricePerSecondUsd'} units={metadata && !metadataFailed && Number.isFinite(metadata.duration) ? Math.ceil(metadata.duration) : null} />{!busy ? <ArrowRight size={15} aria-hidden="true"/> : null}</button></footer>
+      </div>
     </div>
     {depthHistoryOpen && active && mode === 'recreate' && referenceType === 'depth' ? <DepthVideoHistoryPicker onClose={() => setDepthHistoryOpen(false)} onSelect={(file) => { selectVideo(file); setDepthHistoryOpen(false) }} /> : null}
     {historyOpen && active && mode === 'recreate' ? <ImageHistoryPicker key={imageDraftScope} scope={imageDraftScope} remaining={(background ? 4 : 5) - images.length} addedOutputIds={images.flatMap((image) => image.sourceImageOutputId ? [image.sourceImageOutputId] : [])} onAdd={addMaterials} onClose={() => setHistoryOpen(false)} /> : null}
-    <footer className="video-recreation-footer" role="group" aria-label="生成操作"><span><Film size={16} />{mode === 'depth' ? '预计 1 条深度视频 · 仅提取费用' : referenceType === 'original' ? '预计 1 条复刻视频 · 含提取与复刻费用' : '预计 1 条复刻视频 · 仅复刻费用'}</span><button type="button" className="primary-button primary-button--large generation-priced-button" disabled={!ready} onClick={() => void submit()}>{busy ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />}<span>{busy ? stage || '正在核对' : mode === 'recreate' ? referenceType === 'depth' ? '开始深度复刻' : '一键复刻爆款' : '提取深度视频'}</span><GenerationCostBadge additionalCategory={mode === 'recreate' && referenceType === 'original' ? 'depthVideoPricePerSecondUsd' : undefined} category={mode === 'recreate' ? 'recreateVideoPricePerSecondUsd' : 'depthVideoPricePerSecondUsd'} units={metadata && !metadataFailed && Number.isFinite(metadata.duration) ? Math.ceil(metadata.duration) : null} /></button></footer>
+
   </section>
 }

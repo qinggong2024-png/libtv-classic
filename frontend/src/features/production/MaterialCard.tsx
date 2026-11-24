@@ -57,7 +57,7 @@ export function MaterialCard({ material, bucket, index, onRemove, onDropAt, onPr
       >
         <LocalImage file={material.file} alt={material.file.name} />
       </div>
-      <span className="order-index">{index + 1}</span>
+      <span className="order-index">{bucket === "storyboard" && index === 0 ? "首帧" : index + 1}</span>
       <button
         type="button"
         className="material-remove"
