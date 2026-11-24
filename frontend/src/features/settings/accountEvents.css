@@ -1,0 +1,22 @@
+/* Shared report surface, with only audit-specific layout rules. */
+.admin-view .admin-events .admin-usage-toolbar { flex-wrap: wrap; }
+.admin-view .admin-events .admin-events-filter select { width: 145px; min-height: 40px; border-radius: 10px; }
+.admin-events .admin-usage-refresh { margin-left: auto; }
+.admin-view .admin-events .admin-events-table { min-width: 600px; }
+.admin-view .admin-events .admin-events-table :is(th,td) { text-align: left; }
+.admin-view .admin-events .admin-events-table thead th:first-child { width: 26%; }
+.admin-view .admin-events .admin-events-table tbody th { min-width: 100px; font-weight: 600; }
+.admin-view .admin-events .admin-events-table :is(th,td):last-child { width: 64px; text-align: right; padding-right: 16px; }
+.admin-view .admin-events .admin-events-table tbody td { height: 56px; }
+.admin-events .admin-events-table time { color: var(--text-secondary); white-space: nowrap; }
+.admin-events .admin-usage-footer { justify-content: flex-end; }
+.admin-events .admin-usage-skeleton-table { margin-top: 0; }
+.admin-events .account-empty { text-align: center; margin: 0; padding: 44px 16px; }
+.admin-events-detail-head { display: grid; gap: 8px; padding: 18px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 12px; }
+.admin-events-detail-head strong { font-size: 20px; font-weight: 650; color: var(--text); }
+.admin-events-detail-head time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.admin-events-detail dl { display: grid; grid-template-columns: 90px minmax(0,1fr); margin: 20px 0 0; }
+.admin-events-detail :is(dt,dd) { margin: 0; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.admin-events-detail dt { color: var(--text-secondary); }
+.admin-events-detail dd { color: var(--text); overflow-wrap: anywhere; }
+.admin-events-object-id { font-variant-numeric: tabular-nums; }

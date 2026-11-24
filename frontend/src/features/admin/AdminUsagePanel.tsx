@@ -11,13 +11,13 @@ import { selectableBrands } from './brandOptions'
 import { ReportPagination } from '../settings/ReportPagination'
 import { shanghaiToday, usageDateRange, type UsagePeriod } from '../settings/usagePeriod'
 import { usagePresentation } from '../settings/usagePresentation'
-import { UsageDateRangePicker } from './UsageDateRangePicker'
+import { AdminReportPeriod } from './AdminReportPeriod'
 import '../settings/accountUsage.css'
 import './adminUsage.css'
 
 const dollars = (amount: number) => new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'USD', maximumFractionDigits: 6 }).format(amount)
 const statuses: Record<string, string> = { ESTIMATED: '已结束 · 预估', RESERVED: '进行中预估', UNCERTAIN: '结果待核对', RELEASED: '已释放' }
-const periods: { value: UsagePeriod; label: string }[] = [{ value: 'today', label: '今天' }, { value: 'week', label: '本周' }, { value: 'month', label: '本月' }, { value: 'custom', label: '自定义' }]
+
 type Selection = { userId?: string; username?: string; status: string }
 
 // Results are bound to the complete query and actor. Previous requests cannot reveal
@@ -71,8 +71,7 @@ function AdminUsageWorkspace({ actor, users, brands }: { actor: AuthUser; users:
   const open = (status = '', userId?: string, username?: string) => setSelection({ status, userId, username })
   return <section className="settings-section account-usage-section admin-usage" aria-label="账号使用记录">
     <div className="admin-usage-toolbar">
-      <div className="admin-usage-periods" data-period={period} role="group" aria-label="统计范围">{periods.map((item) => <button type="button" key={item.value} aria-pressed={period === item.value} onClick={() => change(() => setPeriod(item.value))}>{item.label}</button>)}</div>
-      {period === 'custom' ? <UsageDateRangePicker start={customStart} end={customEnd} today={today} onChange={(start, end) => change(() => { setCustomStart(start); setCustomEnd(end) })} /> : null}
+      <AdminReportPeriod period={period} today={today} start={customStart} end={customEnd} onPeriod={(value) => change(() => setPeriod(value))} onRange={(start, end) => change(() => { setCustomStart(start); setCustomEnd(end) })} />
       <label className="admin-usage-brand"><span className="sr-only">品牌</span><select aria-label="品牌" value={brandId} onChange={(event) => change(() => setBrandId(event.target.value))}><option value="">全部品牌</option>{selectableBrands(brands).map((brand) => <option key={brand.id} value={brand.id}>{brand.displayName ?? brand.name}</option>)}</select></label>
       <label className="admin-usage-search"><Search size={16} aria-hidden="true" /><span className="sr-only">搜索账号</span><input type="search" value={search} maxLength={80} placeholder="搜索账号" onChange={(event) => change(() => setSearch(event.target.value))} /></label>
       <button className="secondary-button admin-usage-refresh" type="button" disabled={busy} onClick={() => { setToday(shanghaiToday()); setRefresh((value) => value + 1) }}><RefreshCw size={16} aria-hidden="true" />刷新记录</button>
