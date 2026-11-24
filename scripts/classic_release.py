@@ -13,7 +13,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.request import ProxyHandler, build_opener
@@ -120,12 +120,43 @@ def release_lock(root: Path):
         lock.unlink(missing_ok=True)
 
 
+class ActivationBusy(RuntimeError):
+    """No production mutation has started."""
+
+
+@contextmanager
+def route_activation_lock(runtime: Path):
+    # Interoperates with classic_blue_api and the Node route operator using
+    # their exact exclusive-create lock file, without importing psutil.
+    path = runtime / "api-routing.lock"
+    with path.open("x", encoding="ascii") as handle:
+        try:
+            handle.write(f"release-manager pid={os.getpid()}")
+            handle.flush()
+            yield
+        finally:
+            handle.close()
+            path.unlink(missing_ok=True)
+
+
+@contextmanager
+def activation_lock(root: Path):
+    # All supported frontend activations share the existing API/worker route lock.
+    with ExitStack() as stack:
+        try:
+            stack.enter_context(release_lock(root))
+            stack.enter_context(route_activation_lock(root / "var/classic-lan/runtime"))
+        except (FileExistsError, RuntimeError) as error:
+            raise ActivationBusy("Another production release owns the activation lock") from error
+        yield
+
+
 def publish_frontend(root: Path, expected_main: str, expected_api: str,
                      baseline_unknown: int, *, frontend_only: bool = False,
                      expected_old_frontend: str | None = None,
                      change_base: str | None = None) -> dict:
     """Strict by default; explicit frontend-only mode never pauses production."""
-    with release_lock(root):
+    with activation_lock(root):
         before = assess(root, expected_main, expected_api, require_paused=not frontend_only,
                         baseline_unknown=baseline_unknown, frontend_only=frontend_only)
         if frontend_only:
@@ -332,7 +363,7 @@ def main() -> int:
             if not args.apply or not args.reviewed_api_compatible:
                 parser.error("publish-isolated requires --apply and --reviewed-api-compatible")
             try:
-                result = publish_isolated(ROOT, args.candidate_root, lock=release_lock, **pins)
+                result = publish_isolated(ROOT, args.candidate_root, lock=activation_lock, **pins)
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                 result = {"ready": False, "blockers": [str(error)], "frontendPublished": False,
                           "nextAction": "inspect-release-status-and-receipt-before-retry"}

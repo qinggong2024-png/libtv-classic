@@ -189,3 +189,33 @@ def test_frontend_api_contract_diff_still_blocks(release):
     pins["main"] = pins["approved"] = commit(root, "contract change")
     pins["candidate_head"] = commit(candidate, "contract candidate")
     assert not mod.frontend_scope(root, pins["base"], pins["approved"])["frontendHotEligible"]
+
+
+def test_reviewed_main_can_advance_during_build_without_rebuilding(release, monkeypatch):
+    root, candidate, pins = release
+    prepare_stage(candidate, monkeypatch)
+    old_report = mod.report
+    old_run = mod.subprocess.run
+    def build(args, **kwargs):
+        result = old_run(args, **kwargs)
+        if args[0] == "npm-test":
+            (root / "backend/api.py").write_text("new unrelated backend")
+            commit(root, "other session backend commit")
+        return result
+    def live(path):
+        state = old_report(path)
+        state["mainCheckout"]["gitHead"] = mod.git(root, "rev-parse", "HEAD")
+        return state
+    monkeypatch.setattr(mod.subprocess, "run", build)
+    monkeypatch.setattr(mod, "report", live)
+    result = mod.publish_isolated(root, candidate, lock=lambda _: nullcontext(), allow_main_advance=True, **pins)
+    assert result["ready"] and result["frontendPublished"]
+    assert result["requestedMainHead"] == pins["main"]
+    assert result["mainHead"] != pins["main"]
+
+
+def test_main_pin_never_advances_over_new_frontend(release):
+    root, candidate, pins = release
+    (root / "frontend/src/App.tsx").write_text("unreviewed")
+    commit(root, "other UI")
+    assert mod.refresh_main_pin(root, pins) == pins

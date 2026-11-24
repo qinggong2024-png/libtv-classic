@@ -1,4 +1,4 @@
-# Classic Release Manager V1 — frontend pilot
+# Classic Release Manager — coordinated release pilot
 
 Production entry remains 5176. This pilot does not change admission, paid-task
 processing, API routing, worker code, prompts, or the production task database.
@@ -38,10 +38,47 @@ blocked or reconciled outcome; it never writes the live frontend or replays a
 release. If a legacy lock remains after a crash, inspect its owner and actual
 production state before any manual cleanup; never auto-delete locks.
 
+## Phase 2: integration, safe repinning and API-only queue
+
+Use the guarded fast-forward integration entry point after tests in an isolated
+worktree: `python scripts/classic_release_manager.py integrate --expected-main <sha40> --tested-candidate <sha40> --apply`.
+A new main commit or dirty source blocks promotion. For divergent candidates,
+compose and test a fresh isolated integration commit before promotion. It does
+not automatically merge unreviewed changes, and does not activate production.
+
+The frontend queue can advance its main pin before build and again before
+activation only when the approved frontend tree is unchanged across an ancestral
+main fast-forward. The original pin is recorded in the release receipt. It does
+not modify the approved frontend, active API or expected live index. A change
+while activation is in progress still fails closed. All standard Python frontend
+activation paths now acquire the existing release and route operator locks in
+that order, so they cannot overlap supported API/Worker route mutations.
+
+Only for a reviewed, already installed online API-only pair, with the exact
+frontend/target API compatibility reviewed, enqueue:
+
+```text
+python scripts/classic_release_manager.py enqueue-api --current 8002 --target 8003 --active <sha64> --target-revision <sha64> --frontend <sha64> --config <sha64> --schema <schema-id> --reviewed-api-compatible
+python scripts/classic_release_manager.py run-next --apply
+```
+
+The ports above are illustrative: read actual live identities first. This invokes
+existing `classic_api_hot_switch.mjs --online-api-only` dry-run and apply guards,
+not a new implementation of routing. It verifies post-switch health, source,
+config, schema, open admission and unchanged frontend index. An existing proven
+frontend receipt may be carried forward to the exact reviewed API combination
+as an explicitly labelled compatibility receipt (not a new frontend publication).
+Without prior proof, no frontend receipt is invented; reconciliation is required.
+The API queue does not install slots, change workers, migrate schema, pause intake,
+or touch the task database. API uncertainty is never blindly replayed.
+
 ## Scope and rollout
 
-This is a pilot for reviewed isolated frontend publication only. Existing direct
-entry points remain available; the queue is not yet an enforcement boundary.
-No automatic merging, automatic main rebasing, API/Runner/CUT queue integration,
-background scheduler, or dashboard is enabled. Those require independent tests
-and explicit rollout. Git synchronization is not production activation.
+The coordinator supports reviewed isolated frontend releases and reviewed
+online API-only switches. No background scheduler is enabled. Direct low-level
+entry points and OS access still exist, so this is a cooperative workflow, not
+an unbypassable permission boundary. Existing strict/Worker and schema release
+paths remain available with their existing gates; do not run them concurrently
+with a coordinated release. Automatic combined changes, independent component
+manifest, full Worker queue integration and live release-time measurements
+remain separate work. Source synchronization is not production activation.

@@ -312,7 +312,28 @@ def candidate_stage_lock(candidate):
             path.unlink(missing_ok=True)
 
 
-def publish_isolated(root, candidate, *, lock, **pins):
+def refresh_main_pin(root, pins):
+    """Advance only a main pin, never an approved tree, candidate or live API pin."""
+    current = git(root, "rev-parse", "HEAD")
+    old = pins["main"]
+    if current == old:
+        return pins
+    try:
+        if git(root, "branch", "--show-current") != "main" or not clean(root):
+            return pins
+        git(root, "merge-base", "--is-ancestor", old, current)
+        git(root, "merge-base", "--is-ancestor", pins["approved"], old)
+        if tree(root, current) != tree(root, old) or tree(root, old) != tree(root, pins["approved"]):
+            return pins
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return pins
+    return dict(pins, main=current)
+
+
+def publish_isolated(root, candidate, *, lock, allow_main_advance=False, **pins):
+    requested_main = pins["main"]
+    if allow_main_advance:
+        pins = refresh_main_pin(root, pins)
     before = assess_isolated(root, candidate, **pins)
     if not before["ready"]:
         return before
@@ -327,6 +348,11 @@ def publish_isolated(root, candidate, *, lock, **pins):
         subprocess.run([npm, "run", "build"], cwd=candidate / "frontend", check=True, timeout=240)
         files = staged_files(stage, dist)
         with lock(root):
+            if allow_main_advance:
+                pins = refresh_main_pin(root, pins)
+                # Compare all live contract fields; the only permitted change is
+                # a fast-forward whose complete frontend tree is unchanged.
+                before = dict(before, mainHead=pins["main"])
             if staged_files(stage, dist) != files:
                 raise RuntimeError("STAGED_ARTIFACT_CHANGED")
             after = assess_isolated(root, candidate, **pins)
@@ -391,6 +417,7 @@ def publish_isolated(root, candidate, *, lock, **pins):
                               artifactSourceHead=pins["candidate_head"], rollbackIndex=str(backup),
                               artifactFilesVerified=len(files))
                 result["baselineReceipt"] = before["baselineReceipt"]
+                result["requestedMainHead"] = requested_main
                 result["receipt"] = record_receipt(root, result)
                 return result
             except Exception:
