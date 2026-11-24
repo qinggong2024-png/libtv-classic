@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getAdminAccountUsage } from '../../api'
 import type { AccountUsageReport, AuthUser } from '../../types'
 import { AdminUsagePanel } from './AdminUsagePanel'
+import { shanghaiToday } from '../settings/usagePeriod'
 
 vi.mock('../../api', () => ({ getAdminAccountUsage: vi.fn() }))
 const admin: AuthUser = { userId: 'root', username: 'classic-admin', role: 'ADMIN' }
@@ -13,7 +14,7 @@ let root: Root
 
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
-  vi.mocked(getAdminAccountUsage).mockReset().mockResolvedValue(report)
+  vi.mocked(getAdminAccountUsage).mockReset().mockResolvedValue({ ...report, budgetDay: shanghaiToday() })
   document.body.innerHTML = '<div id="test-root"></div>'
   root = createRoot(document.getElementById('test-root')!)
 })
@@ -45,13 +46,45 @@ describe('administrator-only usage workspace', () => {
     expect(getAdminAccountUsage).toHaveBeenCalledTimes(1)
   })
 
-  it('uses separate quantity columns, month defaults and the administrator endpoint', async () => {
+  it('uses separate quantity columns, today defaults and the administrator endpoint', async () => {
     await render(admin)
     expect(document.body.textContent).toContain('预估费用')
     expect(document.body.textContent).not.toContain('区间占用')
     expect(Array.from(document.querySelectorAll('thead th')).map((cell) => cell.textContent)).toEqual(['账号 / 品牌', '图片（张）', '视频（秒）', '送剪原片（条）', '已下载原片（条）', '已下载 CUT 成片（条）', '预估费用', '今日剩余额度', '明细'])
-    expect(getAdminAccountUsage).toHaveBeenCalledWith(expect.objectContaining({ includeEvents: false, startDate: expect.stringMatching(/-01$/) }), 'root')
-    expect(document.querySelector('button[aria-pressed="true"]')?.textContent).toBe('本月')
+    expect(getAdminAccountUsage).toHaveBeenCalledWith(expect.objectContaining({ includeEvents: false, startDate: shanghaiToday(), endDate: shanghaiToday() }), 'root')
+    expect(document.querySelector('button[aria-pressed="true"]')?.textContent).toBe('今天')
+  })
+
+  it('uses the selected day rather than today for the quota and supports a historical range', async () => {
+    vi.setSystemTime(new Date('2026-11-24T04:00:00Z'))
+    try {
+      vi.mocked(getAdminAccountUsage).mockImplementation(async (query) => {
+        const used = query.startDate === query.endDate ? 35 : 90
+        return { ...report, budgetDay: '2026-11-24', summaries: [{ ...report, userId: 'gc', username: 'GC', brandId: null, isActive: true, dailyBudgetUsd: 50, budgetUsedUsd: used, todayBudgetUsedUsd: 10, todayRemainingUsd: 40, todayUnpricedCount: 0 }] }
+      })
+      await render(admin)
+      const click = async (label: string) => { await act(async () => Array.from(document.querySelectorAll('button')).find(button => button.textContent === label || button.getAttribute('aria-label') === label)!.click()) }
+      const quota = () => document.querySelector('tbody tr td:nth-last-child(2)')?.textContent
+      expect(quota()).toContain('US$40.00')
+      await click('自定义')
+      expect(document.querySelectorAll('input[type="date"]')).toHaveLength(0)
+      await click('2026-11-18')
+      expect(quota()).toContain('US$15.00')
+      expect(quota()).not.toContain('US$40.00')
+      await click('2026-11-20')
+      expect(getAdminAccountUsage).toHaveBeenCalledWith(expect.objectContaining({ startDate: '2026-11-18', endDate: '2026-11-20' }), 'root')
+      expect(getAdminAccountUsage).toHaveBeenCalledWith(expect.objectContaining({ startDate: '2026-11-20', endDate: '2026-11-20' }), 'root')
+      expect(quota()).toContain('US$15.00')
+      expect(document.querySelector('.admin-usage-footer')?.textContent).toContain('非当日留存快照')
+      await click('选择统计日期范围')
+      const first = document.querySelector('[aria-label="2026-11-17"]')!
+      const last = document.querySelector('[aria-label="2026-11-19"]')!
+      await act(async () => {
+        first.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
+        last.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }))
+      })
+      expect(getAdminAccountUsage).toHaveBeenCalledWith(expect.objectContaining({ startDate: '2026-11-17', endDate: '2026-11-19' }), 'root')
+    } finally { vi.useRealTimers() }
   })
 
   it('presents pending results as an included estimate rather than an extra charge', async () => {

@@ -11,6 +11,7 @@ import { selectableBrands } from './brandOptions'
 import { ReportPagination } from '../settings/ReportPagination'
 import { shanghaiToday, usageDateRange, type UsagePeriod } from '../settings/usagePeriod'
 import { usagePresentation } from '../settings/usagePresentation'
+import { UsageDateRangePicker } from './UsageDateRangePicker'
 import '../settings/accountUsage.css'
 import './adminUsage.css'
 
@@ -45,7 +46,7 @@ export function AdminUsagePanel(props: { actor: AuthUser; users: AdminUser[]; br
 
 function AdminUsageWorkspace({ actor, users, brands }: { actor: AuthUser; users: AdminUser[]; brands: AccountBrand[] }) {
   const [today, setToday] = useState(shanghaiToday)
-  const [period, setPeriod] = useState<UsagePeriod>('month')
+  const [period, setPeriod] = useState<UsagePeriod>('today')
   const [customStart, setCustomStart] = useState(today)
   const [customEnd, setCustomEnd] = useState(today)
   const [brandId, setBrandId] = useState('')
@@ -58,6 +59,13 @@ function AdminUsageWorkspace({ actor, users, brands }: { actor: AuthUser; users:
   const invalidRange = !startDate || !endDate || startDate > endDate
   const revision = JSON.stringify([refresh, users.map((user) => [user.id, user.dailyBudgetUsd, user.isActive])])
   const { report, busy, error } = useUsageReport({ brandId, search: search.trim(), startDate, endDate, summaryOffset: offset, summaryLimit: limit, limit: 1, includeEvents: false }, actor.userId, revision, !invalidRange)
+  // The existing API reports today's quota independently from the filtered usage.
+  // A historical day uses that day's occupied estimate and the current configured
+  // daily limit; historical limit values are not recorded by the policy audit.
+  const historical = endDate < today
+  const multiDay = startDate !== endDate
+  const endDayReport = useUsageReport({ brandId, search: search.trim(), startDate: endDate, endDate, summaryOffset: offset, summaryLimit: limit, limit: 1, includeEvents: false }, actor.userId, revision, !invalidRange && historical && multiDay)
+  const quotaLabel = multiDay ? '截止日剩余额度' : historical ? '当日剩余额度（估算）' : '今日剩余额度'
   const brandName = brands.find((brand) => brand.id === brandId)?.displayName ?? brands.find((brand) => brand.id === brandId)?.name ?? '全部品牌'
   const change = (update: () => void) => { update(); setOffset(0); setSelection(null) }
   const open = (status = '', userId?: string, username?: string) => setSelection({ status, userId, username })
@@ -68,7 +76,7 @@ function AdminUsageWorkspace({ actor, users, brands }: { actor: AuthUser; users:
       <label className="admin-usage-brand"><span className="sr-only">品牌</span><select aria-label="品牌" value={brandId} onChange={(event) => change(() => setBrandId(event.target.value))}><option value="">全部品牌</option>{selectableBrands(brands).map((brand) => <option key={brand.id} value={brand.id}>{brand.displayName ?? brand.name}</option>)}</select></label>
       <label className="admin-usage-search"><Search size={16} aria-hidden="true" /><span className="sr-only">搜索账号</span><input type="search" value={search} maxLength={80} placeholder="搜索账号" onChange={(event) => change(() => setSearch(event.target.value))} /></label>
     </div>
-    {period === 'custom' ? <div className="admin-usage-dates"><label>开始日期<input type="date" max="9999-12-30" value={customStart} onChange={(event) => change(() => setCustomStart(event.target.value))} /></label><span aria-hidden="true">至</span><label>结束日期<input type="date" max="9999-12-30" value={customEnd} onChange={(event) => change(() => setCustomEnd(event.target.value))} /></label></div> : null}
+    {period === 'custom' ? <UsageDateRangePicker start={customStart} end={customEnd} today={today} onChange={(start, end) => change(() => { setCustomStart(start); setCustomEnd(end) })} /> : null}
     {invalidRange ? <div className="inline-alert inline-alert--danger" role="alert">请选择完整的日期范围，开始日期不能晚于结束日期。</div> : <>
       <p className="admin-usage-range">{startDate} 至 {endDate}{report ? ' · ' + (report.summaryTotal ?? report.summaries.length) + ' 个账号 · ' + report.recordCount + ' 条用量记录' : ''}</p>
       {error ? <div className="inline-alert inline-alert--danger" role="alert">{error}</div> : busy ? <p className="admin-usage-loading" role="status">正在读取用量与费用…</p> : report ? <>
@@ -91,14 +99,22 @@ function AdminUsageWorkspace({ actor, users, brands }: { actor: AuthUser; users:
         </p>
         {report.unpricedCount > 0 ? <div className="admin-usage-warning" role="status"><AlertTriangle size={17} aria-hidden="true" /><span><strong>费用待核实：{report.unpricedCount} 条</strong>缺少定价，暂未计入金额。</span><button className="admin-usage-text-button" type="button" onClick={() => open('UNPRICED')}>查看记录<ChevronRight size={16} aria-hidden="true" /></button></div> : null}
         <div className="usage-overview-heading"><h3>账号用量</h3><button type="button" className="admin-usage-text-button" onClick={() => open()}>查看全部明细<ChevronRight size={16} aria-hidden="true" /></button></div>
-        <div className="usage-table-scroll" role="region" aria-label="账号用量汇总表" tabIndex={0}><table className="usage-table usage-account-table admin-usage-table"><caption className="sr-only">账号用量汇总，包含生成用量、原片及 CUT 成片下载次数</caption><thead><tr>{['账号 / 品牌', '图片（张）', '视频（秒）', '送剪原片（条）', '已下载原片（条）', '已下载 CUT 成片（条）', '预估费用', '今日剩余额度', '明细'].map((label) => <th scope="col" key={label}>{label}</th>)}</tr></thead><tbody>{report.summaries.map((row) => <tr key={row.userId}>
+        <div className="usage-table-scroll" role="region" aria-label="账号用量汇总表" tabIndex={0}><table className="usage-table usage-account-table admin-usage-table"><caption className="sr-only">账号用量汇总，包含生成用量、原片及 CUT 成片下载次数</caption><thead><tr>{['账号 / 品牌', '图片（张）', '视频（秒）', '送剪原片（条）', '已下载原片（条）', '已下载 CUT 成片（条）', '预估费用', quotaLabel, '明细'].map((label) => <th scope="col" key={label}>{label}</th>)}</tr></thead><tbody>{report.summaries.map((row) => {
+          const quotaRow = historical && multiDay ? endDayReport.report?.summaries.find((item) => item.userId === row.userId) : row
+          const limit = quotaRow?.dailyBudgetUsd
+          const liveQuota = !historical && report.budgetDay === endDate
+          const remaining = quotaRow && limit != null && quotaRow.unpricedCount === 0
+            ? Math.max(0, Math.round(limit * 1e6) - Math.round(quotaRow.budgetUsedUsd * 1e6)) / 1e6 : null
+          const quota = liveQuota ? row.todayRemainingUsd : historical ? remaining : null
+          const unpriced = liveQuota ? row.todayUnpricedCount : quotaRow?.unpricedCount
+          return <tr key={row.userId}>
           <th scope="row"><button type="button" className="usage-record-link" onClick={() => open('', row.userId, row.username)} aria-label={'查看 ' + row.username + ' 的用量明细'}>{row.username}</button><small>{brands.find((brand) => brand.id === row.brandId)?.displayName ?? brands.find((brand) => brand.id === row.brandId)?.name ?? '未分配品牌'}{row.isActive ? '' : ' · 已停用'}</small></th>
           <td>{row.imageCount}</td><td>{row.videoSeconds}{row.unknownVideoCount > 0 ? <small>{row.unknownVideoCount} 条时长未记录</small> : null}</td><td>{row.cutflowClips ?? '—'}</td><td title={row.originalDownloads === undefined ? '下载统计尚未启用' : undefined}>{row.originalDownloads ?? '—'}</td><td title={row.cutflowDownloads === undefined ? '下载统计尚未启用' : undefined}>{row.cutflowDownloads ?? '—'}</td>
           <td><button type="button" className="usage-record-link" aria-label={'查看 ' + row.username + ' 的预估费用明细'} onClick={() => open('OCCUPIED', row.userId, row.username)}>{dollars(row.budgetUsedUsd)}</button>{row.unpricedCount > 0 ? <small className="admin-usage-caution">另有 {row.unpricedCount} 条待核实</small> : null}{row.uncertainUsd > 0 ? <small>含待核对预估 {dollars(row.uncertainUsd)}</small> : null}</td>
-          <td>{row.dailyBudgetUsd === null ? <span>未设限额</span> : row.todayUnpricedCount > 0 || row.todayRemainingUsd === null ? <span className="admin-usage-caution">剩余待核实</span> : <strong>{dollars(row.todayRemainingUsd)}</strong>}<small>每日额度 {row.dailyBudgetUsd === null ? '未设置' : dollars(row.dailyBudgetUsd)}</small></td>
+          <td>{!quotaRow ? <span>{endDayReport.error ? '读取失败' : endDayReport.busy ? '读取中…' : '—'}</span> : limit === null ? <span>未设限额</span> : unpriced || quota == null ? <span className="admin-usage-caution">剩余待核实</span> : <strong>{dollars(quota)}</strong>}<small>{historical ? '现行每日额度' : '每日额度'} {limit == null ? (limit === null ? '未设置' : '—') : dollars(limit)}</small></td>
           <td><button type="button" className="icon-button" aria-label={'打开 ' + row.username + ' 的明细'} onClick={() => open('', row.userId, row.username)}><ChevronRight size={18} /></button></td>
-        </tr>)}</tbody></table>{report.summaries.length === 0 ? <p className="account-empty">{search || brandId ? '没有符合筛选条件的账号。' : '暂无账号用量。'}</p> : null}</div>
-        <div className="admin-usage-footer"><span>今日额度按 {report.budgetDay}（北京时间）计算，与所选日期分别统计。</span><ReportPagination label="账号用量" offset={offset} limit={limit} total={report.summaryTotal ?? report.summaries.length} onPage={setOffset} onLimit={(value) => change(() => setLimit(value))} /></div>
+        </tr>})}</tbody></table>{report.summaries.length === 0 ? <p className="account-empty">{search || brandId ? '没有符合筛选条件的账号。' : '暂无账号用量。'}</p> : null}</div>
+        <div className="admin-usage-footer"><span>{multiDay ? `剩余额度仅对应截止日 ${endDate}，每日额度不结转。` : `剩余额度对应 ${endDate}（北京时间）。`}{historical ? ' 历史额度按现行每日限额与该日当前预估占用计算，非当日留存快照。' : ''}</span><ReportPagination label="账号用量" offset={offset} limit={limit} total={report.summaryTotal ?? report.summaries.length} onPage={setOffset} onLimit={(value) => change(() => setLimit(value))} /></div>
         <details className="admin-usage-definitions"><summary>统计口径</summary><ul><li>图片按张、视频生成按秒、剪辑按送剪原片条数统计；送剪原片数不等于剪辑任务数或回传成片数。</li><li>原片和 CUT 成片分别按账号统计首次请求下载的唯一文件数；同一文件重复下载不计，归属首次下载日期，预览不计入。仅记录功能上线后的下载请求；无法确认浏览器是否最终保存文件。</li><li>用量包含进行中、已结束、结果待核对和已释放记录，不代表成功产出数。</li><li>预估费用包含已结束预估、进行中预估和结果待核对，不含已释放金额；历史未定价费用不补算，分析服务费用暂不计入。</li><li>今日有未定价记录时，已设置每日预算的账号会暂停新生成，剩余额度显示待核实。</li></ul></details>
       </> : null}
     </>}
