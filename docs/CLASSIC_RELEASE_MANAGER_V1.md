@@ -1,3 +1,40 @@
+# Classic release: simple everyday entry
+
+Run in clean Classic production main after isolated testing and diff review:
+
+```text
+python scripts/classic_release.py deploy
+python scripts/classic_release.py deploy --apply --reviewed-api-compatible
+```
+
+Preview is read-only; apply is an explicit approval of the exact reviewed UI/API
+combination. Optionally pin the reviewed main via `--expected-main-head` and
+active API via `--expected-api-revision`. No manual receipt, queue or candidate
+parameters are required. The command discovers the live baseline, skips an
+already-current frontend, prepares a new isolated worktree, installs locked
+npm dependencies, builds and uses existing atomic publication/rollback and
+receipt verification. A frontend success is not full backend activation.
+
+For an already-installed reviewed API-only standby, use:
+
+```text
+python scripts/classic_release.py deploy --api-only
+python scripts/classic_release.py deploy --api-only --apply --reviewed-api-compatible --expected-api-revision <previewed-target-sha64>
+```
+
+API target must be explicitly reviewed and pinned; no automatic rollback to an
+arbitrary standby. No new API process is started by this command. Existing
+strict Worker/schema/prompt procedures remain. The durable queue is internal;
+a pending or uncertain existing release must be inspected before new work, and
+only the command's own intent can be claimed. No background service, no fixed
+waiting period. If a command fails, inspect the reported blocker and live state;
+never replay an uncertain activation. This tool does not bypass readiness checks.
+
+Stop expanding the release platform. Keep the existing detailed commands below
+for diagnostics and exceptional recovery, not everyday operation.
+
+---
+
 # Classic Release Manager — coordinated release pilot
 
 Production entry remains 5176. This pilot does not change admission, paid-task

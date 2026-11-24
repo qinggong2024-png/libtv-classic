@@ -322,7 +322,8 @@ def plan_live_frontend(root: Path) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("status", "check", "plan", "plan-live-frontend", "publish", "publish-frontend", "verify", "prepare-isolated", "plan-isolated", "publish-isolated", "verify-isolated"))
+    parser.add_argument("command", choices=("deploy", "status", "check", "plan", "plan-live-frontend", "publish", "publish-frontend", "verify", "prepare-isolated", "plan-isolated", "publish-isolated", "verify-isolated"))
+    parser.add_argument("--api-only", action="store_true", help="Deploy an already installed reviewed API-only standby")
     parser.add_argument("--change-base", help="Approved prior commit for exact change-scope verification")
     parser.add_argument("--apply", action="store_true", help="Required for publish-frontend")
     parser.add_argument("--frontend-only", action="store_true", help="Approved API-compatible frontend-only release; task counts are informational")
@@ -338,6 +339,13 @@ def main() -> int:
     args = parser.parse_args()
     if args.baseline_unknown < 0:
         parser.error("--baseline-unknown must be nonnegative")
+    if args.command == "deploy":
+        from classic_simple_deploy import deploy
+        result = deploy(ROOT, apply=args.apply, api_only=args.api_only,
+                        reviewed=args.reviewed_api_compatible, expected_main=args.expected_main_head,
+                        expected_api=args.expected_api_revision)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ready"] else 2
     if args.command == "plan-live-frontend":
         result = plan_live_frontend(ROOT)
         print(json.dumps(result, ensure_ascii=False, indent=2))

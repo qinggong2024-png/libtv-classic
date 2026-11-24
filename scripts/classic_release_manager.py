@@ -146,13 +146,13 @@ def status(root):
         return [dict(row) for row in db.execute("SELECT * FROM releases ORDER BY created, id")]
 
 
-def claim(root):
+def claim(root, expected_id=None):
     with closing(connect(root)) as db, db:
         db.execute("BEGIN IMMEDIATE")
         if db.execute("SELECT 1 FROM releases WHERE state IN ('running','needs-review')").fetchone():
             return None
         row = db.execute("SELECT * FROM releases WHERE state='queued' ORDER BY created,id LIMIT 1").fetchone()
-        if row is None:
+        if row is None or (expected_id is not None and row["id"] != expected_id):
             return None
         db.execute("UPDATE releases SET state='running',updated=? WHERE id=?", (now(), row["id"]))
         return dict(row)
@@ -194,13 +194,13 @@ def coordinator_lease(root):
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def run_next(root, publisher=publish_isolated, api_publisher=switch_reviewed_api):
+def run_next(root, publisher=publish_isolated, api_publisher=switch_reviewed_api, *, expected_id=None):
     with coordinator_lease(root):
-        return run_claimed(root, publisher, api_publisher)
+        return run_claimed(root, publisher, api_publisher, expected_id=expected_id)
 
 
-def run_claimed(root, publisher, api_publisher):
-    row = claim(root)
+def run_claimed(root, publisher, api_publisher, *, expected_id=None):
+    row = claim(root, expected_id)
     if row is None:
         return {"state": "idle-or-blocked", "nextAction": "inspect queue status"}
     identifier = row["id"]
