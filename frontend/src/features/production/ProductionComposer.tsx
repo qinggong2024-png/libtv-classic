@@ -29,6 +29,9 @@ import { DirectorModeSwitch } from '../../shared/components/DirectorModeSwitch'
 import './creationV6.css'
 import '../../shared/components/creationPolish.css'
 
+// Monotonic timing is used only inside user-initiated submission handlers.
+function submissionTimestamp() { return performance.now() }
+
 type ManualVideoDraft = {
   key: string
   materials: Material[]
@@ -449,7 +452,7 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
     const blockedAdmissions: string[] = []
     let invokingProvider = false
     try {
-      const uploadStartedAt = performance.now()
+      const uploadStartedAt = submissionTimestamp()
       let completedUploads = 0
       const subjectReferences = subjectMode === 'upload' ? buildSubjectImageReferences(subjectFiles) : []
       const materialGroups: ComposerBatchGroup[] = manualBatch ? manualGroups : validBatchGroups.length
@@ -528,7 +531,7 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
               cutMode: generationMode === "automatic" ? "explicit_cuts" : cutMode,
               autoSubmitToCutflow,
             },
-            (performance.now() - uploadStartedAt) / 1000,
+            (submissionTimestamp() - uploadStartedAt) / 1000,
             submissionIdentity,
           ]
         }
