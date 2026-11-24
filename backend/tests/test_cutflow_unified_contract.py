@@ -1,6 +1,7 @@
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from urllib.error import URLError
 
 import pytest
 import test_cutflow_handoff as shared
@@ -231,6 +232,76 @@ async def test_v2_processing_with_early_outputs_waits_then_imports_on_completed(
         assert saved.error_code is None
         assert len(saved.output_json) == 1
     assert len(imported) == 1
+
+
+@pytest.mark.asyncio
+async def test_v2_overdue_acceptance_is_visible_and_same_job_recovers(handoff_env, monkeypatch):
+    database, settings, store, _ids = handoff_env
+    settings.cutflow_transport = "lan"
+    settings.cutflow_nas_status_enabled = True
+    task = await create_v2_task(handoff_env)
+    async with database.session_factory() as session:
+        saved = await session.get(MultiCutflowTask, task.id)
+        saved.manifest_json = {
+            **saved.manifest_json,
+            "_readyAt": (datetime.now(UTC) - timedelta(seconds=91)).isoformat(),
+        }
+        await session.commit()
+        await session.refresh(saved)
+        task = saved
+    submissions = []
+
+    def unreachable(_settings, payload):
+        submissions.append(payload["taskId"])
+        raise URLError(ConnectionRefusedError(10061, "private URL"))
+
+    monkeypatch.setattr(worker, "cut_multi_submit_request", unreachable)
+    await worker.process_multi_task(database, settings, store, task, "lease-token")
+    async with database.session_factory() as session:
+        saved = await session.get(MultiCutflowTask, task.id)
+        assert saved.status == "READY"
+        assert saved.error_code == "CUTFLOW_STATUS_MISSING"
+        notice = saved.manifest_json["_lastNotification"]
+        assert notice["transportError"] == "ConnectionRefusedError"
+        assert notice["transportErrno"] == 10061
+        assert "private URL" not in json.dumps(notice)
+        assert saved.failure_count == 0
+        saved.lease_token = "lease-recovered"
+        await session.commit()
+        await session.refresh(saved)
+        task = saved
+    write_status(settings, task, status_payload(task.id, revision=1, status="accepted"))
+    await worker.process_multi_task(database, settings, store, task, "lease-recovered")
+    async with database.session_factory() as session:
+        saved = await session.get(MultiCutflowTask, task.id)
+        assert saved.status == "ACCEPTED"
+        assert saved.error_code is None
+        assert saved.manifest_json["_firstCutReceiptObservedAt"]
+    assert submissions == [str(task.id)]
+
+
+def test_v2_notification_uses_short_timeout(handoff_env, monkeypatch):
+    _database, settings, _store, _ids = handoff_env
+    settings.cutflow_request_timeout_seconds = 90
+    seen = []
+
+    class Response:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+        def read(self, _limit):
+            return b'{}'
+
+    class Opener:
+        def open(self, request, timeout):
+            seen.append(timeout)
+            return Response()
+
+    monkeypatch.setattr(worker, "build_opener", lambda *_: Opener())
+    worker.cut_multi_submit_request(settings, {"notificationOnly": True})
+    worker.cut_multi_submit_request(settings, {})
+    assert seen == [5, 90]
 
 
 @pytest.mark.asyncio

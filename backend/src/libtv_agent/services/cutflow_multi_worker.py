@@ -54,6 +54,8 @@ from sqlalchemy import or_, select, update
 MAX_RESPONSE_BYTES = 1_048_576
 OUTPUT_PATH_PREFIX = "outbox"
 STATUS_PATH = "status.json"
+NOTIFICATION_WAKE_TIMEOUT_SECONDS = 5
+ACCEPTANCE_WARNING_SECONDS = 90
 NOTIFICATION_REPEAT_SECONDS = 120
 NOTIFICATION_ERROR_REPEAT_SECONDS = 60
 NOTIFICATION_REJECT_REPEAT_SECONDS = 300
@@ -171,7 +173,10 @@ def cut_multi_submit_request(settings: Settings, payload: dict) -> dict:
     try:
         with build_opener(NoRedirect()).open(
             request,
-            timeout=settings.cutflow_request_timeout_seconds,
+            # V2 POST is a wake-up, not acceptance. A slow CUT must not
+            # monopolize the serial status worker or delay other READY jobs.
+            timeout=(min(settings.cutflow_request_timeout_seconds, NOTIFICATION_WAKE_TIMEOUT_SECONDS)
+                     if payload.get("notificationOnly") is True else settings.cutflow_request_timeout_seconds),
         ) as response:
             body = response.read(MAX_RESPONSE_BYTES + 1)
     except HTTPError as exc:
@@ -564,6 +569,7 @@ async def process_multi_task(
         if not task.manifest_path:
             descriptor, _digest = await publish_multi_package(task, settings, object_store)
             expected_path = f"inbox/multi-{task.id}/manifest.json"
+            descriptor = {**descriptor, "_readyAt": datetime.now(UTC).isoformat()}
             async with database.session_factory() as session:
                 persisted = await session.execute(
                     update(MultiCutflowTask)
@@ -661,6 +667,15 @@ async def process_multi_task(
                         )
                         if isinstance(exc, MultiControlHTTPError) and exc.detail:
                             notification["reason"] = exc.detail
+                        elif isinstance(exc, (URLError, OSError)):
+                            # Only retain the exception class and numeric OS code;
+                            # raw transport errors may contain URLs or credentials.
+                            cause = exc.reason if isinstance(exc, URLError) else exc
+                            if isinstance(cause, OSError):
+                                notification["transportError"] = type(cause).__name__
+                                number = getattr(cause, "winerror", None) or cause.errno
+                                if type(number) is int:
+                                    notification["transportErrno"] = number
                 ready_at = manifest.get("_readyAt")
                 if not isinstance(ready_at, str):
                     ready_at = datetime.now(UTC).isoformat()
@@ -679,8 +694,10 @@ async def process_multi_task(
                 # An oversized HTTP wake-up must not erase the published NAS job.
                 notification_too_large = notification.get("httpStatus") == 413
                 waiting_code = (
-                    "CUTFLOW_NOTIFICATION_TOO_LARGE" if notification_too_large else "CUTFLOW_STATUS_MISSING"
-                    if waiting_seconds >= max(300, settings.cutflow_nas_scan_seconds * 5)
+                    "CUTFLOW_NOTIFICATION_TOO_LARGE"
+                    if notification_too_large
+                    else "CUTFLOW_STATUS_MISSING"
+                    if waiting_seconds >= ACCEPTANCE_WARNING_SECONDS
                     else None
                 )
                 rejected_reason = notification.get("reason")
@@ -720,7 +737,7 @@ async def process_multi_task(
                     if permanently_rejected and rejected_reason
                     else "CUT 拒绝当前任务包（HTTP 409）；原始素材未被删除，请检查 CUT 接单日志"
                     if permanently_rejected
-                    else "已送入剪辑，CUT 尚未回写接单状态；系统会继续自动检查，无需重复送剪"
+                    else "素材包已发布，但 CUT 尚未确认接单；系统继续自动核对原任务，无需重复送剪"
                 )
                 await _write_claimed(
                     database,
@@ -738,7 +755,7 @@ async def process_multi_task(
                         "failure_count": 0,
                         "next_run_at": datetime.now(UTC) + timedelta(
                             seconds=(300 if permanently_rejected
-                                     else min(settings.cutflow_nas_scan_seconds, 300)),
+                                     else min(settings.cutflow_nas_scan_seconds, 15)),
                         ),
                     },
                 )
@@ -801,6 +818,9 @@ async def process_multi_task(
             )
             return
         manifest = remember_status_revision(manifest, revision)
+        if unified and result["status"] in {"ACCEPTED", "EDITING", "IMPORTING", "PENDING_REVIEW"}:
+            if not manifest.get("_firstCutReceiptObservedAt"):
+                manifest["_firstCutReceiptObservedAt"] = datetime.now(UTC).isoformat()
         if result.get("cutflowBatchId"):
             manifest["_cutBatchId"] = result["cutflowBatchId"]
         remote_state = result["status"]
