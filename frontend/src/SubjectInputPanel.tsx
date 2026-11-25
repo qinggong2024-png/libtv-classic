@@ -234,8 +234,8 @@ export function SubjectInputPanel({
   >
     <header className="subject-input-panel__header">
       <div>
-        <h2 id={`${id}-title`}>{className.includes("v6-subject") ? "商品 / 人物参考图" : "人物 / 商品参考图（选填）"}</h2>
-        <p>让人物长相或商品外观更一致</p>
+        <h2 id={`${id}-title`}>{className.includes("v6-subject") ? "产品参考图" : "产品参考图（选填）"}</h2>
+        <p>用于保持产品外观、颜色、印花和结构一致</p>
       </div>
       <div className="subject-input-panel__header-actions" role="group" aria-label="参考图来源">
         <button
@@ -262,12 +262,12 @@ export function SubjectInputPanel({
     </header>
 
     {mode !== 'history' ? <div className="subject-input-panel__upload">
-      <input ref={inputRef} id={`${id}-images`} hidden type="file" multiple accept={SUBJECT_IMAGE_ACCEPT} disabled={disabled} aria-label="人物或商品参考图" onChange={(event) => {
+      <input ref={inputRef} id={`${id}-images`} hidden type="file" multiple accept={SUBJECT_IMAGE_ACCEPT} disabled={disabled} aria-label="产品参考图" onChange={(event) => {
         selectPanelDropFiles(Array.from(event.currentTarget.files ?? []))
         event.currentTarget.value = ''
       }} />
       {(!className.includes("v6-subject") || !references.length) ? uploadButton : null}
-      {references.length ? <div className="subject-reference-previews" role="list" aria-label="已上传的人物或商品参考图">
+      {references.length ? <div className="subject-reference-previews" role="list" aria-label="已上传的产品参考图">
         {references.map((reference, index) => {
           const slot: SubjectDragSlot = reference.angle === 'FRONT' ? { slot: 'frontalImage' } : reference.angle === 'BACK' ? { slot: 'backImage' } : { slot: 'detailImages', index: uploadedFiles.detailImages.indexOf(reference.file) }
           const label = index === 0 ? '主参考图' : `补充参考图 ${index}`

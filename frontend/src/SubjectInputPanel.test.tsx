@@ -131,8 +131,9 @@ describe('SubjectInputPanel', () => {
 
   it('offers one optional multi-image uploader without separate angle slots', () => {
     const markup = renderToStaticMarkup(<SubjectInputPanel {...baseProps} mode="none" elements={[]} />)
-    expect(markup).toContain('人物 / 商品参考图（选填）')
-    expect(markup).toContain('让人物长相或商品外观更一致')
+    expect(markup).toContain('产品参考图（选填）')
+    expect(markup).toContain('用于保持产品外观、颜色、印花和结构一致')
+    expect(markup).not.toContain('人物')
     expect(markup).toContain('从历史选择')
     expect(markup).toContain('拖拽或点击上传参考图')
     expect(markup).toContain('第一张为主参考，其余补充细节')
@@ -146,10 +147,28 @@ describe('SubjectInputPanel', () => {
     expect(markup).not.toContain('清除主体')
   })
 
+  it('labels the V6 uploader exclusively as product references', () => {
+    const front = new File(['front'], 'front.png', { type: 'image/png' })
+    const markup = renderToStaticMarkup(<SubjectInputPanel
+      {...baseProps}
+      mode="upload"
+      className="v6-subject"
+      elements={[]}
+      uploadedFiles={{ frontalImage: front, backImage: null, detailImages: [] }}
+      onOpenProductHistory={vi.fn()}
+    />)
+    expect(markup).toContain('>产品参考图</h2>')
+    expect(markup).toContain('用于保持产品外观、颜色、印花和结构一致')
+    expect(markup).toContain('aria-label="产品参考图"')
+    expect(markup).toContain('aria-label="已上传的产品参考图"')
+    expect(markup).toContain('历史商品图')
+    expect(markup).not.toContain('人物')
+  })
+
   it('disables the shared uploader when the form is locked', () => {
     const markup = renderToStaticMarkup(<SubjectInputPanel {...baseProps} mode="upload" elements={[]} disabled />)
     expect(markup).toContain('class="upload-zone subject-unified-upload" disabled=""')
-    expect(markup).toContain('aria-label="人物或商品参考图"')
+    expect(markup).toContain('aria-label="产品参考图"')
     expect(markup).not.toContain('frontal_image')
     expect(markup).not.toContain('refer_image')
   })
@@ -168,6 +187,8 @@ describe('SubjectInputPanel', () => {
       elements={[]}
     />)
     expect(markup).toContain('subject-reference-preview__image')
+    expect(markup).toContain('aria-label="已上传的产品参考图"')
+    expect(markup).not.toContain('人物')
     expect(markup).toContain('draggable="true"')
     expect(markup).toContain('主参考图预览：front.png')
     expect(markup).toContain('补充参考图 1预览：side.png')
