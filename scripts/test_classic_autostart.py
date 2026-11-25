@@ -211,6 +211,9 @@ def test_independent_command_keeps_checkout_identifiable_for_pid_validation():
 
 
 def test_stop_waits_for_supervisor_before_stopping_children(monkeypatch):
+    import classic_green_api
+
+    monkeypatch.setattr(classic_green_api, "read_manifest", lambda: None)
     records = iter([{"pid": 1}, {}])
     monkeypatch.setattr(classic_autostart, "supervisor_record", lambda: next(records))
     monkeypatch.setattr(classic_autostart.time, "sleep", lambda _: None)
