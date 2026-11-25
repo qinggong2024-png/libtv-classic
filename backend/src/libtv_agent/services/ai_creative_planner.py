@@ -242,8 +242,23 @@ def _safe_error_diagnostics(exc: Exception) -> dict[str, str | None]:
     }
 
 
+def _is_opaque_gateway_rejection(exc: Exception) -> bool:
+    body = getattr(exc, "body", None)
+    if not isinstance(body, dict):
+        return False
+    payload = body.get("error", body)
+    return isinstance(payload, dict) and (
+        payload.get("type") == "invalid_request_error"
+        and payload.get("code") == "invalid_request"
+        and payload.get("param") is None
+        and payload.get("message") == (
+            "The request could not be processed. Please check the request parameters."
+        )
+    )
+
+
 def classify_planner_upstream_error(exc: Exception) -> CreativePlannerError:
-    """Use only exception type/HTTP status; upstream text may contain secrets."""
+    """Classify status and exact known relay signature without persisting upstream text."""
     from openai import APIConnectionError, APITimeoutError
 
     status = getattr(exc, "status_code", None)
@@ -261,6 +276,10 @@ def classify_planner_upstream_error(exc: Exception) -> CreativePlannerError:
         code = "AI_CREATIVE_RATE_LIMITED"
     elif status == 404:
         code = "AI_CREATIVE_ENDPOINT_NOT_FOUND"
+    elif status == 400 and _is_opaque_gateway_rejection(exc):
+        # Exact opaque relay rejection observed between successful Sol calls.
+        # Use the bounded pre-video retry budget, not a retry of explicit parameter errors.
+        code = "AI_CREATIVE_UPSTREAM_UNAVAILABLE"
     elif status in (400, 422):
         code = "AI_CREATIVE_REQUEST_REJECTED"
     elif isinstance(status, int) and status >= 500:

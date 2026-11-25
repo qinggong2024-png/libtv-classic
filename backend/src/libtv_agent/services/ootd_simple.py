@@ -35,6 +35,7 @@ from libtv_agent.services.ootd_dynamic import (
     dynamic_ootd_enabled,
     dynamic_ootd_prompt,
 )
+from libtv_agent.services.sol_image_transport import create_sol_response
 
 
 def _director_effort(settings: Settings) -> str:
@@ -227,7 +228,8 @@ async def _clearly_repeats_motion(
         f"EXAMPLE {i}:\n{item[:2000]}" for i, item in enumerate(examples[:3], 1)
     )
     response = await _timed_sol_response(
-        client.responses.create(
+        create_sol_response(
+            client,
             model=model,
             reasoning={"effort": "low"},
             max_output_tokens=180,
@@ -428,7 +430,8 @@ async def plan_simple_ootd(
             })
         try:
             response = await _timed_sol_response(
-                client.responses.create(
+                create_sol_response(
+                    client,
                     model=settings.openai_model,
                     reasoning={"effort": _director_effort(settings)},
                     max_output_tokens=2200,
@@ -502,7 +505,8 @@ async def plan_simple_ootd(
                 })
                 try:
                     revised = await _timed_sol_response(
-                        client.responses.create(
+                        create_sol_response(
+                            client,
                             model=settings.openai_model,
                             reasoning={"effort": _director_effort(settings)},
                             max_output_tokens=2200,
@@ -549,7 +553,8 @@ async def plan_simple_ootd(
                 })
                 try:
                     repaired = await _timed_sol_response(
-                        client.responses.create(
+                        create_sol_response(
+                            client,
                             model=settings.openai_model,
                             reasoning={"effort": _director_effort(settings)},
                             max_output_tokens=2200,
