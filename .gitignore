@@ -66,3 +66,33 @@ Thumbs.db
 # the .zip and the exploded directory are two copies of the same thing and neither is
 # referenced by the code, so they stay out of the repository.
 AI_VIDEO_PROD_*
+
+# Additional generated media and local tooling; not source.
+*.m4v
+*.mpeg
+*.mpg
+*.wmv
+*.flv
+*.3gp
+*.m2ts
+# .mts is also a TypeScript source extension; do not globally ignore it.
+*.mxf
+*.ogv
+*.vob
+*.m3u8
+*.m4s
+*.mp3
+*.wav
+*.aac
+*.m4a
+*.flac
+*.ogg
+*.p12
+*.secret
+*.sqlite-wal
+*.sqlite-shm
+*.db-wal
+*.db-shm
+/.worktrees/
+/design-demos/
+/docsai-video-prod/
