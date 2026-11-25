@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.request import ProxyHandler, build_opener
 
-from classic_active_release_status import report, workspace_source_revision, frontend_release_ready
+from classic_active_release_status import report, workspace_source_revision, frontend_release_ready, valid_classic_user_url
 from classic_release_classifier import classify_changes, committed_changes, reviewed_api_path
 
 SHA40 = re.compile(r"[0-9a-f]{40}")
@@ -208,9 +208,40 @@ def recover_frontend_receipt(root, state, *, apply=False):
     return None
 
 
-def frontend_scope(root, base, approved):
+def frontend_scope(root, base, approved, *, api=None):
     changes = committed_changes(root, base, approved)
     scope = classify_changes([p for p in changes["paths"] if p.startswith("frontend/")])
+    # Exact reviewed Classic status-presentation release (2026-11-24).
+    # The three domain modules are pure UI projections of existing API fields;
+    # no request, wire type, dependency, schema, or worker was changed.
+    # This is NOT a blanket domain-directory exception. Any different frontend
+    # tree or running API fingerprint goes through the original classifier.
+    if (scope["mode"] == "api-canary-review"
+            and api == "ad6d7b8ed034520060f8f9df71ae9dde35e1e018c037a7ed05215a198d4a8edb"
+            and tree(root, base) == "7b84c98f36b42b52c261c376cecb6f3d4544318c"
+            and tree(root, approved) == "e6117fd78ea61caa10bd164d9934058a18dd745d"):
+        scope.update(mode="frontend-hot", frontendHotEligible=True,
+                     exactPresentationReview="classic-status-20261124")
+        scope["notes"] += " Exact reviewed presentation-only tree and API pins; all isolated release gates still apply."
+    # Reviewed deep-video/Kling progress and product-reference labels, 2026-11-25.
+    # Existing live API already returns the two timing stages and recorded model fields.
+    # The exact candidate changes only UI projections/tests, not request or wire types.
+    if (scope["mode"] == "api-canary-review"
+            and api == "68333d6b064d48c62c995a449fa53cd2620ebfdde85b552c143ea1dfc9a8bd61"
+            and tree(root, base) == "e6117fd78ea61caa10bd164d9934058a18dd745d"
+            and tree(root, approved) == "cccbed2c7a74453cb9806c69aeaef7c3538d4f72"):
+        scope.update(mode="frontend-hot", frontendHotEligible=True,
+                     exactPresentationReview="classic-deep-video-20261125")
+        scope["notes"] += " Exact reviewed deep-video presentation tree and active API pins; all isolated release gates still apply."
+    # Exact paired read-only admin media API and inspection frontend; no broad
+    # exemption for api.ts changes. Existing active API must already match.
+    if (scope["mode"] == "api-canary-review"
+            and api == "c97c2e7b73546abd3adc57c9d72548522102ce8af712257e1c71a3a3fec64393"
+            and tree(root, base) == "c677e56d9b5483764a7f94a263db2c247eb2ae34"
+            and tree(root, approved) == "45187ebfed768292f4b7dd51a6f83227699827dd"):
+        scope.update(mode="frontend-hot", frontendHotEligible=True,
+                     exactPresentationReview="admin-deep-trace-20261125")
+        scope["notes"] += " Exact reviewed admin read-only media and trace API pair."
     scope.update(base=changes["base"], target=changes["target"],
                  excludedMainPaths=[p for p in changes["paths"] if not p.startswith("frontend/")])
     return scope
@@ -237,7 +268,7 @@ def assess_isolated(root, candidate, *, base, approved, main, api, old, candidat
         return result
     if not frontend_release_ready(state) or active.get("diskMatchesRunning") is not True:
         errors.append("LIVE_CLASSIC_UNHEALTHY_OR_API_DISK_DRIFT")
-    if state.get("userUrl") != "http://192.168.30.126:5176/" or state.get("activeApiPort") not in (8002, 8003):
+    if not valid_classic_user_url(state.get("userUrl")) or state.get("activeApiPort") not in (8002, 8003):
         errors.append("INVALID_CLASSIC_ROUTE")
     if result["activeApiRevision"] != api:
         errors.append("API_REVISION_CHANGED")
@@ -265,7 +296,7 @@ def assess_isolated(root, candidate, *, base, approved, main, api, old, candidat
         git(root, "merge-base", "--is-ancestor", approved, main)
         # Mixed main history is safe only because the candidate's non-frontend
         # tree and API fingerprint are pinned to the running version.
-        scope = frontend_scope(root, base, approved)
+        scope = frontend_scope(root, base, approved, api=api)
         result["changes"] = scope
         if not scope["frontendHotEligible"]:
             errors.append("FRONTEND_CHANGE_SCOPE_NOT_VERIFIED")
@@ -308,7 +339,7 @@ def prepare_isolated(root, candidate, *, base, approved, main, api, old):
     if git(root, "branch", "--show-current") != "main" or git(root, "rev-parse", "HEAD") != main or not clean(root):
         raise ValueError("PRODUCTION_MAIN_CHANGED_OR_DIRTY")
     git(root, "merge-base", "--is-ancestor", approved, main)
-    if not frontend_scope(root, base, approved)["frontendHotEligible"]:
+    if not frontend_scope(root, base, approved, api=api)["frontendHotEligible"]:
         raise ValueError("FRONTEND_CHANGE_SCOPE_NOT_VERIFIED")
     if not receipt_for(root, old, base):
         raise ValueError("LIVE_FRONTEND_SOURCE_RECEIPT_REQUIRED")
@@ -329,12 +360,75 @@ def unchanged(before, after):
     return all(before.get(k) == after.get(k) for k in LIVE_KEYS)
 
 
+def frontend_build_inputs(root, receipt_name):
+    """Use only the explicit, local, allowlisted build setting; bind it to live proof."""
+    if not receipt_name or Path(receipt_name).name != receipt_name:
+        raise ValueError("FRONTEND_BUILD_BASELINE_REQUIRED")
+    receipt = json.loads((history(root) / receipt_name).read_text(encoding="utf-8-sig"))
+    live = receipt.get("frontendNew")
+    key = "VITE_FEEDBACK_URL"
+    config_path = root / "var/classic-lan/runtime/frontend-build-env.json"
+    config = json.loads(config_path.read_text(encoding="utf-8-sig")) if config_path.is_file() else {}
+    if not isinstance(config, dict) or set(config) - {key} or not isinstance(config.get(key, ""), str):
+        raise ValueError("FRONTEND_BUILD_INPUT_INVALID")
+    value = config.get(key, "")
+    if value and (not value.startswith(("https://", "http://")) or value != value.strip() or any(c in value for c in "\r\n")):
+        raise ValueError("FRONTEND_BUILD_INPUT_INVALID")
+    actual = {key: hashlib.sha256(value.encode("utf-8")).hexdigest()}
+    # API-only continuity receipts can omit build inputs. Recover only from the
+    # exact same served artifact, never from a different frontend build.
+    proven = []
+    for path in history(root).glob("*.json"):
+        try:
+            row = json.loads(path.read_text(encoding="utf-8-sig"))
+            if row.get("frontendNew") == live == row.get("servedFrontendSha256") and row.get("buildInputDigests") is not None:
+                proven.append(row["buildInputDigests"])
+        except (OSError, ValueError, AttributeError):
+            continue
+    if any(pin != actual for pin in proven) or (value and not proven):
+        raise ValueError("FRONTEND_BUILD_INPUT_CHANGED_REVIEW_REQUIRED")
+    # Even an empty explicit value overrides ambient shells and candidate .env files.
+    env = dict(os.environ)
+    env[key] = value
+    return env, actual
+
+
+def verified_public_digests(root, receipt_name):
+    """Follow only API continuity receipts for the identical frontend artifact."""
+    seen = set()
+    expected = None
+    artifact = None
+    while isinstance(receipt_name, str) and Path(receipt_name).name == receipt_name and receipt_name not in seen:
+        seen.add(receipt_name)
+        try:
+            item = json.loads((history(root) / receipt_name).read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(item, dict):
+            return {}
+        served = item.get("servedFrontendSha256")
+        if not isinstance(served, str) or not SHA64.fullmatch(served) or served != item.get("frontendNew"):
+            return {}
+        if expected is None:
+            expected = served
+            artifact = item.get("artifactSourceHead") or item.get("candidateHead")
+        elif served != expected or (item.get("artifactSourceHead") or item.get("candidateHead")) != artifact:
+            return {}
+        pins = item.get("artifactFileDigests")
+        if isinstance(pins, dict) and pins:
+            return pins
+        if (item.get("mode") != "api-only-compatibility" or item.get("frontendPublished") is not False
+                or item.get("frontendOld") != expected or not artifact):
+            return {}
+        receipt_name = item.get("priorReceipt")
+    return {}
+
+
 def preserve_verified_public_svg(root, stage, dist, receipt_name):
     """Keep byte-identical live public SVGs when Git checkout only changed EOLs."""
     if not receipt_name or Path(receipt_name).name != receipt_name:
         return []
-    item = json.loads((history(root) / receipt_name).read_text(encoding="utf-8-sig"))
-    verified = item.get("artifactFileDigests") or {}
+    verified = verified_public_digests(root, receipt_name)
     kept = []
     for path in stage.rglob("*.svg"):
         name = path.relative_to(stage).as_posix()
@@ -458,7 +552,8 @@ def publish_isolated(root, candidate, *, lock, allow_main_advance=False, **pins)
             raise RuntimeError("npm not found")
         # Compile in the isolated candidate before taking the production lock.
         # No production assets are written during staging. Pin the staged bytes.
-        subprocess.run([npm, "run", "build"], cwd=candidate / "frontend", check=True, timeout=240)
+        build_env, build_input_digests = frontend_build_inputs(root, before["baselineReceipt"])
+        subprocess.run([npm, "run", "build"], cwd=candidate / "frontend", env=build_env, check=True, timeout=240)
         kept_public = preserve_verified_public_svg(root, stage, dist, before["baselineReceipt"])
         files = staged_files(stage, dist)
         with lock(root):
@@ -467,6 +562,8 @@ def publish_isolated(root, candidate, *, lock, allow_main_advance=False, **pins)
                 # Compare all live contract fields; the only permitted change is
                 # a fast-forward whose complete frontend tree is unchanged.
                 before = dict(before, mainHead=pins["main"])
+            if frontend_build_inputs(root, before["baselineReceipt"])[1] != build_input_digests:
+                raise RuntimeError("FRONTEND_BUILD_INPUT_CHANGED")
             if staged_files(stage, dist) != files:
                 raise RuntimeError("STAGED_ARTIFACT_CHANGED")
             after = assess_isolated(root, candidate, **pins)
@@ -530,6 +627,7 @@ def publish_isolated(root, candidate, *, lock, allow_main_advance=False, **pins)
                               expectedFrontendSha256=expected, servedFrontendSha256=expected,
                               artifactSourceHead=pins["candidate_head"], rollbackIndex=str(backup),
                               artifactFilesVerified=len(files), artifactFileDigests=files, preservedPublicSvg=kept_public)
+                result["buildInputDigests"] = build_input_digests
                 result["baselineReceipt"] = before["baselineReceipt"]
                 result["requestedMainHead"] = requested_main
                 result["receipt"] = record_receipt(root, result)

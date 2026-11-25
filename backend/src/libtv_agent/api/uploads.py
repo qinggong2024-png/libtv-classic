@@ -24,6 +24,7 @@ from libtv_agent.services.idempotency import (
 from libtv_agent.services.preprocessing import ImageInputError, preprocess_image
 from libtv_agent.services.upload_diagnostics import upload_diagnostic_id
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 
 router = APIRouter(tags=["uploads"])
 
@@ -83,28 +84,13 @@ async def upload_storyboard(
         "sha256": raw_sha256,
         "sourceImageOutputId": str(source_image_output_id) if source_image_output_id else None,
     }
-    try:
-        request.state.upload_stage = "idempotency"
-        cached = await load_idempotent_response(
-            session,
-            tenant_id=str(actor.id),
-            operation_type="UPLOAD",
-            key=idempotency_key,
-            payload=payload,
-        )
-    except (IdempotencyConflictError, IdempotencyInProgressError) as exc:
-        code = (
-            "IDEMPOTENCY_REQUEST_IN_PROGRESS"
-            if isinstance(exc, IdempotencyInProgressError)
-            else "IDEMPOTENCY_KEY_REUSED"
-        )
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, detail={"code": code, "message": str(exc)}
-        ) from exc
-    if cached:
-        return UploadRead.model_validate(cached[1])
+    # Authentication and source validation are read-only. Do not retain their
+    # transaction, or a SQLite writer claim, during image processing/file I/O.
+    actor_id = actor.id
+    await session.rollback()
     processed = None
     stored_keys: list[str] = []
+    keep_stored_keys = False
     try:
         request.state.upload_stage = "preprocess"
         try:
@@ -124,20 +110,40 @@ async def upload_storyboard(
         request.state.upload_stage = "object_store"
         object_key = await request.app.state.object_store.put_file(
             processed.normalized_path,
-            f"users/{actor.id}/inputs/{processed.asset_id}/normalized.jpg",
+            f"users/{actor_id}/inputs/{processed.asset_id}/normalized.jpg",
             "image/jpeg",
         )
         stored_keys.append(object_key)
         thumbnail_key = await request.app.state.object_store.put_file(
             processed.thumbnail_path,
-            f"users/{actor.id}/thumbnails/{processed.asset_id}.jpg",
+            f"users/{actor_id}/thumbnails/{processed.asset_id}.jpg",
             "image/jpeg",
         )
         stored_keys.append(thumbnail_key)
+        # Only now claim the idempotency key; the receipt and upload row are
+        # committed atomically, with no image processing or storage I/O inside.
+        request.state.upload_stage = "idempotency"
+        try:
+            cached = await load_idempotent_response(
+                session, tenant_id=str(actor_id), operation_type="UPLOAD",
+                key=idempotency_key, payload=payload,
+            )
+        except (IdempotencyConflictError, IdempotencyInProgressError) as exc:
+            code = (
+                "IDEMPOTENCY_REQUEST_IN_PROGRESS"
+                if isinstance(exc, IdempotencyInProgressError)
+                else "IDEMPOTENCY_KEY_REUSED"
+            )
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, detail={"code": code, "message": str(exc)}
+            ) from exc
+        if cached:
+            await session.rollback()
+            return UploadRead.model_validate(cached[1])
         request.state.upload_stage = "record"
         upload = StagedUpload(
             id=processed.asset_id,
-            user_id=actor.id,
+            user_id=actor_id,
             original_filename=file.filename or "storyboard",
             sha256=processed.sha256,
             mime_type=processed.mime_type,
@@ -162,7 +168,7 @@ async def upload_storyboard(
         )
         await store_idempotent_response(
             session,
-            tenant_id=str(actor.id),
+            tenant_id=str(actor_id),
             operation_type="UPLOAD",
             key=idempotency_key,
             payload=payload,
@@ -171,16 +177,19 @@ async def upload_storyboard(
         )
         request.state.upload_stage = "commit"
         await session.commit()
+        keep_stored_keys = True
         return response
     except HTTPException:
         await session.rollback()
         raise
     except Exception as exc:
         await session.rollback()
-        await asyncio.gather(
-            *(request.app.state.object_store.delete(key) for key in reversed(stored_keys)),
-            return_exceptions=True,
-        )
+        if isinstance(exc, OperationalError) and "database is locked" in str(exc.orig).lower():
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "DATABASE_UNAVAILABLE",
+                        "message": "数据库暂时繁忙，图片未提交生成，请稍后使用原素材重试。"},
+            ) from exc
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
@@ -190,6 +199,11 @@ async def upload_storyboard(
             },
         ) from exc
     finally:
+        if not keep_stored_keys and stored_keys:
+            await asyncio.gather(
+                *(request.app.state.object_store.delete(key) for key in reversed(stored_keys)),
+                return_exceptions=True,
+            )
         if processed is not None:
             await asyncio.to_thread(processed.normalized_path.unlink, missing_ok=True)
             await asyncio.to_thread(processed.thumbnail_path.unlink, missing_ok=True)

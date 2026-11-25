@@ -16,12 +16,13 @@ from libtv_agent.adapters.object_store import ObjectStore
 from libtv_agent.adapters.video_provider import VideoProviderAdapter
 from libtv_agent.config import Settings
 from libtv_agent.db import Database
-from libtv_agent.domain.enums import ParentTaskPhase
-from libtv_agent.domain.models import GenerationVariant, ParentTask, StagedUpload
+from libtv_agent.domain.enums import ParentTaskPhase, UserRole
+from libtv_agent.domain.models import GenerationAttempt, GenerationVariant, ParentTask, StagedUpload, User
 from libtv_agent.domain.schemas import VideoTaskCreate
 from libtv_agent.services.fixed_video_tasks import (
     FixedVideoTaskValidationError,
     create_fixed_video_task,
+    queue_video_task,
 )
 from libtv_agent.services.tasks import task_to_read
 from libtv_agent.services.video_type_release import (
@@ -31,10 +32,64 @@ from libtv_agent.services.video_type_release import (
 )
 from sqlalchemy import and_, exists, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import OperationalError
 
 logger = logging.getLogger(__name__)
 PAYLOAD_KEY = "_pendingAutomaticVideoSubmission"
 MAX_AUTOMATIC_PLAN_ATTEMPTS = 2
+RETRYABLE_SOL_ERRORS = frozenset({
+    "AI_CREATIVE_CONNECTION_FAILED",
+    "AI_CREATIVE_REQUEST_TIMEOUT",
+    "AI_CREATIVE_GATEWAY_TIMEOUT",
+    "AI_CREATIVE_RATE_LIMITED",
+    "AI_CREATIVE_UPSTREAM_UNAVAILABLE",
+    "AI_CREATIVE_STREAM_INTERRUPTED",
+})
+RETRY_SCHEDULED = "AI_CREATIVE_RETRY_SCHEDULED"
+
+
+def _plan_ready_condition(now: datetime):
+    # QUEUED analysis_heartbeat_at doubles as a not-before timestamp.
+    # RUNNING analysis_heartbeat_at remains the actual lease heartbeat.
+    return or_(
+        ParentTask.analysis_heartbeat_at.is_(None),
+        ParentTask.analysis_heartbeat_at <= now,
+    )
+
+
+async def schedule_retryable_sol_failure(
+    session: AsyncSession, *,
+    task_id: uuid.UUID, run_id: uuid.UUID, code: str,
+    now: datetime | None = None,
+) -> bool:
+    """One durable, delayed *pre-paid* Sol retry; never replay provider commands."""
+    if code not in RETRYABLE_SOL_ERRORS:
+        return False
+    now = now or datetime.now(UTC)
+    delay = 120 if code == "AI_CREATIVE_RATE_LIMITED" else 60
+    result = await session.execute(
+        update(ParentTask).where(
+            ParentTask.id == task_id,
+            ParentTask.workflow_kind == "FIXED_TEMPLATE",
+            ParentTask.phase == ParentTaskPhase.ANALYZING,
+            ParentTask.analysis_stage == "RUNNING",
+            ParentTask.analysis_run_id == run_id,
+            ParentTask.analysis_attempt_count >= 1,
+            ParentTask.analysis_attempt_count < MAX_AUTOMATIC_PLAN_ATTEMPTS,
+            _no_generation_variants(),
+        ).values(
+            phase_reason_code=RETRY_SCHEDULED,
+            analysis_stage="QUEUED",
+            analysis_run_id=None,
+            analysis_started_at=None,
+            analysis_heartbeat_at=now + timedelta(seconds=delay),
+            state_version=ParentTask.state_version + 1,
+        )
+    )
+    if result.rowcount != 1:
+        return False
+    await session.commit()
+    return True
 
 
 def _no_generation_variants():
@@ -222,8 +277,114 @@ async def pending_automatic_video_ids(session: AsyncSession, limit: int = 2) -> 
             ParentTask.workflow_kind == "FIXED_TEMPLATE",
             ParentTask.phase == ParentTaskPhase.ANALYZING,
             ParentTask.analysis_stage == "QUEUED",
+            _plan_ready_condition(datetime.now(UTC)),
         ).order_by(ParentTask.created_at).limit(limit)
     ))
+
+
+def _no_direct_attempts():
+    # No attempt of ANY state is allowed. A missing external ID alone is not
+    # evidence that a paid provider was never contacted.
+    return ~exists(
+        select(GenerationAttempt.id)
+        .join(GenerationVariant, GenerationVariant.id == GenerationAttempt.variant_id)
+        .where(GenerationVariant.parent_task_id == ParentTask.id)
+    )
+
+
+def _prepaid_direct_plan():
+    return (
+        ParentTask.workflow_kind == "FIXED_TEMPLATE",
+        ParentTask.phase == ParentTaskPhase.PREPARING,
+        ParentTask.analysis_stage == "COMPLETED",
+        ParentTask.analysis_run_id.is_not(None),
+        ParentTask.paid_submission_consent_at.is_not(None),
+        exists(select(GenerationVariant.id).where(
+            GenerationVariant.parent_task_id == ParentTask.id,
+        )),
+        _no_direct_attempts(),
+    )
+
+
+def _sqlite_busy(exc: BaseException) -> bool:
+    return isinstance(exc, OperationalError) and (
+        getattr(exc.orig, "sqlite_errorcode", None) in (5, 6)
+        or "database is locked" in str(exc.orig).lower()
+        or "database table is locked" in str(exc.orig).lower()
+    )
+
+
+async def retry_direct_admission_after_db_busy(
+    database, settings, kling_adapter, object_store, task_id, run_id,
+    *, delays=(0.5, 1.0),
+) -> bool:
+    """Retry ONLY the same live worker's pre-paid admission, not Sol or a provider POST."""
+    for delay in delays:
+        await asyncio.sleep(delay)
+        try:
+            async with database.session_factory() as session:
+                task = await session.scalar(select(ParentTask).where(
+                    ParentTask.id == task_id,
+                    ParentTask.analysis_run_id == run_id,
+                    *_prepaid_direct_plan(),
+                ))
+                if task is None:
+                    return False
+                owner = await session.get(User, task.user_id)
+                if owner is None or not owner.is_active or owner.role == UserRole.AUDITOR:
+                    return False
+                # The original compiled prompt, references, consent and task
+                # identity are reused. Queue admission still enforces the
+                # provider, budget and runtime-pause gates.
+                await queue_video_task(
+                    session, task=task, user_id=task.user_id, settings=settings,
+                    kling_adapter=kling_adapter, object_store=object_store,
+                )
+                return True
+        except Exception as retry_error:
+            if not _sqlite_busy(retry_error):
+                logger.exception("pre-paid direct admission recovery stopped")
+                return False
+    return False
+
+
+async def mark_interrupted_direct_admissions(
+    session: AsyncSession, *, older_than_minutes: int = 15,
+    exclude_ids: tuple[uuid.UUID, ...] = (), limit: int = 50,
+) -> int:
+    """Identify abandoned prepared plans, without replaying old paid work.
+
+    A live worker can retry a proved pre-paid SQLite failure; after a restart
+    the exact configuration/ownership cannot be assumed. Expose a distinct
+    recoverable review state rather than leaving PREPARING forever.
+    """
+    cutoff = datetime.now(UTC) - timedelta(minutes=older_than_minutes)
+    eligible = (
+        *_prepaid_direct_plan(),
+        ParentTask.updated_at <= cutoff,
+        ParentTask.id.not_in(exclude_ids),
+    )
+    candidates = list((await session.execute(
+        select(ParentTask.id, ParentTask.state_version)
+        .where(*eligible).order_by(ParentTask.updated_at).limit(limit)
+    )).all())
+    if not candidates:
+        return 0
+    await session.commit()
+    changed = 0
+    for task_id, version in candidates:
+        result = await session.execute(update(ParentTask).where(
+            ParentTask.id == task_id,
+            ParentTask.state_version == version,
+            *eligible,
+        ).values(
+            phase=ParentTaskPhase.ACTION_REQUIRED,
+            phase_reason_code="DIRECT_ADMISSION_INTERRUPTED",
+            state_version=ParentTask.state_version + 1,
+        ))
+        changed += result.rowcount
+        await session.commit()
+    return changed
 
 
 async def process_automatic_video_submission(
@@ -239,8 +400,10 @@ async def process_automatic_video_submission(
                 ParentTask.id == task_id,
                 ParentTask.phase == ParentTaskPhase.ANALYZING,
                 ParentTask.analysis_stage == "QUEUED",
+                _plan_ready_condition(datetime.now(UTC)),
             ).values(
                 analysis_stage="RUNNING",
+                phase_reason_code=None,
                 analysis_run_id=run_id,
                 analysis_started_at=datetime.now(UTC),
                 analysis_heartbeat_at=datetime.now(UTC),
@@ -277,8 +440,14 @@ async def process_automatic_video_submission(
                 expected_analysis_run_id=run_id,
             )
     except Exception as exc:
+        # A SQLite write error is retryable only after a fresh durable check
+        # proves the same worker's completed plan has no attempt at all.
+        if _sqlite_busy(exc) and await retry_direct_admission_after_db_busy(
+            database, settings, kling_adapter, object_store, task_id, run_id,
+        ):
+            return
         # Never retry a potentially accepted paid request automatically.
-        # If the worker already reached PREPARING/QUEUED this path must not overwrite it.
+        # If the worker already reached QUEUED this path must not overwrite it.
         code = (
             exc.code if isinstance(exc, FixedVideoTaskValidationError)
             else "AI_CREATIVE_WORKER_FAILED"
@@ -313,11 +482,20 @@ async def process_automatic_video_submission(
             (ai_failure_record or {}).get("aiCreativePlanner", {}).get("validationRule"),
         )
         async with database.session_factory() as session:
+            if await schedule_retryable_sol_failure(
+                session, task_id=task_id, run_id=run_id, code=code,
+            ):
+                logger.warning(
+                    "requeued recoverable Sol planning error within bounded budget: %s",
+                    code,
+                )
+                return
             await session.execute(
                 update(ParentTask).where(
                     ParentTask.id == task_id,
                     ParentTask.phase == ParentTaskPhase.ANALYZING,
                     ParentTask.analysis_run_id == run_id,
+                    ParentTask.analysis_stage == "RUNNING",
                 ).values(
                     phase=ParentTaskPhase.ACTION_REQUIRED,
                     phase_reason_code=code,
@@ -325,6 +503,17 @@ async def process_automatic_video_submission(
                     analysis_heartbeat_at=datetime.now(UTC),
                     **({"material_validation_json": ai_failure_record}
                        if ai_failure_record is not None else {}),
+                    state_version=ParentTask.state_version + 1,
+                )
+            )
+            await session.execute(
+                update(ParentTask).where(
+                    ParentTask.id == task_id,
+                    ParentTask.analysis_run_id == run_id,
+                    *_prepaid_direct_plan(),
+                ).values(
+                    phase=ParentTaskPhase.ACTION_REQUIRED,
+                    phase_reason_code="DIRECT_ADMISSION_INTERRUPTED",
                     state_version=ParentTask.state_version + 1,
                 )
             )

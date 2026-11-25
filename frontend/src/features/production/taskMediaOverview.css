@@ -1,0 +1,89 @@
+/* V2.0 approved detail, implemented on the real Classic task and CUT models. */
+.production-workspace:not(.allwe-focus-enabled) .allwe-detail-advanced { border: 0; background: transparent; }
+.production-workspace:not(.allwe-focus-enabled) .allwe-detail-advanced > summary { display: none; }
+.production-workspace:not(.allwe-focus-enabled) .allwe-detail-advanced > .task-a-originals { margin: 0; }
+.app-shell .production-workspace.allwe-focus-enabled { border-radius: 17px; overflow: hidden; }
+.app-shell .production-workspace.allwe-focus-enabled .drawer-header { background: #fff; padding: 18px 22px; }
+.app-shell .production-workspace.allwe-focus-enabled .drawer-header h1 { font-size: 21px; letter-spacing: -.018em; }
+.app-shell .production-workspace.allwe-focus-enabled .drawer-header-main > span { color: #91a5b0; }
+.app-shell .production-workspace.allwe-focus-enabled .drawer-content { background: #fff; gap: 14px; padding: 20px 22px 26px; }
+.app-shell .production-workspace.allwe-focus-enabled .workspace-stages,
+.app-shell .production-workspace.allwe-focus-enabled .task-flow-journey { display: none; }
+/* Four receipt-backed workflow stages, without placeholder steps. */
+.allwe-detail-stages { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 20px; margin: 0 0 14px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.allwe-detail-stages__step { position: relative; display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; padding: 7px 9px; border-radius: 9px; color: var(--muted); transition: background-color 180ms ease, color 180ms ease, box-shadow 180ms ease; }
+.allwe-detail-stages__step:not(:last-child)::after { content: ''; position: absolute; left: calc(100% + 4px); top: 50%; width: 12px; height: 1px; background: var(--line-strong); pointer-events: none; }
+.allwe-detail-stages__step > span { display: grid; place-items: center; flex: 0 0 22px; width: 22px; height: 22px; border-radius: 50%; background: var(--surface-soft); font-size: 11px; font-weight: 650; }
+.allwe-detail-stages__step small { color: inherit; font-size: 12px; font-weight: 650; white-space: nowrap; }
+.allwe-detail-stages__step.is-done { color: var(--success); }
+.allwe-detail-stages__step.is-done > span { background: var(--success-soft); }
+.allwe-detail-stages__step.is-done::after { background: color-mix(in srgb, var(--success) 40%, var(--line)); }
+.allwe-detail-stages__step.is-active { color: var(--primary); background: var(--primary-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 18%, transparent); }
+.allwe-detail-stages__step.is-active > span { background: transparent; }
+.allwe-detail-stages__step.is-attention { color: var(--danger); background: var(--danger-soft); }
+.allwe-detail-stages__step.is-partial { color: var(--warning); background: var(--warning-soft); }
+.allwe-detail-stages__dot { display: block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: allwe-stage-pulse 1.8s ease-out infinite; }
+@keyframes allwe-stage-pulse { 0%,100% { box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 20%, transparent); } 50% { box-shadow: 0 0 0 5px transparent; } }
+@media (prefers-reduced-motion: reduce) { .allwe-detail-stages__step { transition: none; } .allwe-detail-stages__dot { animation: none; } }
+.allwe-detail-overview { display: grid; grid-template-columns: minmax(0, 1fr) minmax(210px, .45fr); gap: 20px; margin: 0 0 6px; }
+.allwe-detail-overview__media { display: grid; grid-template-columns: minmax(170px, 210px) minmax(0, 1fr); gap: 20px; padding: 15px; border: 1px solid #e2edf3; border-radius: 17px; background: #f8fcfd; min-width: 0; }
+.allwe-detail-overview__primary, .allwe-detail-overview__originals { min-width: 0; }
+.allwe-detail-overview__primary header, .allwe-detail-overview__originals header { height: 24px; display: flex; gap: 8px; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; color: #2a424f; }
+.allwe-detail-overview header strong { font-size: 12px; font-weight: 760; }
+.allwe-detail-overview header small { color: #8aa0ad; font-size: 11px; }
+.allwe-detail-overview__poster { position: relative; display: grid; place-items: center; width: 100%; aspect-ratio: 9 / 16; padding: 0; overflow: hidden; border: 1px solid #e0ebf0; border-radius: 12px; background: #e6f2f7; cursor: pointer; isolation: isolate; }
+.allwe-detail-overview__poster > img, .allwe-detail-overview__poster > video,
+.allwe-detail-overview__thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.allwe-detail-overview__poster img,.allwe-detail-overview__thumb img { transition: transform 210ms cubic-bezier(.2,.8,.2,1); }
+.allwe-detail-overview__poster:hover img,.allwe-detail-overview__thumb:hover img { transform: scale(1.045); }
+.allwe-detail-overview__play { position: absolute; inset: 50% auto auto 50%; transform: translate(-50%,-50%); display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; color: #08a1c3; background: rgba(255,255,255,.96); box-shadow: 0 6px 19px rgba(10,40,51,.19); transition: transform .2s ease, box-shadow .2s ease; }
+.allwe-detail-overview__play svg { margin-left: 2px; }
+.allwe-detail-overview__poster:hover .allwe-detail-overview__play,.allwe-detail-overview__thumb:hover .allwe-detail-overview__play { transform: translate(-50%,-50%) scale(1.07); }
+.allwe-detail-overview__placeholder { display: flex; flex-direction: column; gap: 9px; color: #6994a5; cursor: default; font-size: 12px; text-align: center; }
+.allwe-detail-overview__download { display: inline-flex; align-items: center; gap: 6px; margin-top: 9px; padding: 6px 0; color: #049bc3; background: transparent; border: 0; font-size: 11px; font-weight: 700; cursor: pointer; }
+.allwe-detail-overview__download:hover { color: #006f96; }
+.allwe-detail-overview__clips { display: grid; grid-template-columns: repeat(2, minmax(0, 115px)); justify-content: start; align-content: start; gap: 12px; }
+.allwe-detail-overview__clip { min-width: 0; }
+.allwe-detail-overview__thumb { display: grid; place-items: center; position: relative; width: 100%; aspect-ratio: 9 / 16; overflow: hidden; padding: 0; border-radius: 10px; border: 1px solid #e0ebf0; background: #e8f3f7; cursor: pointer; isolation: isolate; }
+.allwe-detail-overview__thumb .allwe-detail-overview__play { width: 30px; height: 30px; }
+.allwe-detail-overview__thumb--pending { color: #9fb1ba; cursor: default; border-style: dashed; }
+.allwe-detail-overview__clip-meta { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 6px 1px 0; color: #536b78; font-size: 11px; }
+.allwe-detail-overview__clip-meta button { display: grid; place-items: center; width: 24px; height: 24px; border: 0; border-radius: 7px; color: #6093a6; background: #e9f5f9; cursor: pointer; }
+.allwe-detail-overview__clip-meta button:hover { color: #0088ae; background: #d4eef9; }
+.allwe-detail-overview__clip-meta small { color: #9aabb4; font-size: 10px; }
+.allwe-detail-overview__status { display: flex; flex-direction: column; gap: 13px; min-width: 0; padding: 7px 4px 5px; }
+.allwe-detail-overview__status h2 { margin: 0; font-size: 15px; color: #213a48; }
+.allwe-detail-overview__state { align-self: start; border-radius: 8px; background: #e5f7fc; padding: 6px 10px; color: #0989af; font-size: 12px; font-weight: 750; }
+.allwe-detail-overview__status p { margin: 0; color: #607d8e; font-size: 12px; line-height: 1.55; }
+.allwe-detail-overview__action { display: inline-flex; align-items: center; justify-content: center; align-self: start; min-height: 34px; padding: 7px 13px; border: 1px solid #b9e5ef; border-radius: 9px; background: #e5f7fc; color: #078caf; font-size: 12px; font-weight: 750; cursor: pointer; transition: background .18s ease, transform .18s ease, border-color .18s ease; }
+.allwe-detail-overview__action:hover { background: #d7f2fa; border-color: #86d5e8; transform: translateY(-1px); }
+.allwe-detail-overview__action:focus-visible { outline: 3px solid #7ad6ed; outline-offset: 2px; }
+.allwe-detail-overview__status dl { display: grid; grid-template-columns: 1fr auto; gap: 15px; margin: 3px 0 0; padding: 16px 0 0; border-top: 1px solid #e9eff3; font-size: 12px; }
+.allwe-detail-overview__status dt { color: #91a5b0; }
+.allwe-detail-overview__status dd { margin: 0; font-weight: 700; color: #2a4556; font-variant-numeric: tabular-nums; }
+.allwe-detail-overview__issue { padding: 10px; border-radius: 9px; background: #fff2f1; color: #ab4140; font-size: 12px; line-height: 1.5; }
+.allwe-detail-advanced { min-width: 0; border: 1px solid #e5edf1; border-radius: 12px; background: #fff; }
+.allwe-detail-advanced > summary { display: flex; align-items: center; min-height: 42px; padding: 11px 15px; list-style: none; cursor: pointer; font-size: 12px; font-weight: 750; color: #537789; }
+.allwe-detail-advanced > summary::-webkit-details-marker { display: none; }
+.allwe-detail-advanced[open] > summary { border-bottom: 1px solid #e5edf1; }
+.allwe-detail-advanced > .task-a-originals { margin: 0 !important; padding: 14px !important; }
+.app-shell .production-workspace.allwe-focus-enabled .task-a-disclosure { border-radius: 12px; border-color: #e5edf1; }
+.app-shell .production-workspace.allwe-focus-enabled .task-a-disclosure__hint { display: none; }
+.app-shell .production-workspace.allwe-focus-enabled .task-detail-section__heading p { display: none; }
+@media (max-width: 1100px) {
+  .allwe-detail-overview { grid-template-columns: 1fr; gap: 12px; }
+  .allwe-detail-overview__media { grid-template-columns: 190px minmax(0,1fr); }
+  .allwe-detail-overview__status { display: grid; grid-template-columns: auto 1fr; align-items: start; }
+  .allwe-detail-overview__status dl { grid-column: 1 / -1; }
+}
+@media (max-width: 680px) {
+  .allwe-detail-overview__media { grid-template-columns: 145px minmax(0,1fr); gap: 10px; padding: 10px; }
+  .allwe-detail-overview__clips { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+  .allwe-detail-stages { gap: 4px; }
+  .allwe-detail-stages__step small { font-size: 10px; }
+  .app-shell .production-workspace.allwe-focus-enabled .drawer-content { padding: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+ .allwe-detail-overview__poster img,.allwe-detail-overview__thumb img,.allwe-detail-overview__play { transition: none !important; }
+ .allwe-detail-overview__poster:hover img,.allwe-detail-overview__thumb:hover img { transform: none; }
+}

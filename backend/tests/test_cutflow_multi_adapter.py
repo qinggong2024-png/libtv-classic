@@ -21,14 +21,14 @@ from libtv_agent.services.cutflow_protocol import (
     remember_status_revision,
 )
 
-TASK_ID = uuid.UUID("2c3e9790-b940-4ac5-b706-697a2ad14011")
+TASK_ID = uuid.UUID("00000000-0000-4000-8000-000000000011")
 MANIFEST_HASH = "a" * 64
 
 
 def task_fixture():
     return SimpleNamespace(
         id=TASK_ID,
-        user_id=uuid.UUID("012f2296-2ecb-469b-a4bc-dcc172515cac"),
+        user_id=uuid.UUID("00000000-0000-4000-8000-000000000010"),
         created_at=datetime(2026, 10, 27, tzinfo=UTC),
         sources_json=[
             {"clipId": "clip-2", "order": 2, "relativePath": "sources/02.mp4",

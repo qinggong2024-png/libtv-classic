@@ -587,8 +587,13 @@ async def test_video_task_creation_blocks_bad_ai_plan_before_task_is_created(
                 headers={"X-User-Id": settings.dev_user_id},
             )
             assert refreshed.status_code == 200
-            assert refreshed.json()["phase"] == "ACTION_REQUIRED"
-            assert refreshed.json()["phaseReasonCode"] == failure_code
+            if failure_code == "AI_CREATIVE_GATEWAY_TIMEOUT":
+                assert refreshed.json()["phase"] == "ANALYZING"
+                assert refreshed.json()["analysisStage"] == "QUEUED"
+                assert refreshed.json()["phaseReasonCode"] == "AI_CREATIVE_RETRY_SCHEDULED"
+            else:
+                assert refreshed.json()["phase"] == "ACTION_REQUIRED"
+                assert refreshed.json()["phaseReasonCode"] == failure_code
             assert refreshed.json()["variants"] == [], "AI failure must not submit paid video"
             diagnostic = (refreshed.json().get("materialValidation") or {}).get(
                 "aiCreativePlanner", {}

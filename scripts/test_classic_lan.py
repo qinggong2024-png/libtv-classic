@@ -36,7 +36,7 @@ def test_lan_environment_keeps_credentials_and_database_separate(tmp_path, monke
     monkeypatch.setattr(classic_lan, "SECRET_FILE", secret)
     monkeypatch.setenv("OPENAI_API_KEY", "inherited-key-must-not-escape")
     monkeypatch.setenv("DATABASE_URL", "postgresql://unrelated-production")
-    env = classic_lan.lan_environment(8003, 5177, "192.168.30.126")
+    env = classic_lan.lan_environment(8003, 5177, "10.12.34.56")
     assert "OPENAI_API_KEY" not in env
     assert env["DATABASE_URL"].endswith("classic-lan/classic.db")
     assert env["SHARED_AUTHENTICATION_ENABLED"] == "true"
@@ -54,7 +54,7 @@ def test_lan_environment_keeps_credentials_and_database_separate(tmp_path, monke
     assert env["PAID_GENERATION_ENABLED"] == "false"
     assert env["LIBTV_EXECUTION_MODE"] == "dry-run"
     assert env["WAVESPEED_ENABLED"] == "false"
-    assert "http://192.168.30.126:5177" in env["APP_PUBLIC_ORIGINS"]
+    assert "http://10.12.34.56:5177" in env["APP_PUBLIC_ORIGINS"]
     assert str(storage) in env["ADMIN_CREDENTIALS_FILE"]
 
 
@@ -63,11 +63,11 @@ def test_generation_opt_in_survives_restart_without_inheriting_secrets(isolated_
     monkeypatch.setenv("PAID_GENERATION_CONFIRMATION", "I_ACCEPT_LIBTV_POINT_CHARGES")
     monkeypatch.setenv("KLING_API_KEY", "unrelated-provider-key")
     assert not classic_lan.generation_authorized()
-    assert classic_lan.lan_environment(8003, 5177, "192.168.30.126")[
+    assert classic_lan.lan_environment(8003, 5177, "10.12.34.56")[
         "PAID_GENERATION_ENABLED"
     ] == "false"
     classic_lan.configure_generation(True, {})
-    env = classic_lan.lan_environment(8003, 5177, "192.168.30.126")
+    env = classic_lan.lan_environment(8003, 5177, "10.12.34.56")
     assert classic_lan.generation_authorized()
     assert env["LIBTV_EXECUTION_MODE"] == "live"
     assert env["PAID_GENERATION_ENABLED"] == "true"
@@ -80,7 +80,7 @@ def test_generation_opt_in_survives_restart_without_inheriting_secrets(isolated_
     assert str(isolated_lan) in env["RUNNER_ROOT"]
     classic_lan.configure_generation(False, {})
     assert not classic_lan.generation_authorized()
-    assert classic_lan.lan_environment(8003, 5177, "192.168.30.126")[
+    assert classic_lan.lan_environment(8003, 5177, "10.12.34.56")[
         "LIBTV_EXECUTION_MODE"
     ] == "dry-run"
 
@@ -92,7 +92,7 @@ def test_generation_opt_in_survives_restart_without_inheriting_secrets(isolated_
 def test_invalid_generation_policy_fails_closed(isolated_lan, policy):
     (isolated_lan / "runtime" / "generation-policy.json").write_text(policy, encoding="utf-8")
     with pytest.raises(SystemExit, match="Invalid classic generation policy"):
-        classic_lan.lan_environment(8003, 5177, "192.168.30.126")
+        classic_lan.lan_environment(8003, 5177, "10.12.34.56")
 
 
 def test_policy_cannot_change_under_a_running_process(isolated_lan, monkeypatch):
@@ -132,7 +132,7 @@ def test_authorized_start_rejects_web_only_stack(isolated_lan, monkeypatch):
         "processes": [{"name": "api"}, {"name": "web"}],
         "webPort": 5176,
         "apiPort": 8002,
-        "lanIp": "192.168.30.126",
+        "lanIp": "10.12.34.56",
         "generationAuthorized": True,
     }
     classic_lan.STATE.write_text(json.dumps(state), encoding="utf-8")
@@ -157,12 +157,14 @@ def test_worker_reuses_launcher_environment_and_classic_logs(isolated_lan, monke
     from libtv_agent.runner import local_runner
 
     classic_lan.configure_generation(True, {})
-    for key, value in classic_lan.lan_environment(8003, 5177, "192.168.30.126").items():
+    for key, value in classic_lan.lan_environment(8003, 5177, "10.12.34.56").items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(classic_runner, "STORAGE", isolated_lan)
     monkeypatch.setattr(local_runner, "RUNNER_LOG_PATH", Path("unused"))
     called = []
-    monkeypatch.setattr(local_runner, "main", lambda: called.append(local_runner.RUNNER_LOG_PATH))
+    monkeypatch.setattr(
+        local_runner, "main", lambda stopping=None: called.append(local_runner.RUNNER_LOG_PATH),
+    )
     classic_runner.main()
     assert called == [isolated_lan / "logs" / "runner-events.log"]
 
@@ -178,7 +180,7 @@ async def test_real_worker_loop_heartbeats_in_isolated_database(isolated_lan, mo
     from sqlalchemy import select
 
     classic_lan.configure_generation(True, {})
-    for key, value in classic_lan.lan_environment(8003, 5177, "192.168.30.126").items():
+    for key, value in classic_lan.lan_environment(8003, 5177, "10.12.34.56").items():
         monkeypatch.setenv(key, value)
     settings = Settings(_env_file=None)
     database = Database(settings.database_url)

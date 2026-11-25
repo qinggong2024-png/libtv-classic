@@ -122,3 +122,86 @@ async def test_text_only_and_invalid_image_rejections_preserve_original_error():
             )
         assert caught.value is error
         assert responses.create.await_count == 1
+
+
+# Exercise the actual OpenAI SDK SSE decoder, without any external HTTP.
+import json
+import asyncio
+import httpx
+from openai import AsyncOpenAI, APIConnectionError, APITimeoutError
+
+
+def _sse(event_type, **fields):
+    return ("event: " + event_type + "\ndata: " + json.dumps({"type": event_type, "sequence_number": 1, **fields}) + "\n\n").encode()
+
+
+def _terminal(status="completed", refusal=False):
+    part = {"type": "refusal", "refusal": "not available"} if refusal else {
+        "type": "output_text", "text": "Complete director text. CUT TO next shot.", "annotations": []}
+    return {"id": "resp_offline", "object": "response", "created_at": 1,
+            "model": "gpt-6.2-sol", "status": status,
+            "output": [{"id": "msg_offline", "type": "message", "role": "assistant", "status": "completed", "content": [part]}],
+            "parallel_tool_calls": False, "tool_choice": "auto", "tools": []}
+
+
+@pytest.mark.asyncio
+async def test_sdk_stream_preserves_payload_and_returns_terminal_response(caplog):
+    original = request()
+    calls = []
+    async def handler(req):
+        calls.append(json.loads(req.content))
+        return httpx.Response(200, headers={"Content-Type": "text/event-stream"}, content=
+            _sse("response.output_text.delta", delta="partial", item_id="msg_offline", output_index=0, content_index=0)
+            + _sse("response.completed", response=_terminal()))
+    async with AsyncOpenAI(api_key="offline", base_url="https://example.invalid/v1", max_retries=0,
+                          http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))) as client:
+        result = await create_sol_response(client, **original)
+    assert calls == [{**original, "stream": True}]
+    assert result.status == "completed"
+    assert result.output_text == "Complete director text. CUT TO next shot."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event", ["response.failed", "response.incomplete", "response.refusal.delta", "refusal_terminal", "eof"])
+async def test_sdk_stream_rejects_partial_or_refused_output(event):
+    calls = []
+    async def handler(req):
+        calls.append(json.loads(req.content))
+        partial = _sse("response.output_text.delta", delta="partial", item_id="msg_offline", output_index=0, content_index=0)
+        if event == "eof": terminal = b""
+        elif event == "refusal_terminal": terminal = _sse("response.completed", response=_terminal(refusal=True))
+        elif event == "response.refusal.delta": terminal = _sse(event, delta="refused", item_id="msg_offline", output_index=0, content_index=0)
+        else: terminal = _sse(event, response=_terminal(status=event.split(".")[1]))
+        return httpx.Response(200, headers={"Content-Type": "text/event-stream"}, content=partial+terminal)
+    async with AsyncOpenAI(api_key="offline", base_url="https://example.invalid/v1", max_retries=0,
+                          http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))) as client:
+        with pytest.raises(APIConnectionError if event == "eof" else ValueError):
+            await create_sol_response(client, **request())
+    assert len(calls) == 1
+
+
+class _BrokenStream(httpx.AsyncByteStream):
+    def __init__(self, mode):
+        self.mode = mode
+        self.closed = False
+    async def __aiter__(self):
+        yield _sse("response.output_text.delta", delta="partial", item_id="msg_offline", output_index=0, content_index=0)
+        if self.mode == "timeout": raise httpx.ReadTimeout("offline")
+        if self.mode == "disconnect": raise httpx.ReadError("offline")
+        await asyncio.sleep(10)
+    async def aclose(self):
+        self.closed = True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["timeout", "disconnect", "cancel"])
+async def test_sdk_stream_closes_on_timeout_disconnect_or_cancellation(mode):
+    body = _BrokenStream(mode)
+    async def handler(req):
+        return httpx.Response(200, headers={"Content-Type":"text/event-stream"}, stream=body)
+    async with AsyncOpenAI(api_key="offline", base_url="https://example.invalid/v1", max_retries=0,
+                          http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))) as client:
+        expected = {"timeout":APITimeoutError,"disconnect":APIConnectionError,"cancel":TimeoutError}[mode]
+        with pytest.raises(expected):
+            await asyncio.wait_for(create_sol_response(client, **request()), timeout=0.1 if mode=="cancel" else 5)
+        assert body.closed

@@ -97,7 +97,7 @@ def main() -> None:
                           "automatic": configured.get("CUTFLOW_AUTO_EDIT_ENABLED") == "true",
                           "autoSubmit": "CUTFLOW_AUTO_SUBMIT_AFTER" in configured}))
         return
-    from classic_lan import STATE, lan_environment
+    from classic_lan import STATE, configured_lan_ip, lan_environment
     from classic_stack import owned_process
 
     state = json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else {}
@@ -107,7 +107,7 @@ def main() -> None:
         raise SystemExit("Stop the classic LAN instance before its authorized schema migration.")
     environment = lan_environment(
         state.get("apiPort", 8002), state.get("webPort", 5176),
-        state.get("lanIp", "192.168.30.126"),
+        state.get("lanIp") or configured_lan_ip() or "127.0.0.1",
     )
     os.environ.clear()
     os.environ.update(environment)

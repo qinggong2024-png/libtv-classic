@@ -59,13 +59,88 @@ def group_counts(conn: sqlite3.Connection, sql: str, args: tuple[Any, ...] = ())
     return {str(key or "UNKNOWN"): int(count) for key, count in conn.execute(sql, args)}
 
 
+def reliability_invariants(conn: sqlite3.Connection, *, stale_minutes: int = 15) -> dict[str, Any]:
+    """Read-only evidence, never infer permission to replay or repair a paid task."""
+    cutoff = (dt.datetime.now(UTC) - dt.timedelta(minutes=stale_minutes)).replace(tzinfo=None).isoformat(sep=" ")
+    counts = {
+        "stale_preparing_without_attempt": fetch_count(conn, """
+            SELECT count(*) FROM parent_task p
+            WHERE p.workflow_kind IN ('FIXED_TEMPLATE','DEEP_VIDEO')
+              AND p.phase='PREPARING' AND p.updated_at < ?
+              AND NOT EXISTS (SELECT 1 FROM generation_variant v
+                              JOIN generation_attempt a ON a.variant_id=v.id
+                              WHERE v.parent_task_id=p.id)
+        """, (cutoff,)),
+        "stale_queued_without_live_command": fetch_count(conn, """
+            SELECT count(*) FROM parent_task p
+            WHERE p.workflow_kind IN ('FIXED_TEMPLATE','DEEP_VIDEO')
+              AND p.phase='QUEUED' AND p.updated_at < ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM generation_variant v
+                  JOIN generation_attempt a ON a.variant_id=v.id
+                  JOIN generation_command g ON g.attempt_id=a.id
+                  WHERE v.parent_task_id=p.id
+                    AND g.status IN ('READY','CLAIMED','LAUNCH_STARTED','PROCESS_STARTED')
+              )
+        """, (cutoff,)),
+        "active_official_receipt_mismatch": fetch_count(conn, """
+            SELECT count(*) FROM generation_attempt a
+            WHERE a.provider='kling_official_api' AND a.status='RUNNING'
+              AND (a.task_id IS NULL OR a.task_id=''
+                   OR (SELECT count(*) FROM generation_submission_attempt r
+                       WHERE r.attempt_id=a.id AND r.status='ACCEPTED'
+                         AND r.provider_task_id=a.task_id) != 1)
+        """),
+        "duplicate_official_handle_groups": fetch_count(conn, """
+            SELECT count(*) FROM (
+                SELECT provider_account_id,task_id FROM generation_attempt
+                WHERE provider='kling_official_api' AND task_id IS NOT NULL AND task_id!=''
+                GROUP BY provider_account_id,task_id HAVING count(*)>1
+            )
+        """),
+        "ready_variant_without_ready_artifact": fetch_count(conn, """
+            SELECT count(*) FROM generation_variant v
+            WHERE v.download_status='READY' AND NOT EXISTS (
+                SELECT 1 FROM generation_attempt a JOIN download_artifact d ON d.attempt_id=a.id
+                WHERE a.variant_id=v.id AND d.status='READY'
+            )
+        """),
+        "stale_generating_with_generic_failure": fetch_count(conn, """
+            SELECT count(*) FROM parent_task WHERE phase='GENERATING'
+              AND phase_reason_code='AGGREGATED_ACTION_REQUIRED' AND updated_at<?
+        """, (cutoff,)),
+    }
+    history = {
+        "unknown_paid_attempts": fetch_count(conn, """
+            SELECT count(*) FROM generation_attempt WHERE status='UNKNOWN_AFTER_SUBMIT'
+        """),
+        "unknown_paid_with_handle": fetch_count(conn, """
+            SELECT count(*) FROM generation_attempt WHERE status='UNKNOWN_AFTER_SUBMIT'
+              AND task_id IS NOT NULL AND task_id!=''
+        """),
+        "legacy_pending_ready_notifications": fetch_count(conn, """
+            SELECT count(*) FROM outbox_event
+            WHERE event_type='GENERATION_COMMANDS_READY' AND status='PENDING'
+        """),
+    }
+    return {
+        "stale_minutes": stale_minutes,
+        "review_counts": counts,
+        "historical_counts": history,
+        "review_required": any(counts.values()) or bool(history["unknown_paid_attempts"]),
+        "note": "Flags require evidence review; historical notifications are not queued production. No repair or replay is performed.",
+    }
+
+
 def database_report(path: Path, hours: int, cloud_limit: int) -> dict[str, Any]:
     cutoff = (dt.datetime.now(UTC) - dt.timedelta(hours=hours)).replace(tzinfo=None)
     cutoff_str = cutoff.isoformat(sep=" ", timespec="seconds")
     uri = f"file:{path.resolve().as_posix()}?mode=ro"
     conn = sqlite3.connect(uri, uri=True, timeout=3)
     try:
+        conn.execute("PRAGMA query_only=ON")
         journal_mode = str(conn.execute("PRAGMA journal_mode").fetchone()[0])
+        conn.execute("BEGIN")
         samples: dict[str, list[float]] = {
             "upload_client_reported": [],
             "analysis_queue_wait": [],
@@ -173,6 +248,7 @@ def database_report(path: Path, hours: int, cloud_limit: int) -> dict[str, Any]:
             "cut_multi_statuses_all_time": cut_statuses,
             "cut_failures_in_window": cut_failures,
             "stage_timings": {key: summarize(values) for key, values in samples.items()},
+            "reliability": reliability_invariants(conn),
         }
     finally:
         conn.close()
@@ -198,13 +274,24 @@ def logs_report(root: Path, max_bytes: int) -> dict[str, Any]:
         route = re.sub(r"/[0-9a-f]{8}-[0-9a-f-]{27,}", "/:id", path.split("?")[0])
         api_routes[f"{method} {route} {status}"] += 1
     lock_marker = "sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) database is locked"
+    slot_samples = {}
+    for port, filename in ((8002, "api.log"), (8003, "api-green.log")):
+        path = logs / filename
+        sample = read_log_tail(path, max_bytes)
+        slot_samples[str(port)] = {
+            "log": filename,
+            "mtime_utc": dt.datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat() if path.exists() else None,
+            "request_statuses": dict(Counter(re.findall(r' HTTP/1\.1" (\d{3})', sample))),
+            "lock_errors": sample.count(lock_marker),
+        }
     return {
+        "api_slot_log_samples": slot_samples,
         "tail_bytes_per_log": max_bytes,
         "request_statuses_in_api_tail": dict(api_codes),
         "most_requested_routes_in_api_tail": dict(api_routes.most_common(8)),
         "sqlite_lock_errors_in_api_tail": api.count(lock_marker),
         "sqlite_lock_errors_in_runner_tail": runner.count(lock_marker),
-        "note": "Log-tail counts are samples, NOT rates or events within --hours.",
+        "note": "Log-tail counts are samples, NOT rates or events within --hours. Legacy API-tail fields refer only to blue/8002; check live route separately before interpreting a slot.",
     }
 
 

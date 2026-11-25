@@ -49,9 +49,12 @@ def test_ootd_eligibility_accepts_official_api_v3_omni(seconds: int) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("profile", ["allwe-ootd-sol-simple-v1", "allwe-ootd-sol-motion-v2.1", "allwe-ootd-sol-motion-v2.2"])
+@pytest.mark.parametrize("profile", [
+    "allwe-ootd-sol-simple-v1", "allwe-ootd-sol-motion-v2.1", "allwe-ootd-sol-motion-v2.2",
+    "allwe-ootd-sol-cross-scene-b-v1", "allwe-ootd-sol-dynamic-display-v1",
+])
 async def test_api_multireference_binding_preserves_distinct_roles(tmp_path: Path, profile: str) -> None:
-    request = _request(tmp_path, "图片1开始，镜头切到图片2，衣服图案参考@image_3及图片4。",
+    request = _request(tmp_path, "图1开始，镜头切到图片2，衣服图案参考@image_3及图4。",
                        count=2, products=2, profile=profile)
     adapter = _adapter(tmp_path)
     payload = await adapter.build_request_payload(request)
@@ -64,15 +67,14 @@ async def test_api_multireference_binding_preserves_distinct_roles(tmp_path: Pat
         assert f"@image_{n}" in sent
     assert "商品主参考" in sent
     assert "图片1" not in sent
-    assert request.prompt == "图片1开始，镜头切到图片2，衣服图案参考@image_3及图片4。"
+    assert request.prompt == "图1开始，镜头切到图片2，衣服图案参考@image_3及图4。"
     assert payload["settings"]["multi_shot"] is True
     assert payload["options"]["watermark_info"]["enabled"] is False
     assert (await adapter.request_summary(request))["promptLength"] == len(sent)
 
 
 @pytest.mark.asyncio
-async def test_missing_api_image_reference_falls_back_and_still_submits(tmp_path: Path) -> None:
-    """Unknown ID is logged, not a local submission blocker."""
+async def test_missing_api_image_reference_falls_back_without_blocking(tmp_path: Path) -> None:
     adapter = _adapter(tmp_path)
     prompt = "首帧@image_9展示图案"
     payload = await adapter.build_request_payload(_request(tmp_path, prompt))
@@ -82,44 +84,42 @@ async def test_missing_api_image_reference_falls_back_and_still_submits(tmp_path
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("alias", ["图一", "图片一", "图1", "图片1", "@image1", "@image_1"])
-async def test_image_one_aliases_bind_to_first_frame(tmp_path: Path, alias: str) -> None:
-    adapter = _adapter(tmp_path)
-    payload = await adapter.build_request_payload(_request(tmp_path, f"开场参考{alias}展示正面"))
-    assert "开场参考@image_1展示正面" in payload["contents"][0]["text"]
-    assert payload["contents"][1]["type"] == "first_frame"
+async def test_image_aliases_reference_exact_api_contents_id(tmp_path: Path, alias: str) -> None:
+    payload = await _adapter(tmp_path).build_request_payload(
+        _request(tmp_path, f"请参考{alias}展示正面")
+    )
+    assert "请参考@image_1展示正面" in payload["contents"][0]["text"]
     assert payload["contents"][1]["id"] == "image_1"
 
 
 @pytest.mark.asyncio
-async def test_normalization_unmatched_tokens_do_not_block_or_change_prompt(tmp_path: Path) -> None:
-    prompt = "人物自然介绍衬衫，镜头缓慢靠近"
+async def test_unknown_alias_falls_back_without_partial_rewrite(tmp_path: Path) -> None:
+    prompt = "先展示图一，再切到@image9"
     payload = await _adapter(tmp_path).build_request_payload(_request(tmp_path, prompt))
     assert payload["contents"][0]["text"] == prompt
 
 
 @pytest.mark.asyncio
-async def test_mixed_aliases_with_unbound_reference_revert_entire_original(tmp_path: Path) -> None:
-    prompt = "首帧图一，之后@image9展示背面"
+async def test_prompt_with_no_image_alias_remains_unblocked(tmp_path: Path) -> None:
+    prompt = "人物轻轻整理袖子，展示衣服正面"
     payload = await _adapter(tmp_path).build_request_payload(_request(tmp_path, prompt))
     assert payload["contents"][0]["text"] == prompt
 
 
 @pytest.mark.asyncio
-async def test_image_aliases_also_normalize_for_other_v3_profiles(tmp_path: Path) -> None:
-    prompt = "@image1开场，参考图二"
-    payload = await _adapter(tmp_path).build_request_payload(
-        _request(tmp_path, prompt, profile="other-director")
-    )
-    assert payload["contents"][0]["text"] == "@image_1开场，参考@image_2"
+async def test_expanded_reference_past_length_limit_falls_back(tmp_path: Path) -> None:
+    prompt = "a" * 3066 + " 图一"
+    payload = await _adapter(tmp_path).build_request_payload(_request(tmp_path, prompt))
+    assert payload["contents"][0]["text"] == prompt
 
 
 @pytest.mark.asyncio
-async def test_normalization_overflow_falls_back_to_original_prompt(tmp_path: Path) -> None:
-    prompt = "a" * 3066 + " 图一"  # The alias fits before rewriting.
+async def test_other_director_still_normalizes_references(tmp_path: Path) -> None:
+    prompt = "以@image1开始，背面参考图二"
     payload = await _adapter(tmp_path).build_request_payload(
-        _request(tmp_path, prompt, profile="other-director")
+        _request(tmp_path, prompt, profile="another-profile")
     )
-    assert payload["contents"][0]["text"] == prompt
+    assert payload["contents"][0]["text"] == "以@image_1开始，背面参考@image_2"
 
 
 @pytest.mark.asyncio

@@ -1,11 +1,13 @@
 import asyncio
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from libtv_agent.adapters.kling_official_api import is_kling_api_balance_message
 from libtv_agent.adapters.kling_official_cli import (
     KlingCliError,
     map_kling_status,
@@ -35,6 +37,7 @@ from libtv_agent.domain.enums import (
     DownloadStatus,
     GenerationStatus,
     ParentTaskPhase,
+    ReservationStatus,
     ValidationStatus,
 )
 from libtv_agent.domain.models import (
@@ -61,6 +64,12 @@ from libtv_agent.services.generation_safety import (
     real_provider_submission_authorized,
     require_paid_generation_authorized,
 )
+from libtv_agent.services.kling_risk_control import (
+    KLING_RISK_CONTROL_ERROR,
+)
+from libtv_agent.services.kling_risk_control import (
+    kling_risk_control_rejected as _kling_risk_control_rejected,
+)
 from libtv_agent.services.media import (
     download_with_retries,
     technical_validate,
@@ -80,14 +89,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 logger = logging.getLogger(__name__)
 
 
-KLING_RISK_CONTROL_ERROR = "KLING_REMOTE_RISK_CONTROL_REJECTED"
 
 
-def _kling_risk_control_rejected(message: str | None) -> bool:
-    return (
-        isinstance(message, str)
-        and "failure to pass the risk control system" in message.casefold()
-    )
+
+
 
 
 def _provider_receipt_confirms_zero_billing(payload: dict) -> bool:
@@ -118,6 +123,14 @@ def _utc(value: datetime) -> datetime:
 _MAX_KLING_RECONCILIATION_ATTEMPTS = 5
 _KLING_RECONCILIATION_BASE_SECONDS = 5.0
 _KLING_RECONCILIATION_MAX_SECONDS = 5 * 60.0
+_BALANCE_RECOVERY_LOOKBACK = timedelta(hours=24)
+
+
+def _is_api_balance_rejection(code: str | None, message: str | None) -> bool:
+    return code == "KLING_API_BALANCE_INSUFFICIENT" or (
+        code == "KLING_API_ACCOUNT_UNAVAILABLE"
+        and is_kling_api_balance_message(message)
+    )
 
 
 def _kling_asset_suffix(filename: str, object_key: str | None) -> str:
@@ -240,8 +253,9 @@ def reason_code_for_aggregate(
     """
     if next_phase == ParentTaskPhase.ACTION_REQUIRED:
         return current_code or AGGREGATED_ACTION_REQUIRED
-    if next_phase == ParentTaskPhase.DELIVERABLE and current_code == AGGREGATED_ACTION_REQUIRED:
-        # The generic aggregation failure is resolved when every output is ready.
+    if next_phase in (ParentTaskPhase.GENERATING, ParentTaskPhase.DELIVERABLE) and current_code == AGGREGATED_ACTION_REQUIRED:
+        # The generic failure is no longer current when all unfinished outputs
+        # can progress, or every output is ready.
         # Keep provider attribution codes such as BACH_* and WAVESPEED_* intact.
         return None
     if previous_phase == ParentTaskPhase.ACTION_REQUIRED and (current_code or "").startswith(
@@ -260,13 +274,17 @@ class RunnerSupervisor:
         owner: str = "phase-one-runner",
         command_host_manager: CommandHostManager | None = None,
         kling_adapter: VideoProviderAdapter | None = None,
+        stop_claiming: Callable[[], bool] | None = None,
     ) -> None:
+        self._stop_claiming = stop_claiming or (lambda: False)
         self.adapter = adapter
         self.object_store = object_store
         self.settings = settings
         self.owner = owner
         self._download_semaphore = asyncio.Semaphore(settings.download_concurrency)
         self._validation_semaphore = asyncio.Semaphore(settings.technical_validation_concurrency)
+        # Ephemeral scheduling only; never used to decide payment or ownership.
+        self._unchanged_poll_observations: dict[uuid.UUID, tuple[int, str, datetime]] = {}
         self.kling_adapter = kling_adapter or create_kling_adapter(settings)
         self._kling_adapters: dict[str, VideoProviderAdapter] = {
             self.kling_adapter.get_provider_name().strip().lower(): self.kling_adapter
@@ -284,6 +302,7 @@ class RunnerSupervisor:
 
     def replace_kling_adapter(self, adapter: VideoProviderAdapter) -> None:
         self.kling_adapter = adapter
+        self._unchanged_poll_observations.clear()
         # Config reloads must also invalidate inactive adapters used to recover
         # persisted tasks; they are recreated from the task's provider name.
         self._kling_adapters = {
@@ -297,6 +316,24 @@ class RunnerSupervisor:
             adapter = create_kling_adapter_for_provider(self.settings, provider)
             self._kling_adapters[normalized] = adapter
         return adapter
+
+    async def _require_original_api_account(
+        self, attempt: GenerationAttempt, adapter: VideoProviderAdapter,
+    ) -> None:
+        """Original-account fence for read-only official API recovery."""
+        if attempt.provider != self.settings.kling_api_provider_name:
+            return
+        reader = getattr(adapter, "submission_account_id", None)
+        if not attempt.provider_account_id or not callable(reader):
+            raise KlingCliError(
+                "KLING_RECONCILIATION_ACCOUNT_UNVERIFIED",
+                "Original submission account cannot be verified",
+            )
+        if await reader() != attempt.provider_account_id:
+            raise KlingCliError(
+                "KLING_ACCOUNT_CHANGED",
+                "Current account differs from original paid submission account",
+            )
 
     async def _release_capacity_if_charge_classified(
         self,
@@ -354,6 +391,9 @@ class RunnerSupervisor:
         from libtv_agent.runner.launch_recovery import recover_abandoned_claims
 
         await recover_abandoned_claims(session)
+        # Older confirmed balance rejections were terminal before auto-recovery
+        # existed. Requeue only their proven-unsubmitted video slots.
+        await self.requeue_confirmed_balance_rejections(session)
         processed = 0
         if not self.settings.classic_throughput_s1s3_enabled:
             # Preserve the established Runner contract until the new workload
@@ -384,7 +424,9 @@ class RunnerSupervisor:
         provider_names = (
             ("libtv",) if expected_provider == "libtv" else self.settings.kling_provider_names
         )
-        while True:
+        # A checkpoint stops new claims even inside a busy dispatch batch.
+        # A committed claim remains owned by this Runner and finishes normally.
+        while not self._stop_claiming():
             commands = list(
                 await session.scalars(
                     select(GenerationCommand)
@@ -454,8 +496,11 @@ class RunnerSupervisor:
                     break
             if command is None:
                 break
+            if self._stop_claiming():
+                await session.rollback()
+                break
             lease = await acquire_capacity(session, self.settings, command)
-            if lease is None:
+            if lease is None or self._stop_claiming():
                 await session.rollback()
                 break
             command.status = CommandStatus.CLAIMED
@@ -467,6 +512,11 @@ class RunnerSupervisor:
                 await release_capacity(session, command.id)
                 await session.commit()
                 continue
+            if self._stop_claiming():
+                # Capacity and command state are still in this transaction.
+                # Roll back both rather than strand a paid command or a slot.
+                await session.rollback()
+                break
             attempt.status = AttemptStatus.LAUNCHING
             attempt.state_version += 1
             await session.commit()
@@ -481,6 +531,121 @@ class RunnerSupervisor:
                 await session.commit()
             processed += 1
         return processed
+
+    async def requeue_confirmed_balance_rejections(
+        self, session: AsyncSession, *, limit: int = 20
+    ) -> int:
+        """Resume recent legacy failures only when every submit receipt proves rejection.
+
+        Historical balance failures were stored as terminal, unlike new delayed
+        READY work. No cloud handle, uncertain receipt, prior paid depth stage or
+        newer attempt may be resumed. This sweep never submits directly.
+        """
+        cutoff = datetime.now(UTC) - _BALANCE_RECOVERY_LOOKBACK
+        candidates = list(await session.execute(
+            select(GenerationAttempt, GenerationCommand, GenerationVariant)
+            .join(GenerationCommand, GenerationCommand.attempt_id == GenerationAttempt.id)
+            .join(GenerationVariant, GenerationVariant.id == GenerationAttempt.variant_id)
+            .join(ParentTask, ParentTask.id == GenerationVariant.parent_task_id)
+            .where(
+                GenerationAttempt.provider == self.settings.kling_api_provider_name,
+                GenerationAttempt.status == AttemptStatus.FAILED_BEFORE_SUBMIT,
+                GenerationAttempt.charge_status == ChargeStatus.NOT_CHARGED,
+                GenerationAttempt.task_id.is_(None),
+                GenerationAttempt.updated_at >= cutoff,
+                GenerationCommand.status == CommandStatus.TERMINAL,
+                GenerationVariant.generation_status == GenerationStatus.FAILED,
+                ParentTask.phase != ParentTaskPhase.CANCELLED,
+                GenerationAttempt.last_error_code.in_((
+                    "KLING_API_BALANCE_INSUFFICIENT", "KLING_API_ACCOUNT_UNAVAILABLE",
+                )),
+            )
+            .order_by(GenerationAttempt.updated_at.desc())
+            .limit(max(limit * 5, limit))
+            .with_for_update(skip_locked=True)
+        ))
+        recovered = 0
+        for attempt, command, variant in candidates:
+            if recovered >= limit:
+                break
+            if not _is_api_balance_rejection(attempt.last_error_code, attempt.error_message):
+                continue
+            if pipeline_state(command).get("depthTaskId"):
+                continue
+            receipts = list(await session.scalars(
+                select(GenerationSubmissionAttempt)
+                .where(GenerationSubmissionAttempt.attempt_id == attempt.id)
+                .order_by(GenerationSubmissionAttempt.sequence)
+            ))
+            if not receipts or not _is_api_balance_rejection(
+                receipts[-1].error_code, receipts[-1].error_message,
+            ):
+                continue
+            if any(
+                receipt.status != "FAILED_BEFORE_SUBMIT"
+                or receipt.provider_task_id is not None
+                or receipt.provider != attempt.provider
+                or receipt.input_fingerprint != attempt.intent_hash
+                or not (
+                    receipt.error_code == "KLING_API_RATE_LIMITED"
+                    or _is_api_balance_rejection(receipt.error_code, receipt.error_message)
+                )
+                for receipt in receipts
+            ):
+                continue
+            latest = await session.scalar(
+                select(GenerationAttempt.id)
+                .where(GenerationAttempt.variant_id == variant.id)
+                .order_by(GenerationAttempt.created_at.desc(), GenerationAttempt.id.desc())
+                .limit(1)
+            )
+            if latest != attempt.id:
+                continue
+            # Never reactivate an old intent if any newer job owns its idempotency key.
+            active_elsewhere = await session.scalar(
+                select(GenerationAttempt.id)
+                .where(
+                    GenerationAttempt.id != attempt.id,
+                    GenerationAttempt.intent_hash == attempt.intent_hash,
+                    GenerationAttempt.status.in_((
+                        AttemptStatus.PREPARED, AttemptStatus.DISPATCH_PENDING,
+                        AttemptStatus.LAUNCHING, AttemptStatus.RUNNING,
+                        AttemptStatus.RECONCILING, AttemptStatus.UNKNOWN_AFTER_SUBMIT,
+                        AttemptStatus.SUCCEEDED,
+                    )),
+                )
+                .limit(1)
+            )
+            if active_elsewhere is not None:
+                continue
+            claimed = await session.execute(
+                update(GenerationCommand)
+                .where(
+                    GenerationCommand.id == command.id,
+                    GenerationCommand.status == CommandStatus.TERMINAL,
+                )
+                .values(
+                    status=CommandStatus.READY, claim_owner=None,
+                    lease_expires_at=None, launch_started_at=None,
+                )
+            )
+            if claimed.rowcount != 1:
+                await session.rollback()
+                continue
+            attempt.status = AttemptStatus.DISPATCH_PENDING
+            attempt.provider_status = "waiting_balance"
+            attempt.provider_error_retryable = True
+            attempt.launch_started_at = None
+            attempt.state_version += 1
+            variant.generation_status = GenerationStatus.PENDING
+            await session.commit()
+            await self._aggregate_task(session, variant.id)
+            recovered += 1
+        if recovered:
+            logger.warning("Recovered confirmed pre-submit balance failures", extra={
+                "recovered_attempt_count": recovered,
+            })
+        return recovered
 
     async def resume_incomplete_downloads(
         self,
@@ -586,6 +751,7 @@ class RunnerSupervisor:
                 # CDN URLs can expire while delivery is unavailable. Query the
                 # original paid handle for a fresh URL; never submit a replacement.
                 try:
+                    await self._require_original_api_account(attempt, download_adapter)
                     refreshed = await download_adapter.query(attempt.task_id)
                     if (
                         refreshed.status not in {"succeeded", "partial"}
@@ -644,11 +810,12 @@ class RunnerSupervisor:
         if command is None:
             raise ValueError("generation command is missing")
         if attempt.provider != "libtv":
+            kling_adapter = self._kling_adapter_for(attempt.provider)
+            await self._require_original_api_account(attempt, kling_adapter)
             if not attempt.task_id:
                 await self._recover_history_handle(
-                    session, attempt, self._kling_adapter_for(attempt.provider)
+                    session, attempt, kling_adapter
                 )
-            kling_adapter = self._kling_adapter_for(attempt.provider)
             provider_result = await kling_adapter.query(attempt.task_id)
             if provider_result.credits_consumed is not None:
                 attempt.credits_consumed = provider_result.credits_consumed
@@ -665,6 +832,37 @@ class RunnerSupervisor:
                 project_uuid=attempt.project_uuid or "",
                 node_key=attempt.video_node_key or "",
             )
+        if (
+            attempt.provider == self.settings.kling_api_provider_name
+            and attempt.task_id
+            and result.status in {"RUNNING", "QUEUED", "PENDING", "PROCESSING"}
+        ):
+            # A read-only check of the ORIGINAL cloud ID on the ORIGINAL
+            # account proves acceptance. Never create another paid command.
+            claimed = await session.execute(
+                update(GenerationAttempt).where(
+                    GenerationAttempt.id == attempt.id,
+                    GenerationAttempt.status == AttemptStatus.UNKNOWN_AFTER_SUBMIT,
+                    GenerationAttempt.state_version == attempt.state_version,
+                ).values(
+                    status=AttemptStatus.RUNNING,
+                    provider_status=result.status.lower(),
+                    next_reconciliation_at=None,
+                    last_polled_at=datetime.now(UTC),
+                    state_version=GenerationAttempt.state_version + 1,
+                ).execution_options(synchronize_session=False)
+            )
+            if claimed.rowcount != 1:
+                await session.rollback()
+                return "RECONCILING"
+            if command.status == CommandStatus.UNCERTAIN:
+                command.status = CommandStatus.PROCESS_STARTED
+                command.process_started_at = (
+                    command.process_started_at or datetime.now(UTC)
+                )
+                command.lease_expires_at = None
+            await session.commit()
+            return "RUNNING"
         if result.status in {"SUCCEEDED", "PARTIAL"}:
             variant = await session.get(GenerationVariant, attempt.variant_id)
             if variant is not None and pipeline_state(command).get("stage") == "depth":
@@ -992,6 +1190,11 @@ class RunnerSupervisor:
             request = VideoGenerationRequest(
                 prompt=variant.prompt_text,
                 director_native_profile=variant.generation_config_json.get("directorNativeProfile"),
+                # Reuse the frozen provider hint; never reselect memory during
+                # retries, callback reconciliation or runner restarts.
+                director_memory_kling_hint=(
+                    variant.generation_config_json.get("directorMemoryKlingHint")
+                ),
                 reference_video_path=reference_video_path,
                 model=attempt.provider_model or self.settings.active_kling_model,
                 image_paths=tuple(storyboard_paths),
@@ -1078,14 +1281,18 @@ class RunnerSupervisor:
                 .order_by(GenerationSubmissionAttempt.sequence.desc())
                 .limit(1)
             )
-            # A confirmed HTTP 429 is a *rejected* request, never a cloud job.
-            # Only this exact durable evidence permits another POST for the same
-            # attempt. Uncertain/accepted receipts still prohibit blind resubmission.
+            # Only a confirmed provider rejection without a cloud task can be
+            # safely retried. Unknown or accepted receipts prohibit another POST.
             safe_capacity_retry = bool(
                 prior_submission is not None
                 and attempt.provider == self.settings.kling_api_provider_name
                 and prior_submission.status == "FAILED_BEFORE_SUBMIT"
-                and prior_submission.error_code == "KLING_API_RATE_LIMITED"
+                and (
+                    prior_submission.error_code == "KLING_API_RATE_LIMITED"
+                    or _is_api_balance_rejection(
+                        prior_submission.error_code, prior_submission.error_message,
+                    )
+                )
                 and prior_submission.provider_task_id is None
                 and prior_submission.provider == attempt.provider
                 and prior_submission.input_fingerprint == attempt.intent_hash
@@ -1117,7 +1324,9 @@ class RunnerSupervisor:
             operation_key = f"{attempt.id.hex}:{stage}"
             if prior_submission is not None:
                 operation_key = f"{operation_key}:retry-{sequence}"
-            if attempt.provider == self.settings.kling_cli_provider_name:
+            if attempt.provider in {
+                self.settings.kling_cli_provider_name, self.settings.kling_api_provider_name,
+            }:
                 request = replace(
                     request, submission_operation_key=operation_key,
                     submission_account_id=attempt.provider_account_id,
@@ -1168,7 +1377,10 @@ class RunnerSupervisor:
                     submission_invoked
                     and submission_record is not None
                     and attempt.provider == self.settings.kling_api_provider_name
-                    and exc.code == "KLING_API_RATE_LIMITED"
+                    and (
+                        exc.code == "KLING_API_RATE_LIMITED"
+                        or _is_api_balance_rejection(exc.code, str(exc))
+                    )
                     and not pipeline_state(command).get("depthTaskId")
                     and not exc.submitted
                     and not exc.uncertain
@@ -1274,7 +1486,7 @@ class RunnerSupervisor:
         try:
             await session.commit()
         except Exception:
-            # The CLI journal already holds the exact remote handle. Roll back
+            # The provider journal holds the exact remote handle. Roll back
             # before touching expired ORM state, then continue other queued work.
             await session.rollback()
             await session.refresh(command)
@@ -1390,6 +1602,54 @@ class RunnerSupervisor:
         await session.refresh(attempt)
         return True
 
+    def _last_poll_observation(self, attempt: GenerationAttempt) -> datetime | None:
+        cached = self._unchanged_poll_observations.get(attempt.id)
+        if cached and cached[:2] == (attempt.state_version, attempt.task_id):
+            return max(_utc(attempt.last_polled_at), cached[2]) if attempt.last_polled_at else cached[2]
+        self._unchanged_poll_observations.pop(attempt.id, None)
+        return attempt.last_polled_at
+
+    async def _skip_unchanged_api_poll(self, session, attempt, command, result, now) -> bool:
+        # Only ordinary, already-recorded active official-API observations.
+        # Preserve all terminal, billing, error, recovery and pipeline transitions.
+        if not (
+            self.settings.classic_throughput_s1s3_enabled
+            and attempt.provider == self.settings.kling_api_provider_name
+            and attempt.status == AttemptStatus.RUNNING
+            and command.status == CommandStatus.PROCESS_STARTED
+            and command.lease_expires_at is None
+            and result.status in {"queued", "running"}
+            and result.status == attempt.provider_status
+            and result.raw_status == attempt.provider_raw_status
+            and result.raw_response == attempt.raw_response_json
+            and result.credits_consumed in (None, attempt.credits_consumed)
+            and not result.outputs and not result.billing
+            and not pipeline_state(command).get("stage")
+            and attempt.last_polled_at is not None
+            and (now - _utc(attempt.last_polled_at)).total_seconds() < 60
+            and attempt.next_reconciliation_at is None
+            and attempt.last_reconciliation_error is None
+            and not attempt.reconciliation_attempt_count
+            and attempt.last_error_code is None
+            and attempt.error_message is None
+            and attempt.provider_error_details_json is None
+            and attempt.provider_error_retryable is None
+        ):
+            return False
+        variant = await session.get(GenerationVariant, attempt.variant_id)
+        if variant is None or variant.generation_status != GenerationStatus.RUNNING:
+            return False
+        task = await session.get(ParentTask, variant.parent_task_id)
+        if task is None or task.phase != ParentTaskPhase.GENERATING or task.phase_reason_code:
+            return False
+        # No CAS is necessary for a discarded observation, since it changes no
+        # durable state. The next actual transition must still pass the CAS.
+        await session.commit()
+        self._unchanged_poll_observations[attempt.id] = (
+            attempt.state_version, attempt.task_id, now,
+        )
+        return True
+
     async def poll_kling_tasks(self, session: AsyncSession) -> int:
         if not any(
             self.settings.kling_provider_enabled(provider)
@@ -1397,6 +1657,10 @@ class RunnerSupervisor:
         ):
             return 0
         now = datetime.now(UTC)
+        scan_limit = max(
+            self.settings.kling_cli_max_query_concurrency,
+            self.settings.kling_api_max_poll_concurrency,
+        ) * 4
         attempts = list(
             await session.scalars(
                 select(GenerationAttempt)
@@ -1419,13 +1683,7 @@ class RunnerSupervisor:
                     ),
                 )
                 .order_by(GenerationAttempt.last_polled_at, GenerationAttempt.created_at)
-                .limit(
-                    max(
-                        self.settings.kling_cli_max_query_concurrency,
-                        self.settings.kling_api_max_poll_concurrency,
-                    )
-                    * 4
-                )
+                .limit(scan_limit)
             )
         )
         processed = 0
@@ -1435,6 +1693,16 @@ class RunnerSupervisor:
         # Commit the SELECT transaction before waiting on external HTTP calls.
         if self.settings.classic_throughput_s1s3_enabled:
             await session.commit()
+        # On a full page the durable polling timestamps also rotate queue
+        # priority. Do not delay that rotation or hide later candidates.
+        sparse_page = len(attempts) < scan_limit
+        if not sparse_page:
+            self._unchanged_poll_observations.clear()
+        # Bound memory and expire entries even when tasks leave the active queue.
+        self._unchanged_poll_observations = {
+            key: value for key, value in self._unchanged_poll_observations.items()
+            if (now - value[2]).total_seconds() < 120
+        }
         api_candidates = []
         for observed in attempts:
             if (
@@ -1452,12 +1720,13 @@ class RunnerSupervisor:
                 >= self.settings.kling_api_task_timeout_seconds
             ):
                 continue  # preserve the explicit timeout path in the state loop
-            if observed.last_polled_at is not None:
+            last_observed = self._last_poll_observation(observed)
+            if last_observed is not None:
                 interval = self.settings.kling_poll_interval_for_provider(
                     observed.provider,
                     unknown=observed.provider_status == "unknown",
                 )
-                if (now - _utc(observed.last_polled_at)).total_seconds() < interval:
+                if (now - _utc(last_observed)).total_seconds() < interval:
                     continue
             api_candidates.append(observed)
 
@@ -1541,7 +1810,7 @@ class RunnerSupervisor:
                         await self._aggregate_task(session, variant.id)
                     processed += 1
                     continue
-            last_polled = attempt.last_polled_at
+            last_polled = self._last_poll_observation(attempt)
             if last_polled is not None:
                 if last_polled.tzinfo is None:
                     last_polled = last_polled.replace(tzinfo=UTC)
@@ -1625,6 +1894,12 @@ class RunnerSupervisor:
                 processed += 1
                 continue
 
+            if sparse_page and await self._skip_unchanged_api_poll(
+                session, attempt, command, result, datetime.now(UTC)
+            ):
+                processed += 1
+                continue
+            self._unchanged_poll_observations.pop(attempt.id, None)
             if not await self._claim_poll_observation(session, attempt):
                 continue
             attempt.last_polled_at = datetime.now(UTC)
@@ -1797,10 +2072,17 @@ class RunnerSupervisor:
                 "KLING_HISTORY_EVIDENCE_MISSING",
                 "Missing account, time window or input fingerprint; no history guess",
             )
+        # Provider and local clocks can differ slightly. Relax only the exact
+        # account-bound API external-ID lookup, never a fuzzy CLI match.
+        skew = timedelta(seconds=5) if attempt.provider in {
+            "kling", self.settings.kling_api_provider_name,
+        } else timedelta(0)
+        lower, upper = _utc(start) - skew, _utc(end) + skew
+        await session.commit()  # no transaction held during the external GET
         match = await finder(
             account_id=attempt.provider_account_id,
-            submitted_after=_utc(start),
-            submitted_before=_utc(end),
+            submitted_after=lower,
+            submitted_before=upper,
             input_fingerprint=attempt.intent_hash,
         )
         if not (
@@ -1809,7 +2091,7 @@ class RunnerSupervisor:
             and match.account_id == attempt.provider_account_id
             and match.input_fingerprint == attempt.intent_hash
             and match.submitted_at
-            and _utc(start) <= _utc(match.submitted_at) <= _utc(end)
+            and lower <= _utc(match.submitted_at) <= upper
         ):
             raise KlingCliError("KLING_HISTORY_NO_EXACT_MATCH", "No unique evidenced history match")
         attempt.task_id = match.provider_task_id
@@ -1839,14 +2121,15 @@ class RunnerSupervisor:
         )
         if record is None:
             return False
-        if (not record.provider_task_id
-                and attempt.provider == self.settings.kling_cli_provider_name):
+        if (not record.provider_task_id and attempt.provider in {
+                self.settings.kling_cli_provider_name, self.settings.kling_api_provider_name,
+        }):
             if (record.provider != attempt.provider
                     or record.input_fingerprint != attempt.intent_hash
                     or record.status not in {"STARTED", "ACCEPTED", "UNCERTAIN"}):
                 raise KlingCliError(
                     "KLING_RECEIPT_EVIDENCE_MISMATCH",
-                    "Saved submit boundary does not match the CLI receipt",
+                    "Saved submit boundary does not match the provider receipt",
                     submitted=True, uncertain=True,
                 )
             if not attempt.provider_account_id or not attempt.intent_hash:
@@ -1859,7 +2142,7 @@ class RunnerSupervisor:
             except (OSError, ValueError) as exc:
                 raise KlingCliError(
                     "KLING_RECEIPT_EVIDENCE_MISMATCH",
-                    "Local CLI receipt is unreadable or does not match this operation",
+                    "Local provider receipt is unreadable or does not match this operation",
                     submitted=True, uncertain=True,
                 ) from exc
             if receipt and receipt["status"] in {"FAILED_BEFORE_SUBMIT", "REJECTED"}:
@@ -1868,7 +2151,7 @@ class RunnerSupervisor:
                 record.finished_at = datetime.now(UTC)
                 raise KlingCliError(
                     record.error_code,
-                    "Exact local CLI receipt proves this invocation did not create a paid task",
+                    "Exact local receipt proves this invocation did not create a paid task",
                     details={"verifiedBeforeSubmit": True, "generationInvoked": False},
                 )
             if receipt and receipt.get("providerTaskId"):
@@ -1877,7 +2160,13 @@ class RunnerSupervisor:
                 credits = receipt.get("creditsConsumed")
                 if type(credits) is int and credits >= 0:
                     attempt.credits_consumed = credits
-                attempt.raw_response_json = {"generationId": receipt["providerTaskId"]}
+                if receipt.get("model"):
+                    attempt.provider_model = receipt["model"]
+                attempt.raw_response_json = (
+                    {"id": receipt["providerTaskId"]}
+                    if attempt.provider == self.settings.kling_api_provider_name
+                    else {"generationId": receipt["providerTaskId"]}
+                )
         if not record.provider_task_id:
             return False
         if not (
@@ -2130,9 +2419,11 @@ class RunnerSupervisor:
         consume the cloud-active task budget until accepted.
         """
         now = datetime.now(UTC)
-        delay = min(600, 30 * (2 ** min(max(int(attempt.submission_attempt_count or 1) - 1, 0), 5)))
+        balance_shortage = _is_api_balance_rejection(error.code, str(error))
+        base_delay = 60 if balance_shortage else 30
+        delay = min(600, base_delay * (2 ** min(max(int(attempt.submission_attempt_count or 1) - 1, 0), 5)))
         attempt.status = AttemptStatus.DISPATCH_PENDING
-        attempt.provider_status = "waiting_capacity"
+        attempt.provider_status = "waiting_balance" if balance_shortage else "waiting_capacity"
         attempt.charge_status = ChargeStatus.NOT_CHARGED
         attempt.submission_finished_at = now
         attempt.launch_started_at = None
@@ -2323,8 +2614,16 @@ class RunnerSupervisor:
         command.status = CommandStatus.TERMINAL
         command.lease_expires_at = None
         try:
+            # Settle the remote receipt atomically with its durable success
+            # state, not in a finally block after fallible delivery work.
+            await self._finalize_attempt_billing(
+                session, attempt,
+                actual_points=actual_points,
+                has_attributable_billing=has_attributable_billing,
+            )
             variant = await session.get(GenerationVariant, attempt.variant_id)
             if variant is None:
+                await session.commit()
                 return
             variant.generation_status = generation_status
             variant.download_status = (
@@ -2423,17 +2722,12 @@ class RunnerSupervisor:
             )
             await session.commit()
             await self._aggregate_task(session, variant.id)
-        finally:
-            # The attempt is already SUCCEEDED and the upstream provider already spent
-            # the credit, so every exit from this function owes the reservation a
-            # decision -- including the four early returns above.
-            await self._finalize_attempt_billing(
-                session,
-                attempt,
-                actual_points=actual_points,
-                has_attributable_billing=has_attributable_billing,
-            )
-            await session.commit()
+        except Exception:
+            # A failed flush invalidates the session. Do not perform another
+            # write on it or hide the original exception. A committed receipt
+            # remains recoverable by the existing download outbox.
+            await session.rollback()
+            raise
 
     async def _finalize_attempt_billing(
         self,
@@ -2445,12 +2739,8 @@ class RunnerSupervisor:
     ) -> None:
         """Settle an attempt's reservation from whichever path is leaving.
 
-        _handle_success has four early returns: a missing variant, a missing task, an
-        artifact that is already READY, and a failed download. Settlement used to sit
-        after the last of them, so none of those four paths ever touched the points
-        that had already been reserved. Production recorded the consequence: 24 of 42
-        successful attempts held UNCERTAIN reservations totalling 2880 points, and the
-        ledger contained zero RELEASE entries because the release path was unreachable.
+        Settlement is committed with the remote success receipt before delivery.
+        Missing variants/tasks, existing artifacts and file failures cannot bypass it.
 
         The charge decision is delegated to attempt.charge_status rather than
         special-cased per path, because that field already encodes whether the spend
@@ -2461,13 +2751,24 @@ class RunnerSupervisor:
         * UNKNOWN  -> park as UNCERTAIN, because an unreadable receipt must not be
           recorded as "not charged"
 
-        settle_points is idempotent (it returns immediately unless the reservation is
-        RESERVED or UNCERTAIN), so a finally block cannot double settle an attempt.
+        Only actionable reservations reach settle_points, whose write guard
+        remains authoritative under concurrency.
         """
         reservation = await session.scalar(
-            select(PointsReservation).where(PointsReservation.attempt_id == attempt.id)
+            select(PointsReservation).where(
+                PointsReservation.attempt_id == attempt.id,
+                PointsReservation.status.in_(
+                    (ReservationStatus.RESERVED, ReservationStatus.UNCERTAIN)
+                ),
+            ).execution_options(populate_existing=True)
         )
         if reservation is None:
+            return
+        if reservation.status == ReservationStatus.UNCERTAIN and not (
+            attempt.charge_status == ChargeStatus.NOT_CHARGED
+            or (attempt.charge_status == ChargeStatus.CHARGED and has_attributable_billing)
+        ):
+            # No new charge evidence: do not acquire the SQLite writer.
             return
         await settle_points(
             session,
@@ -2534,6 +2835,8 @@ class RunnerSupervisor:
                     ParentTask.id == task_id,
                     ParentTask.phase == ParentTaskPhase.GENERATING,
                     ParentTask.state_version == task.state_version,
+                    has_variants,
+                    ~has_unfinished,
                 )
                 .values(
                     phase=ParentTaskPhase.DELIVERABLE,
@@ -2569,9 +2872,20 @@ class RunnerSupervisor:
         if task.phase == next_phase:
             return
         previous_phase = task.phase
-        task.phase = next_phase
-        task.phase_reason_code = reason_code_for_aggregate(
+        next_reason = reason_code_for_aggregate(
             task.phase_reason_code, previous_phase, next_phase
         )
-        task.state_version += 1
+        # A stale variant observation must not overwrite a concurrent
+        # cancellation, recovery, or newer aggregate projection.
+        await session.execute(
+            update(ParentTask).where(
+                ParentTask.id == task.id,
+                ParentTask.phase == previous_phase,
+                ParentTask.state_version == task.state_version,
+            ).values(
+                phase=next_phase,
+                phase_reason_code=next_reason,
+                state_version=ParentTask.state_version + 1,
+            )
+        )
         await session.commit()

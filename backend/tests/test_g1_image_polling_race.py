@@ -8,7 +8,7 @@ from libtv_agent.domain.models import (
     ImageGenerationOutput,
 )
 from libtv_agent.services.image_generations import refresh_batch
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from test_image_quota_concurrency import post, world  # noqa: F401, F811
 
 
@@ -68,6 +68,15 @@ async def test_two_preloaded_sessions_materialize_once(world, monkeypatch):  # n
         }
 
     async def materialize(app, output):
+        # A real second DB session must be able to write while CDN I/O is
+        # stalled. Before the fix, refresh_batch held the writer until return.
+        async with factory() as independent:
+            if independent.bind.dialect.name == "sqlite":
+                await independent.execute(text("PRAGMA busy_timeout=250"))
+                await independent.execute(text("BEGIN IMMEDIATE"))
+                await independent.rollback()
+            persisted = await independent.scalar(select(ImageGenerationOutput))
+            assert persisted is not None and persisted.object_key is None
         downloads.append(output.id)
         output.object_key = "synthetic/completed.png"
 
@@ -82,4 +91,39 @@ async def test_two_preloaded_sessions_materialize_once(world, monkeypatch):  # n
     async with factory() as verify:
         assert await verify.scalar(select(func.count()).select_from(ImageGenerationOutput)) == 1
     assert len(downloads) == 1
+    assert len(provider.submissions) == 1
+
+
+async def test_materialization_does_not_overwrite_old_api_winner(world, monkeypatch):  # noqa: F811
+    app, factory, provider, users = world
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        assert (await post(client, users[0], "image-mixed-api-poll")).status_code == 201
+
+    async def query(task_id):
+        return {"data": {"id": task_id, "status": "completed",
+                         "outputs": ["https://synthetic.example.test/result.png"]}}
+
+    async def materialize(app, output):
+        # Simulate a request on the draining API winning during CDN I/O.
+        async with factory() as other:
+            await other.execute(update(ImageGenerationOutput).where(
+                ImageGenerationOutput.id == output.id,
+            ).values(object_key="original/winner.png", sha256="a" * 64))
+            await other.execute(update(ImageGenerationItem).values(
+                status="COMPLETED", last_polled_at=datetime.now(UTC),
+            ))
+            await other.commit()
+        output.object_key = "new/loser.png"
+        output.sha256 = "b" * 64
+
+    provider.get_prediction = query
+    monkeypatch.setattr("libtv_agent.services.image_generations._materialize_output", materialize)
+    async with factory() as session:
+        batch = await session.scalar(select(ImageGenerationBatch))
+        await refresh_batch(session, app=app, batch=batch)
+    async with factory() as verify:
+        output = await verify.scalar(select(ImageGenerationOutput))
+        item = await verify.scalar(select(ImageGenerationItem))
+        assert output.object_key == "original/winner.png" and output.sha256 == "a" * 64
+        assert item.status == "COMPLETED"
     assert len(provider.submissions) == 1

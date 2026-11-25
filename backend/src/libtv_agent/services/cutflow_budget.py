@@ -100,6 +100,18 @@ async def release_unused_auto_cutflow(
     if not prepaid:
         return False
     operation_id = uuid.UUID(prepaid)
+    # Most historical parents retain the original operation ID after it was
+    # transferred to CUT. A read-only miss must not acquire the SQLite writer.
+    existing = await session.scalar(
+        select(AccountUsage.id).where(
+            AccountUsage.kind == "CUTFLOW",
+            AccountUsage.operation_id == operation_id,
+            AccountUsage.user_id == parent.user_id,
+            AccountUsage.status == "RESERVED",
+        )
+    )
+    if existing is None:
+        return False
     result = await session.execute(
         update(AccountUsage)
         .where(AccountUsage.kind == "CUTFLOW",

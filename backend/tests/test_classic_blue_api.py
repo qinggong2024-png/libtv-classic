@@ -35,7 +35,8 @@ def test_replacement_checks_supervisor_before_any_process_change(tmp_path, monke
     assert not list(tmp_path.iterdir())
 
 
-def test_blue_replace_only_replaces_inactive_api_with_pinned_code(tmp_path, monkeypatch):
+@pytest.mark.parametrize("online", [False, True])
+def test_blue_replace_only_replaces_inactive_api_with_pinned_code(tmp_path, monkeypatch, online):
     root = tmp_path / "main"
     runtime = root / "var" / "classic-lan" / "runtime"
     runtime.mkdir(parents=True)
@@ -45,7 +46,7 @@ def test_blue_replace_only_replaces_inactive_api_with_pinned_code(tmp_path, monk
     state = {
         "apiPort": 8002,
         "webPort": 5176,
-        "lanIp": "192.168.30.126",
+        "lanIp": "10.12.34.56",
         "processes": [
             {"name": "api", "pid": 11},
             {"name": "runner", "pid": 22},
@@ -58,7 +59,17 @@ def test_blue_replace_only_replaces_inactive_api_with_pinned_code(tmp_path, monk
     monkeypatch.setattr(green, "validated_release", lambda p, r: p)
     active = {"sourceRevision": "b" * 64, "configRevision": "cfg", "schemaRevision": "schema"}
     previous = {"sourceRevision": "c" * 64}
-    monkeypatch.setattr(blue, "guard_replacement", lambda *_: (active, previous))
+    if online:
+        import classic_online_standby as standby
+
+        monkeypatch.setattr(blue, "supervisor_supports_blue", lambda _: True)
+        monkeypatch.setattr(standby, "guard", lambda *_: (active, previous))
+        monkeypatch.setattr(standby, "verify_prepared", lambda *_: None)
+        def unexpected_strict(*_):
+            pytest.fail("online standby preparation incorrectly invoked strict gate")
+        monkeypatch.setattr(blue, "guard_replacement", unexpected_strict)
+    else:
+        monkeypatch.setattr(blue, "guard_replacement", lambda *_: (active, previous))
     monkeypatch.setattr(green, "web_route", lambda: {"activeApiPort": 8003})
     calls = []
 
@@ -105,10 +116,14 @@ def test_blue_replace_only_replaces_inactive_api_with_pinned_code(tmp_path, monk
         lambda value: state_path.write_text(json.dumps(value), encoding="utf-8"),
     )
     monkeypatch.setattr(green, "json_get", lambda *_: {**active, "sourceRevision": "a" * 64})
-    dry = blue.replace_blue(release, "a" * 64, expected_active="b" * 64, baseline_unknown=15)
+    dry = blue.replace_blue(
+        release, "a" * 64, expected_active="b" * 64, baseline_unknown=15,
+        online_prepare=online,
+    )
     assert dry["action"] == "dry-run" and calls == []
     result = blue.replace_blue(
-        release, "a" * 64, expected_active="b" * 64, baseline_unknown=15, apply=True
+        release, "a" * 64, expected_active="b" * 64, baseline_unknown=15, apply=True,
+        online_prepare=online,
     )
     assert result["action"] == "standby-prepared"
     assert calls == ["terminate-api", "api-exited", "spawn-api"]

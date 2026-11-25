@@ -9,10 +9,12 @@
 //   继续轮询来推送图片任务完成通知（onNotifications / onActiveTasksChange）。
 //   因此它被包在 <Suspense fallback={null}> 里，只由图片页面权限控制挂载；
 //   一旦改成 {view === 'images' ? <ImageCenter/> : null}，非激活期轮询与通知会直接丢失。
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, Bell, Images, Library, ListVideo, LoaderCircle, Plus, RefreshCw, Settings, ShieldCheck, X } from 'lucide-react'
-import { logout } from '../api'
-import { ACTIVE_PHASES, AWAITING_USER_INPUT_PHASES } from '../domain/workflowStates'
+import { cancelTask, logout } from '../api'
+import { useTaskAttentionAcknowledgements } from './useTaskAttentionAcknowledgements'
+import { ACTIVE_PHASES } from '../domain/workflowStates'
+import { isTaskAttentionAcknowledged, taskAttentionGroup, taskAttentionSignature } from '../domain/taskAttention'
 import { LoginScreen } from '../features/auth/LoginScreen'
 import { ImageVideoComposerSheet } from '../features/production/ImageVideoComposerSheet'
 import { SharedCutflowWorkspace } from '../features/production/SharedCutflowWorkspace'
@@ -136,11 +138,8 @@ function App() {
     setAuthRequired(true)
   }, [setActor, setAuthRequired, setTasks])
 
+  const { acknowledgements, acknowledge, restore, error: attentionError } = useTaskAttentionAcknowledgements(actor?.userId ?? null)
   const selectedTask = tasks.find((task) => task.id === detailId) ?? null
-  const counts = useMemo(() => ({
-    attention: tasks.filter((task) => AWAITING_USER_INPUT_PHASES.has(task.phase)
-      || task.variants.some(variant => variant.generationStatus === 'UNKNOWN')).length,
-  }), [tasks])
   const showNotificationPrompt = browserNotificationsEnabled
     && notificationPermission === 'default'
     && !notificationPromptDismissed
@@ -158,7 +157,7 @@ function App() {
   const nav: NavItem[] = [
     ...(canImages ? [{ value: 'images' as const, label: '图片中心', icon: <Images size={18} /> }] : []),
     ...(canMake ? [{ value: 'make' as const, label: '视频制作', icon: <Plus size={18} /> }] : []),
-    ...(canRecords ? [{ value: 'records' as const, label: '任务', icon: <ListVideo size={18} />, badge: counts.attention, badgeLabel: `需处理的生成任务 ${counts.attention} 个，不含待送剪与剪辑异常` }] : []),
+    ...(canRecords ? [{ value: 'records' as const, label: '任务', icon: <ListVideo size={18} />, badge: 0, badgeLabel: '待处理任务' }] : []),
     ...(hasPage(actor, 'library') ? [{ value: 'library' as const, label: '内容库', icon: <Library size={18} /> }] : []),
     ...(canOperate ? [{ value: 'admin' as const, label: '管理', icon: <ShieldCheck size={18} /> }] : []),
     { value: 'settings', label: '设置', icon: <Settings size={18} /> },
@@ -191,8 +190,29 @@ function App() {
       scopeKey={`${view}:${selectedTask?.id ?? ''}`}
       onSubmitted={() => void refreshTasks()}
       onPlay={play}
-    >{(sharedBasket) => <AppShell
-    nav={nav}
+    >{(sharedBasket) => {
+      const attentionStates = tasks.map(task => {
+        const batches = sharedBasket.relatedMultiSourceTasksForTask(task.id)
+          .concat(task.variants.flatMap(variant => sharedBasket.singleSourceVersionsFor(variant.id)))
+        const load = {
+          loaded: !sharedBasket.enabled || sharedBasket.multiTasksLoaded,
+          error: Boolean(sharedBasket.multiTaskError),
+          now: sharedBasket.multiTasksCheckedAt,
+        }
+        const signature = taskAttentionSignature(task, batches)
+        return {
+          task,
+          signature,
+          group: taskAttentionGroup(task, batches, load),
+          acknowledged: isTaskAttentionAcknowledged(task.id, signature, acknowledgements),
+        }
+      })
+      const pendingAttention = attentionStates.filter(item => item.group === 'attention' && !item.acknowledged)
+      const taskNav = nav.map(item => item.value === 'records'
+        ? { ...item, badge: pendingAttention.length, badgeLabel: `待处理任务 ${pendingAttention.length} 个` }
+        : item)
+      return <AppShell
+    nav={taskNav}
     view={view}
     onSwitchView={switchView}
     actor={actor}
@@ -234,7 +254,12 @@ function App() {
         {canMake ? <HomeView imageDraftScope={actor?.userId ?? null} active={view === 'make' && !selectedTask} seed={seed} system={system} actorId={actorId} onCreated={created} /> : null}
         {view === 'make' && selectedTask ? <ProductionWorkspace onFeedbackChanged={actor?.role !== 'AUDITOR' ? feedbackChanged : undefined} canGenerate={canMake} tasks={tasks} basketStorageKey={basketStorageKey} sharedBasket={sharedBasket} key={selectedTask.id} task={selectedTask} focusVariantId={focusVariantId} multiCutReady={Boolean(system?.cutflowMultiSourceReady)} onClose={closeTaskDetail} onChanged={taskChanged} onDepthReuse={() => void prepareDepthVideo(selectedTask)} onRemix={() => void remix(selectedTask)} onReuse={(variants) => void reuseCompleted(selectedTask, variants)} onPlay={(variant) => play(selectedTask, variant)} onPlaySource={play} /> : null}
       </Suspense>
-      {view === 'records' ? <RecordsView sharedBasket={sharedBasket} canGenerate={canMake} storageKey={basketStorageKey} tasks={tasks} hasMore={Boolean(nextTaskCursor)} loadingMore={loadingMoreTasks} lastSyncedAt={lastSyncedAt} syncError={Boolean(error)} onLoadMore={() => void loadMoreTasks()} onRefresh={refreshTasks} onOpen={(task) => openTaskFromRecords(task.id)} onPlay={play} onRemix={(task) => void remix(task)} onFeedbackChanged={feedbackChanged} onCreateTask={() => navigate('make')} onEditing={(task, variant) => openTaskFromRecords(task.id, variant.id)} canReview={actor?.role === 'ADMIN' || actor?.role === 'OPERATOR'} canWrite={actor?.role !== 'AUDITOR'} initialFilter={recordsFilter} initialQuery={recordsQuery} onStateChange={navigateRecords} multiCutReady={Boolean(system?.cutflowMultiSourceReady)} /> : null}
+      {view === 'records' ? <RecordsView sharedBasket={sharedBasket}
+          attentionAcknowledgements={acknowledgements}
+          onDismissAttention={(task, signature) => { void acknowledge(task.id, signature) }}
+          onRestoreAttention={(task) => { void restore(task.id) }}
+          onCancelTask={async task => { await cancelTask(task.id); await refreshTasks() }}
+          attentionError={attentionError} canGenerate={canMake} storageKey={basketStorageKey} tasks={tasks} hasMore={Boolean(nextTaskCursor)} loadingMore={loadingMoreTasks} lastSyncedAt={lastSyncedAt} syncError={Boolean(error)} onLoadMore={() => void loadMoreTasks()} onRefresh={refreshTasks} onOpen={(task) => openTaskFromRecords(task.id)} onPlay={play} onRemix={(task) => void remix(task)} onFeedbackChanged={feedbackChanged} onCreateTask={() => navigate('make')} onEditing={(task, variant) => openTaskFromRecords(task.id, variant.id)} canReview={actor?.role === 'ADMIN' || actor?.role === 'OPERATOR'} canWrite={actor?.role !== 'AUDITOR'} initialFilter={recordsFilter} initialQuery={recordsQuery} onStateChange={navigateRecords} multiCutReady={Boolean(system?.cutflowMultiSourceReady)} /> : null}
       {view === 'library' && isManagementAdmin(actor) ? <Suspense fallback={<PageLoading />}><ContentLibraryView
         actorId={actorId}
         canDeleteSubjects={isManagementAdmin(actor)}
@@ -251,7 +276,7 @@ function App() {
         onDisableBrowserNotifications={disableBrowserNotifications}
       /></Suspense> : null}
     </>}
-  </AppShell>}</SharedCutflowWorkspace></GenerationBudgetProvider>
+  </AppShell> }}</SharedCutflowWorkspace></GenerationBudgetProvider>
 }
 
 export default App

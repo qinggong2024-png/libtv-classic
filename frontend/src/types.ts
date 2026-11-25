@@ -822,6 +822,9 @@ export interface AdminVideoHealth {
 }
 
 export interface AdminVideoRecord {
+  workflowKind?: string | null
+  model?: string | null
+  deepVideoMode?: string | null
   artifactId: string
   attemptId: string
   taskId: string
@@ -864,6 +867,15 @@ export interface AdminVideoTraceEvent {
 }
 
 export interface AdminVideoTrace {
+  workflowKind?: string | null
+  deepVideo?: {
+    mode: string | null
+    pipeline: string | null
+    referenceVideoType: string | null
+    model: string | null
+    depthModel: string | null
+    media: Array<'source' | 'depth'>
+  } | null
   klingWireAudit?: {
     evidence: 'provider_accepted_wire_snapshot'
     recordedAtUtc: string | null
@@ -943,12 +955,17 @@ export interface AdminCutDeliverable {
   status: string
 }
 export interface AdminVideoTask {
+  workflowKind?: string | null
   taskId: string
   title: string
   username: string
   brandName: string | null
   createdAt: string | null
   latestRawAt?: string | null
+  phase?: string
+  phaseReasonCode?: string | null
+  analysisStage?: string | null
+  analysisStartedAt?: string | null
   clips: AdminVideoRecord[]
   rawClipCount: number
   severity: AdminVideoSeverity

@@ -20,6 +20,7 @@ from libtv_agent.runner.command_host_manager import CommandHostManager
 from libtv_agent.runner.supervisor import RunnerSupervisor
 from libtv_agent.services.async_video_submission import (
     mark_interrupted_automatic_plans,
+    mark_interrupted_direct_admissions,
     pending_automatic_video_ids,
     process_automatic_video_submission,
     release_stopped_automatic_plan,
@@ -120,6 +121,25 @@ def _atomic_service_instance_id(path: Path) -> str:
     return value
 
 
+def _runner_heartbeat_due(
+    host: RunnerHost, *, status: RunnerHostStatus, free_percent: float,
+    observed_at: datetime, orphan_changed: bool = False,
+) -> bool:
+    """Ordinary health samples are not task ownership or paid receipts."""
+    previous = host.last_heartbeat_at
+    if previous is not None and previous.tzinfo is None:
+        previous = previous.replace(tzinfo=UTC)
+    return (
+        previous is None
+        or observed_at < previous
+        or (observed_at - previous).total_seconds() >= 15
+        or host.status != status
+        or host.free_disk_percent is None
+        or abs(host.free_disk_percent - free_percent) >= 1
+        or orphan_changed
+    )
+
+
 async def _freeze_for_disk(session, settings: Settings, reason: str) -> None:
     current = await get_runtime_config(session, settings)
     if current is None:
@@ -177,7 +197,11 @@ async def run_service_loop(stopping: Event, project_root: Path) -> None:
     settings = Settings()
     settings.validate_shared_environment()
     from libtv_agent.runner.classic_checkpoint import CheckpointStop
-    from libtv_agent.services.classic_durable_config import matches_loaded, read_config
+    from libtv_agent.services.classic_durable_config import (
+        effective_runner_revision,
+        matches_loaded,
+        read_config,
+    )
 
     durable_config = None
     if settings.classic_durable_config_file is not None:
@@ -185,11 +209,14 @@ async def run_service_loop(stopping: Event, project_root: Path) -> None:
         if not matches_loaded(settings, durable_config):
             raise RuntimeError("Runner durable configuration changed before startup")
         if durable_config["analysis"] or durable_config["confirmation"]:
+            expected_runner = effective_runner_revision(
+                settings.classic_durable_config_file.parent, durable_config
+            )
             if (
                 not isinstance(stopping, CheckpointStop)
                 or os.environ.get("CLASSIC_DURABLE_RUNNER_SINGLETON") != "1"
-                or stopping.identity["sourceRevision"] != durable_config["runnerSourceRevision"]
-                or settings.deployment_source_revision != durable_config["runnerSourceRevision"]
+                or stopping.identity["sourceRevision"] != expected_runner
+                or settings.deployment_source_revision != expected_runner
             ):
                 raise RuntimeError("Runner source or singleton proof does not match configuration")
 
@@ -219,6 +246,7 @@ async def run_service_loop(stopping: Event, project_root: Path) -> None:
         owner=service_instance_id,
         command_host_manager=manager,
         kling_adapter=kling_adapter,
+        stop_claiming=stopping.is_set,
     )
     last_auth_check = 0.0
     last_metric_sample = 0.0
@@ -336,7 +364,8 @@ async def run_service_loop(stopping: Event, project_root: Path) -> None:
                         "WARNING": RunnerHostStatus.WARNING,
                         "STOP": RunnerHostStatus.PAUSED,
                     }[disk["status"]]
-                    if host is None:
+                    new_host = host is None
+                    if new_host:
                         host = RunnerHost(
                             hostname=socket.gethostname(),
                             os_version=platform.platform(),
@@ -345,30 +374,35 @@ async def run_service_loop(stopping: Event, project_root: Path) -> None:
                             service_instance_id=service_instance_id,
                         )
                         session.add(host)
-                        await session.flush()
-                    host.status = status
-                    host.last_heartbeat_at = datetime.now(UTC)
-                    host.free_disk_percent = float(disk["freePercent"])
+                    observed_at = datetime.now(UTC)
+                    free_percent = float(disk["freePercent"])
                     orphan_signature = tuple(sorted(orphans))
-                    if orphan_signature:
-                        host.status = RunnerHostStatus.WARNING
-                        if orphan_signature != last_orphan_signature:
-                            session.add(
-                                AuditEvent(
-                                    actor_id=None,
-                                    action="RUNNER_ORPHAN_DETECTED",
-                                    entity_type="runner_host",
-                                    entity_id=service_instance_id,
-                                    reason=f"{len(orphans)} unowned command-host process(es)",
-                                    correlation_id=str(uuid.uuid4()),
-                                    evidence_refs_json=[],
-                                )
+                    orphan_changed = orphan_signature != last_orphan_signature
+                    if orphan_signature and status != RunnerHostStatus.PAUSED:
+                        status = RunnerHostStatus.WARNING
+                    if new_host or _runner_heartbeat_due(
+                        host, status=status, free_percent=free_percent,
+                        observed_at=observed_at, orphan_changed=orphan_changed,
+                    ):
+                        host.status = status
+                        host.last_heartbeat_at = observed_at
+                        host.free_disk_percent = free_percent
+                    if orphan_signature and orphan_changed:
+                        session.add(
+                            AuditEvent(
+                                actor_id=None,
+                                action="RUNNER_ORPHAN_DETECTED",
+                                entity_type="runner_host",
+                                entity_id=service_instance_id,
+                                reason=f"{len(orphans)} unowned command-host process(es)",
+                                correlation_id=str(uuid.uuid4()),
+                                evidence_refs_json=[],
                             )
-                    last_orphan_signature = orphan_signature
-                    # Persist the heartbeat before any provider/network work. Keeping
-                    # this write transaction open blocks the SQLite API and makes a
-                    # healthy but busy runner appear offline to other processes.
+                        )
+                    # End the transaction before provider/network work, even
+                    # on loops where the health sample required no write.
                     await session.commit()
+                    last_orphan_signature = orphan_signature
                     if disk["status"] == "STOP":
                         backlog_count = await operational_backlog_count(session)
                         await _freeze_for_disk(
@@ -384,14 +418,16 @@ async def run_service_loop(stopping: Event, project_root: Path) -> None:
                             .get("generationConcurrency", {})
                             .get("global", 1)
                         )
-                        await auto_confirm_pass_tasks(
-                            session,
-                            adapter,
-                            object_store,
-                            settings,
-                            kling_adapter=kling_adapter,
-                            limit=global_limit,
-                        )
+                        if not stopping.is_set():
+                            await auto_confirm_pass_tasks(
+                                session,
+                                adapter,
+                                object_store,
+                                settings,
+                                kling_adapter=kling_adapter,
+                                limit=global_limit,
+                                stop_claiming=stopping.is_set,
+                            )
                         backlog_count = await operational_backlog_count(session)
                         # Commit any auto-confirm writes and queue-snapshot read
                         # transaction before running the potentially slow
@@ -411,6 +447,14 @@ async def run_service_loop(stopping: Event, project_root: Path) -> None:
                             logger.warning(
                                 "reconciled abandoned automatic plans",
                                 extra={"count": interrupted},
+                            )
+                        abandoned_admissions = await mark_interrupted_direct_admissions(
+                            session, exclude_ids=tuple(active_video_preparations),
+                        )
+                        if abandoned_admissions:
+                            logger.warning(
+                                "identified interrupted pre-paid direct admissions",
+                                extra={"count": abandoned_admissions},
                             )
                         last_plan_recovery = now
                     if now - last_parent_phase_reconciliation >= 60:

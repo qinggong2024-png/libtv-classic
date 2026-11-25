@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest'
 
 import {
   generationProviderKind,
+  deepVideoProgressLabel,
+  deepVideoStageLabel,
+  deepVideoTaskBadgeLabel,
+  providerTaskBadgeLabel,
+  videoModelDisplayName,
   providerActionRequiredMessage,
   providerProgress,
   providerTimingStageLabel,
@@ -28,6 +33,22 @@ describe('provider presentation', () => {
     expect(providerTimingStageLabel('MATERIALIZATION', 'libtv')).toBe('历史任务素材准备')
   })
 
+  it('keeps Seedance and Depth Anything visibly separate from Kling provider labels', () => {
+    const seedance = 'bytedance/seedance-2.5-flash/video-edit'
+    const depth = 'wavespeed-ai/depth-anything/video'
+    expect(videoModelDisplayName(seedance)).toBe('Seedance 2.5 Flash')
+    expect(videoModelDisplayName(depth)).toBe('Depth Anything')
+    expect(deepVideoTaskBadgeLabel('recreate', seedance)).toBe('深度视频 · Seedance 2.5 Flash')
+    expect(deepVideoTaskBadgeLabel('depth', null)).toBe('深度视频 · Depth Anything')
+    expect(providerTaskBadgeLabel('wavespeed_video', 'DEEP_VIDEO', seedance, 'recreate')).toBe('深度视频 · Seedance 2.5 Flash')
+    expect(providerTaskBadgeLabel('wavespeed_video', 'FIXED_TEMPLATE', 'kwaivgi/kling-video-o3-pro/reference-to-video')).toBe('可灵 · Kling O3')
+    expect(deepVideoStageLabel('REPLACEMENT', seedance)).toBe('Seedance 2.5 Flash 人物与商品替换')
+    expect(deepVideoStageLabel('DEPTH_EXTRACTION', seedance, depth)).toBe('Depth Anything 深度提取')
+    expect(deepVideoProgressLabel('GENERATING', 'recreate', seedance)).toContain('Seedance 2.5 Flash')
+    expect(deepVideoProgressLabel('GENERATING', 'recreate', seedance, depth, 'depth', 'depth-first-v1')).toContain('Depth Anything 深度提取')
+    expect(providerProgress('GENERATING', 'kling_official_api').label).toContain('可灵官方服务')
+  })
+
   it('explains queued capacity instead of recommending duplicate submissions', () => {
     const message = variantExecutionMessage({
       generationStatus: 'PENDING',
@@ -38,6 +59,19 @@ describe('provider presentation', () => {
       provider: 'kling_official_api',
     })
     expect(message).toBe('等待开始生成')
+  })
+
+  it('keeps balance shortage visible during automatic recovery', () => {
+    const message = variantExecutionMessage({
+      generationStatus: 'PENDING',
+      downloadStatus: 'NOT_READY',
+      downloadArtifactId: null,
+      errorCode: 'KLING_API_BALANCE_INSUFFICIENT',
+      providerStatus: 'waiting_balance',
+      provider: 'kling_official_api',
+    })
+    expect(message).toContain('API 余额不足，请联系管理员充值')
+    expect(message).toContain('自动恢复')
   })
 
   it('shows distinct uncertain-state recovery boundaries', () => {

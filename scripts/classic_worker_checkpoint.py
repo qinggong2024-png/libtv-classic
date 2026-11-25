@@ -171,9 +171,171 @@ def install_pin(
         return {"action": "pinned-restart-held", "kind": kind, "sourceRevision": revision}
 
 
+
+# Narrow, reviewed CUT-only handoff. It does not change the Runner pin,
+# API route, durable configuration, paid commands, or remote CUT process.
+CUT_PAIR = frozenset({
+    "9b01a07df26943ac8f59970a89fd757db0acb7cbe0c021f175789b3b3261baf2",
+    "cb00c3d4cbd130720c5c89b827f764295f7fd28b6ec80357534f85d24bcd8b55",
+})
+
+
+# Same verified NAS v2 contract, with read-only SMB status timeout isolation.
+CUT_NAS_PAIR = frozenset({
+    "9b01a07df26943ac8f59970a89fd757db0acb7cbe0c021f175789b3b3261baf2",
+    "c5f6e150e79f1789c3899028d0fdc4d311e1b3f4c2d6169ee11a260bcfb64d8a",
+})
+
+
+# Short SQLite write transactions only; remote CUT and billing identity unchanged.
+CUT_AUTO_SWEEP_TX_PAIR = frozenset({
+    "c5f6e150e79f1789c3899028d0fdc4d311e1b3f4c2d6169ee11a260bcfb64d8a",
+    "f6349c36dce04e2c3a203d527217bc9c47783dc3f2f31cae201fad9293e3ca93",
+})
+
+
+# Exact worker-only candidate 0013094, derived from the live dfe6cc3 baseline.
+# Reviewed scope: four CUT/NAS runtime files, unchanged schema and paid identity.
+CUT_NAS_RECONCILE_PAIR = frozenset({
+    "f6349c36dce04e2c3a203d527217bc9c47783dc3f2f31cae201fad9293e3ca93",
+    "4e26f1401f4003d9740d5522cddf208a502ef4d4921a3f3f6fe9536a6478ad7a",
+})
+
+
+def cutflow_checkpoint_evidence(db_path: Path, *, drained: bool) -> dict:
+    import sqlite3
+
+    with sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=2) as db:
+        db.execute("PRAGMA query_only=ON")
+        db.execute("BEGIN")
+        terminal = "'FAILED','CANCELED','PENDING_REVIEW','COMPLETED'"
+        single = db.execute(
+            f"SELECT COUNT(*) FROM cutflow_handoff WHERE status NOT IN ({terminal})"
+        ).fetchone()[0]
+        leases = sum(db.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE lease_token IS NOT NULL OR lease_until IS NOT NULL"
+        ).fetchone()[0] for table in ("cutflow_handoff", "multi_cutflow_task"))
+        rows = db.execute(
+            f"SELECT id,status,manifest_path,manifest_json FROM multi_cutflow_task "
+            f"WHERE status NOT IN ({terminal})"
+        ).fetchall()
+        if single or (drained and leases):
+            raise RuntimeError("CUT local/legacy operation is not safe to hand off")
+        evidence = {}
+        for identifier, state, path, raw in rows:
+            manifest = json.loads(raw or "{}")
+            if state == "QUEUED" and not path:
+                continue
+            digest = manifest.get("manifestSha256")
+            if (state not in {"QUEUED", "READY", "ACCEPTED", "EDITING", "IMPORTING", "RUNNING"}
+                    or not path or manifest.get("contractVersion") != "libtv-cut-lan-multi/2"
+                    or not isinstance(digest, str) or len(digest) != 64
+                    or any(c not in "0123456789abcdef" for c in digest)):
+                raise RuntimeError("CUT original manifest identity is not verifiable")
+            evidence[identifier] = (path, digest)
+        return {"activeRemoteTasks": len(rows), "localLeases": leases,
+                "published": evidence}
+
+
+def verify_preserved_cutflow(db_path: Path, published: dict) -> None:
+    import sqlite3
+
+    with sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=2) as db:
+        for identifier, (path, digest) in published.items():
+            row = db.execute(
+                "SELECT manifest_path,manifest_json FROM multi_cutflow_task WHERE id=?",
+                (identifier,),
+            ).fetchone()
+            if (not row or row[0] != path
+                    or json.loads(row[1] or "{}").get("manifestSha256") != digest):
+                raise RuntimeError("original CUT task/manifest changed during checkpoint")
+
+
+def online_cutflow_handoff(release: Path, revision: str, *, expected_old: str,
+                           baseline_unknown: int, apply: bool = False) -> dict:
+    """Drain only local CUT operations; preserve original remote task identity."""
+    import time
+
+    from classic_blue_api import route_operator_lock
+    from classic_cutflow import cutflow_environment
+    from classic_green_api import json_get, web_route
+    from classic_v2_canary_preflight import check
+    from classic_worker_source import worker_source
+
+    if frozenset((expected_old, revision)) not in (CUT_PAIR, CUT_NAS_PAIR, CUT_AUTO_SWEEP_TX_PAIR, CUT_NAS_RECONCILE_PAIR):
+        raise RuntimeError("CUT handoff requires the reviewed exact source pair")
+    runtime = classic_lan.STATE.parent
+    db_path = runtime.parent / "classic.db"
+    release = validated_release(release, revision)
+
+    def validate():
+        if not supervisor_supports_blue(runtime) or restart_held("cutflow"):
+            raise RuntimeError("CUT supervisor/hold identity unavailable")
+        route = web_route()
+        gate = json_get(route["activeApiPort"], "/api/v1/system/classic-new-video-admission")
+        if (gate.get("configured") is not True
+                or gate.get("deploymentId") != "libtv-classic-lan-0e3d1c8"
+                or gate.get("newVideoAdmissionsPaused") is not False):
+            raise RuntimeError("expected open Classic intake")
+        settings = cutflow_environment(runtime.parent)
+        if (settings.get("CUTFLOW_TRANSPORT") != "lan"
+                or settings.get("CUTFLOW_MULTI_SOURCE_ENABLED") != "true"
+                or settings.get("CUTFLOW_NAS_STATUS_ENABLED") != "true"):
+            raise RuntimeError("requires durable NAS CUT v2 transport")
+        previous, old_revision = worker_source("cutflow", runtime, classic_lan.ROOT)
+        if old_revision != expected_old:
+            raise RuntimeError("CUT worker source pin changed")
+        verify_worker_compatibility(previous, release)
+        task_report = check(db_path, baseline_uncertain=baseline_unknown)
+        if task_report["counts"]["uncertainPaidHistorical"] > baseline_unknown:
+            raise RuntimeError("paid UNKNOWN increased")
+        identity, state = read_identity(runtime, "cutflow")
+        if state != "RUNNING" or identity["sourceRevision"] != expected_old or not process_matches(
+            owned_record("cutflow"), identity
+        ):
+            raise RuntimeError("CUT worker identity changed")
+        request = runtime / "checkpoint-cutflow-request.json"
+        if request.exists() and json.loads(request.read_text(encoding="utf-8")) == identity:
+            raise RuntimeError("CUT checkpoint already requested")
+        return identity, cutflow_checkpoint_evidence(db_path, drained=False)
+
+    if not apply:
+        _, evidence = validate()
+        return {"action": "dry-run", "activeRemoteTasks": evidence["activeRemoteTasks"],
+                "localLeases": evidence["localLeases"], "sourceRevision": revision}
+    # The live supervisor also holds api-blue for process recovery. Keep it
+    # excluded until the original worker has exited and the new pin is committed.
+    # If anything fails before the pin, the original pin remains authoritative.
+    with route_operator_lock(runtime), exclusive_classic_worker("api-blue", runtime):
+        identity, evidence = validate()
+        atomic_write(runtime / "checkpoint-cutflow-request.json", identity)
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            observed, state = read_identity(runtime, "cutflow")
+            if observed != identity or state == "DRAIN_FAILED":
+                raise RuntimeError("CUT checkpoint failed or identity changed")
+            if state == "DRAINED" and classic_lan.owned_process(owned_record("cutflow")) is None:
+                break
+            time.sleep(0.25)
+        else:
+            raise RuntimeError("CUT checkpoint timed out; original pin retained")
+        with exclusive_classic_worker("cutflow", runtime):
+            if read_identity(runtime, "cutflow") != (identity, "DRAINED"):
+                raise RuntimeError("CUT checkpoint receipt changed")
+            if classic_lan.owned_process(owned_record("cutflow")) is not None:
+                raise RuntimeError("old CUT worker still alive")
+            cutflow_checkpoint_evidence(db_path, drained=True)
+            verify_preserved_cutflow(db_path, evidence["published"])
+            validated_release(release, revision)
+            atomic_write(runtime / "worker-cutflow-pin.json",
+                         {"version": 1, "releaseRoot": str(release), "sourceRevision": revision})
+    return {"action": "cutflow-pin-installed", "sourceRevision": revision,
+            "previousRevision": expected_old, "preservedRemoteTasks": len(evidence["published"])}
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("request", "pin"))
+    parser.add_argument("action", choices=("request", "pin", "online-cutflow"))
     parser.add_argument("--kind", choices=("runner", "cutflow"), required=True)
     parser.add_argument("--expected-old", required=True)
     parser.add_argument("--release-root", type=Path)
@@ -183,7 +345,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.baseline_unknown < 0:
         parser.error("baseline must be nonnegative")
-    if args.action == "request":
+    if args.action == "online-cutflow":
+        if args.kind != "cutflow" or not args.release_root or not args.expected_revision:
+            parser.error("online-cutflow requires kind=cutflow and approved release identity")
+        result = online_cutflow_handoff(
+            args.release_root, args.expected_revision, expected_old=args.expected_old,
+            baseline_unknown=args.baseline_unknown, apply=args.apply,
+        )
+    elif args.action == "request":
         result = request_checkpoint(
             args.kind, args.expected_old, baseline_unknown=args.baseline_unknown, apply=args.apply
         )

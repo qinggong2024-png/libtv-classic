@@ -50,6 +50,13 @@ export function autoCutflowWaitDelayed(task: Task, now: number): boolean {
   return candidate?.readyAt != null && now - candidate.readyAt >= AUTO_CUTFLOW_WAIT_MS
 }
 
+/** The absence of a local edit record is not proof of a failed remote submission. */
+export function autoCutflowWaitingCopy(delayed: boolean) {
+  return delayed
+    ? { label: '自动送剪等待较久', detail: '原片已保存，自动送剪尚未确认。无需重新生成或重复送剪；如果持续未推进，请联系管理员处理原任务。' }
+    : { label: '等待自动送剪', detail: '原片已就绪，等待后台自动送剪，无需操作。' }
+}
+
 /** Query faster only during the short handoff window; never submit or retry. */
 export function autoCutflowPollDelay(
   candidates: AutoCutflowCandidate[], batches: MultiCutflowTask[],

@@ -1,0 +1,233 @@
+
+/* ALLWE Classic — creation-workbench visual parity for tasks and personal settings.
+   Presentation only: no workflow, status or billing behavior changes. */
+:is(.task-center-view,.production-workspace.task-layout-a,.personal-settings){
+  --harmony-ease:cubic-bezier(.22,1,.36,1);
+  --harmony-motion:180ms var(--harmony-ease);
+  --harmony-shadow:0 12px 36px rgba(30,41,68,.045),0 1px 2px rgba(30,41,68,.025);
+  --harmony-ring:color-mix(in srgb,var(--primary) 30%,white);
+}
+/* Same heading hierarchy as creation pages. Preserve existing task density. */
+.app-shell .task-center-view .page-title,.app-shell .personal-settings .personal-settings-header{min-height:62px;margin:0 0 12px;padding:0;border-bottom:0;align-items:center}
+.app-shell .task-center-view .page-title h1,.app-shell .personal-settings .personal-settings-header h1{margin:0;font-size:23px;line-height:1.35;font-weight:740;letter-spacing:-.55px;color:var(--text)}
+.app-shell .task-center-view .records-page-actions{display:flex;align-items:center;gap:8px}
+.app-shell .task-center-view .search-field{min-height:38px;border-radius:11px;background:var(--surface);border:1px solid var(--line);transition:border-color var(--harmony-motion),box-shadow var(--harmony-motion)}
+.app-shell .task-center-view .search-field:focus-within{border-color:var(--harmony-ring);box-shadow:0 0 0 3px var(--primary-soft)}
+.app-shell .task-center-view .task-center-filters{padding:8px 0 12px;gap:6px;align-items:center}
+.app-shell .task-center-view .task-center-filters>button{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:38px;padding:0 12px;border-radius:11px;border:1px solid var(--line);background:var(--surface);color:var(--text-secondary);font-size:12px;font-weight:620;line-height:1.35;transition:background var(--harmony-motion),border-color var(--harmony-motion),box-shadow var(--harmony-motion),transform var(--harmony-motion)}
+.app-shell .task-center-view .task-center-filters>button.is-active{color:var(--primary);background:var(--primary-soft);border-color:var(--harmony-ring);font-weight:680;box-shadow:0 2px 7px color-mix(in srgb,var(--primary) 7%,transparent)}
+.app-shell .task-center-view .task-center-filters>button:not(.is-active):hover{background:var(--surface-soft);color:var(--primary)}
+.app-shell .task-center-view .task-center-filters>button span{display:grid;place-items:center;min-width:21px;height:20px;padding:0 5px;border-radius:6px;background:var(--surface-soft);font-size:11px;line-height:1;font-variant-numeric:tabular-nums}
+.app-shell .task-center-view .task-center-filters>button.is-active span{background:var(--surface);color:var(--primary)}
+.app-shell .task-center-view .task-center-resultbar{justify-content:flex-start;gap:9px;padding:4px 0 10px}
+.app-shell .task-center-view .task-center-resultbar>button{margin-left:auto;min-height:32px;padding:0 9px;border-radius:8px;transition:background var(--harmony-motion)}
+.app-shell .task-center-view .task-center-resultbar>button:hover{background:var(--surface);color:var(--primary)}
+.app-shell .task-center-view .task-center-view-switch{margin-left:0;padding:3px;gap:3px;border:1px solid var(--line);background:var(--surface-soft);border-radius:11px}
+.app-shell .task-center-view .task-center-view-switch button{width:33px;height:30px;display:grid;place-items:center;color:var(--muted);border-radius:8px}
+.app-shell .task-center-view .task-center-view-switch button[aria-pressed=true]{background:var(--surface);color:var(--primary);box-shadow:0 2px 7px rgba(30,41,68,.08)}
+.app-shell .task-center-view .task-center-day-group{color:var(--text-secondary);font-weight:650;line-height:1.4;margin:12px 0 0}
+.app-shell .task-center-view .task-center-list .task-center-card{border:1px solid var(--line);border-radius:14px;background:var(--surface);box-shadow:0 2px 8px rgba(30,41,68,.035);transition:transform var(--harmony-motion),border-color var(--harmony-motion),box-shadow var(--harmony-motion)}
+.app-shell .task-center-view .task-center-list .task-center-card:hover{border-color:var(--harmony-ring);box-shadow:0 8px 23px rgba(30,41,68,.075);transform:translateY(-1px)}
+.app-shell .task-center-view .task-center-list .task-center-card__main:hover{background:transparent}
+.app-shell .task-center-view .task-center-card__title{font-weight:680;color:var(--text);line-height:1.35}
+.app-shell .task-center-view .task-center-card__sub{color:var(--muted);line-height:1.4}
+.app-shell .task-center-view .task-center-card__edit-state{display:inline-flex;align-items:center;justify-content:center;border-radius:7px;line-height:1.3;font-weight:620}
+.app-shell .task-center-view .task-center-card__cover,.app-shell .task-center-view .allwe-media-cover{background:var(--surface-soft)}
+.app-shell .task-center-view .allwe-media-cover__play{color:var(--primary);box-shadow:0 4px 12px rgba(30,41,68,.16)}
+.app-shell .task-center-view .task-center-card__pick{background:var(--primary-soft);color:var(--primary);border-color:color-mix(in srgb,var(--primary) 17%,var(--line));font-weight:650}
+.app-shell .task-center-view .task-center-card__pick:hover{background:var(--primary-soft);color:var(--primary);border-color:var(--harmony-ring)}
+.app-shell .task-center-view .task-center-card__more>summary{color:var(--muted);border-color:var(--line);border-radius:9px}
+.app-shell .task-center-view .task-center-card__more>summary:hover,.app-shell .task-center-view .task-center-card__more[open]>summary{color:var(--primary);background:var(--primary-soft);border-color:var(--harmony-ring)}
+.app-shell .task-center-view .task-center-list.is-grid .task-center-card__controls{background:rgba(255,255,255,.95);border-color:rgba(255,255,255,.8);box-shadow:0 3px 12px rgba(30,41,68,.12)}
+.app-shell .task-center-view .task-center-list.is-grid .task-center-card__pick{background:transparent;border:0}
+.app-shell .task-center-view .task-center-card__menu{padding:5px;min-width:140px;border-color:var(--line);border-radius:12px;background:var(--surface);box-shadow:0 12px 36px rgba(24,35,53,.14);animation:harmony-pop 220ms var(--harmony-ease) both;transform-origin:top right}
+.app-shell .task-center-view .task-center-card__menu button{min-height:34px;padding:7px 10px;border-radius:8px;font-size:12px;color:var(--text-secondary);transition:background var(--harmony-motion),color var(--harmony-motion)}
+.app-shell .task-center-view .task-center-card__menu button:hover:not(:disabled){background:var(--primary-soft);color:var(--primary)}
+.app-shell .task-center-view .task-center-history{border:1px solid var(--line);border-radius:14px;box-shadow:var(--harmony-shadow)}
+.app-shell .task-center-view .task-center-history>summary{padding:12px 16px;border-radius:14px;font-weight:650}
+.app-shell .task-center-view .task-center-history>summary:hover{background:var(--surface-soft);color:var(--primary)}
+.app-shell .task-center-view .task-center-history>summary svg{transition:transform 220ms var(--harmony-ease)}
+/* Existing calendar and task action overlays use the same popup treatment. */
+.app-shell .task-center-view .task-date-trigger{min-height:38px;border-radius:11px;font-size:12px;transition:background var(--harmony-motion),border-color var(--harmony-motion)}
+.app-shell .task-center-view .task-date-popover{border-radius:16px;border-color:var(--line);box-shadow:0 18px 52px rgba(24,35,53,.14);animation:harmony-pop 220ms var(--harmony-ease) both;transform-origin:top right}
+.app-shell .task-center-view .task-date-popover button{transition:background var(--harmony-motion),color var(--harmony-motion),border-color var(--harmony-motion)}
+.app-shell .task-center-view .task-date-footer .task-date-done{border-radius:10px}
+.allwe-clip-picker__backdrop,.allwe-quick-video__backdrop{background:rgba(24,35,53,.35)}
+.allwe-clip-picker__backdrop .allwe-clip-picker{border:1px solid var(--line);border-radius:19px;box-shadow:0 18px 64px rgba(24,35,53,.19)}
+.allwe-clip-picker__backdrop .allwe-clip-picker__clip{border-radius:13px;border-color:var(--line)}
+.allwe-clip-picker__backdrop .allwe-clip-picker__clip.is-selected{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary);background:var(--primary-soft)}
+.allwe-clip-picker__backdrop .allwe-clip-picker__done{background:var(--primary);border-color:var(--primary);color:white;border-radius:10px}
+.allwe-clip-picker__backdrop .allwe-clip-picker__check[aria-pressed=true]{background:var(--primary);border-color:var(--primary);color:white}
+.allwe-clip-picker__backdrop .allwe-clip-picker__close{border-radius:10px;color:var(--muted)}
+/* Task detail: keep video first and preserve the existing state/selection layout. */
+.app-shell .production-workspace.task-layout-a{border-radius:19px;border-color:var(--line);background:var(--surface-soft);box-shadow:var(--harmony-shadow)}
+.app-shell .production-workspace.task-layout-a .drawer-header{min-height:66px;padding:16px 20px;border-bottom:1px solid var(--line)}
+.app-shell .production-workspace.task-layout-a .drawer-header h1{font-size:21px;font-weight:720;line-height:1.35;letter-spacing:-.35px}
+.app-shell .production-workspace.task-layout-a .drawer-header-main>span{font-size:11px;color:var(--muted);line-height:1.35}
+.app-shell .production-workspace.task-layout-a .drawer-content{gap:16px;padding:20px}
+.app-shell .production-workspace.task-layout-a :is(.task-a-delivery,.task-adaptive-cut,.task-a-prompts,.technical-details,.analysis-recovery,.task-history-workspace){border-radius:16px;border-color:var(--line)}
+.app-shell .production-workspace.task-layout-a .task-a-delivery__result{padding:20px}
+.app-shell .production-workspace.task-layout-a .task-a-delivery h2{font-size:17px;font-weight:700}
+.app-shell .production-workspace.task-layout-a .task-a-delivery__metadata h3{font-size:17px;font-weight:680;letter-spacing:-.2px;overflow-wrap:anywhere}
+.app-shell .production-workspace.task-layout-a .task-a-delivery__preview{border-radius:12px}
+.app-shell .production-workspace.task-layout-a .task-a-delivery__sources{padding:20px;background:var(--surface-soft)}
+.app-shell .production-workspace.task-layout-a .task-a-delivery__sources h3{font-size:15px;font-weight:680}
+.app-shell .production-workspace.task-layout-a .task-a-delivery__sources li>b{border-radius:8px}
+.app-shell .production-workspace.task-layout-a .task-a-originals h2{font-size:16px;font-weight:700}
+.app-shell .production-workspace.task-layout-a .production-video-result{border-radius:14px;padding:12px;border-color:var(--line);transition:border-color var(--harmony-motion),box-shadow var(--harmony-motion)}
+.app-shell .production-workspace.task-layout-a .production-video-result:hover{border-color:var(--harmony-ring);box-shadow:0 3px 12px rgba(30,41,68,.045)}
+.app-shell .production-workspace.task-layout-a .variant-result-preview{border:0;border-radius:10px;overflow:hidden}
+.app-shell .production-workspace.task-layout-a .task-original-gallery__sidebar{border:1px solid color-mix(in srgb,var(--primary) 14%,var(--line));border-radius:12px;padding:12px 14px;background:var(--primary-soft)}
+.app-shell .production-workspace.task-layout-a .task-a-disclosure{border-radius:14px;border-color:var(--line);overflow:hidden;transition:border-color var(--harmony-motion)}
+.app-shell .production-workspace.task-layout-a .task-a-disclosure>summary{min-height:46px;padding:11px 14px;font-size:13px;font-weight:650;transition:background var(--harmony-motion),color var(--harmony-motion)}
+.app-shell .production-workspace.task-layout-a .task-a-disclosure>summary:hover{background:var(--surface-soft);color:var(--primary)}
+.app-shell .production-workspace.task-layout-a .task-a-disclosure>summary svg,.app-shell .production-workspace.task-layout-a .technical-details>summary svg{transition:transform 220ms var(--harmony-ease)}
+.app-shell .production-workspace.task-layout-a .task-a-disclosure__body{padding:16px}
+.app-shell .production-workspace.task-layout-a .task-history-workspace__tabs{display:inline-flex;align-items:center;gap:4px;padding:4px;background:var(--surface-soft);border:1px solid var(--line);border-radius:12px;align-self:start}
+.app-shell .production-workspace.task-layout-a .task-history-workspace__tabs button{min-height:34px;display:inline-flex;align-items:center;justify-content:center;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--text-secondary);font-size:12px;line-height:1.35;transition:background var(--harmony-motion),color var(--harmony-motion),box-shadow var(--harmony-motion)}
+.app-shell .production-workspace.task-layout-a .task-history-workspace__tabs button.is-active{background:var(--surface);color:var(--primary);box-shadow:0 2px 8px rgba(30,41,68,.08)}
+.app-shell .production-workspace.task-layout-a .task-history-workspace__tabs button::after{display:none}
+.app-shell .production-workspace.task-layout-a .drawer-footer{padding:12px 20px;border-top:1px solid var(--line);background:var(--surface)}
+/* Settings: the same surface, spacing, inputs and controls, no new setting. */
+.app-shell .personal-settings.settings-view{padding-top:24px}
+.app-shell .personal-settings .personal-settings-layout{gap:16px}
+.app-shell .personal-settings .personal-settings-sidebar{gap:16px}
+.app-shell .personal-settings .settings-section{padding:20px;border-radius:19px;border-color:var(--line);box-shadow:var(--harmony-shadow)}
+.app-shell .personal-settings .settings-section h2{font-size:15px;font-weight:700;line-height:1.4}
+.app-shell .personal-settings .personal-usage-period{margin-top:16px;padding:4px;border-radius:12px;gap:4px}
+.app-shell .personal-settings .personal-usage-period button{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:0 12px;border:0;border-radius:9px;font-size:12px;font-weight:620;line-height:1.35;transition:background var(--harmony-motion),color var(--harmony-motion),box-shadow var(--harmony-motion)}
+.app-shell .personal-settings .personal-usage-period button[aria-pressed=true]{background:var(--surface);color:var(--primary);box-shadow:0 2px 7px rgba(30,41,68,.08)}
+.app-shell .personal-settings .personal-usage-metrics{gap:10px;margin:16px 0}
+.app-shell .personal-settings .personal-usage-metrics>div{padding:15px 16px;border-radius:13px;border-color:var(--line);background:var(--surface-soft)}
+.app-shell .personal-settings .personal-usage-metrics>div:last-child{background:var(--primary-soft);border-color:color-mix(in srgb,var(--primary) 12%,var(--line))}
+.app-shell .personal-settings .personal-usage-metrics strong{font-weight:680;letter-spacing:-.035em}
+.app-shell .personal-settings .personal-usage-breakdown{padding:15px 0}
+.app-shell .personal-settings .personal-usage-history{padding-top:16px}
+.app-shell .personal-settings .personal-usage-table th{background:var(--surface-soft);font-weight:620}
+.app-shell .personal-settings .personal-usage-table td{border-color:var(--line)}
+.app-shell .personal-settings .personal-settings-group>.settings-section,.app-shell .personal-settings .personal-settings-disclosure>.settings-section{padding:15px 0;border-radius:0;box-shadow:none;background:transparent}
+.app-shell .personal-settings .personal-settings-group>.settings-section h2{font-size:13px;font-weight:650}
+.app-shell .personal-settings .settings-section-heading{align-items:center;gap:12px}
+.app-shell .personal-settings .settings-section-heading p{font-size:12px;line-height:1.5;color:var(--muted)}
+.app-shell .personal-settings .personal-settings-disclosure>summary{font-size:13px;font-weight:650;min-height:42px;padding:10px 0 0;transition:color var(--harmony-motion)}
+.app-shell .personal-settings .personal-settings-disclosure>summary:hover{color:var(--primary)}
+.app-shell .personal-settings .personal-settings-disclosure>summary svg{transition:transform 220ms var(--harmony-ease)}
+.app-shell .personal-settings .settings-switch>span{transition:background 180ms ease,border-color 180ms ease}
+.app-shell .personal-settings .settings-switch>span::before{transition:transform 240ms var(--harmony-ease)}
+.app-shell .personal-settings :is(input[type=date],input[type=password],input[type=text]){min-width:0;border-radius:10px;border-color:var(--line);background:var(--surface-soft);transition:border-color var(--harmony-motion),box-shadow var(--harmony-motion)}
+.app-shell .personal-settings :is(input[type=date],input[type=password],input[type=text]):focus{border-color:var(--harmony-ring);box-shadow:0 0 0 3px var(--primary-soft);outline:0;background:var(--surface)}
+.app-shell .personal-settings .personal-settings-logout{justify-content:center;min-height:38px;border-radius:10px}
+/* Shared interaction finish, scoped to the three requested screens. */
+.app-shell :is(.task-center-view,.production-workspace.task-layout-a,.personal-settings) :is(.primary-button,.secondary-button,.icon-button,.text-button){display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1.35;border-radius:10px;transition:background 180ms ease,border-color 180ms ease,box-shadow 180ms ease,transform 180ms cubic-bezier(.22,1,.36,1)}
+.app-shell :is(.task-center-view,.production-workspace.task-layout-a,.personal-settings) .primary-button:not(:disabled){background:var(--primary);border-color:var(--primary);color:white}
+.app-shell :is(.task-center-view,.production-workspace.task-layout-a,.personal-settings) .primary-button:hover:not(:disabled){background:var(--primary-hover);box-shadow:0 5px 14px color-mix(in srgb,var(--primary) 17%,transparent)}
+.app-shell :is(.task-center-view,.production-workspace.task-layout-a,.personal-settings) :is(.primary-button,.secondary-button,.icon-button,.text-button,.task-center-filters>button):active:not(:disabled){transform:scale(.98)}
+.app-shell :is(.task-center-view,.production-workspace.task-layout-a,.personal-settings) :is(button,summary,a,input):focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.app-shell :is(.task-center-view,.production-workspace.task-layout-a,.personal-settings) :is(.task-a-disclosure,.personal-settings-disclosure,.task-center-history)[open]>:not(summary){animation:harmony-content-in 180ms ease both}
+@keyframes harmony-pop{from{opacity:0;transform:translateY(-4px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes harmony-content-in{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
+@media(prefers-reduced-motion:reduce){.app-shell :is(.task-center-view,.production-workspace.task-layout-a,.personal-settings) :is(button,summary,summary svg,input,.task-center-card,.task-center-card__menu,.task-date-popover,.settings-switch>span,.settings-switch>span::before,.task-a-disclosure[open]>:not(summary),.personal-settings-disclosure[open]>:not(summary),.task-center-history[open]>:not(summary)){animation:none!important;transition:none!important}}
+
+/* Finish the legacy focused overview with the same brand-blue palette. */
+.app-shell .task-center-view .task-center-card__progress-cover{color:var(--muted);background:var(--surface-soft)}
+.app-shell .production-workspace.allwe-focus-enabled .drawer-header{padding:16px 20px}
+.app-shell .production-workspace.allwe-focus-enabled .drawer-header-main>span{color:var(--muted)}
+.app-shell .production-workspace.allwe-focus-enabled .drawer-content{gap:16px;padding:20px}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview{gap:16px}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview__media{border-color:var(--line);background:var(--surface-soft);border-radius:16px}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview header strong{color:var(--text);font-weight:680}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview header small{color:var(--muted)}
+.app-shell .production-workspace.task-layout-a :is(.allwe-detail-overview__poster,.allwe-detail-overview__thumb){border-color:var(--line);background:var(--surface-soft)}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview__play{color:var(--primary);box-shadow:0 5px 16px rgba(30,41,68,.16)}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview__download{color:var(--primary);font-weight:650}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview__download:hover{color:var(--primary-hover)}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview__clip-meta{color:var(--text-secondary)}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview__clip-meta button{color:var(--primary);background:var(--primary-soft);transition:background var(--harmony-motion),transform var(--harmony-motion)}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview__clip-meta button:hover{background:color-mix(in srgb,var(--primary) 14%,white)}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview__status h2{color:var(--text);font-weight:700}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview__state{color:var(--primary);background:var(--primary-soft);border-radius:8px;font-weight:650}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview__status p{color:var(--text-secondary)}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview__action{color:var(--primary);background:var(--primary-soft);border:1px solid color-mix(in srgb,var(--primary) 20%,var(--line));border-radius:10px;font-weight:650}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview__action:hover{color:var(--primary-hover);background:var(--primary-soft);border-color:var(--harmony-ring)}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview__status dl{border-color:var(--line)}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview__status dt{color:var(--muted)}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview__status dd{color:var(--text)}
+.app-shell .production-workspace.task-layout-a .allwe-detail-advanced{border-color:var(--line);border-radius:14px}
+.app-shell .production-workspace.task-layout-a .allwe-detail-advanced>summary{color:var(--text-secondary);transition:color var(--harmony-motion),background var(--harmony-motion)}
+.app-shell .production-workspace.task-layout-a .allwe-detail-advanced>summary:hover{color:var(--primary);background:var(--surface-soft)}
+.app-shell .production-workspace.task-layout-a .allwe-detail-advanced[open]>:not(summary){animation:harmony-content-in 180ms ease both}
+@media(prefers-reduced-motion:reduce){.app-shell .production-workspace.task-layout-a .allwe-detail-advanced[open]>:not(summary){animation:none!important}}
+
+/* Fine interaction pass: continuous selection, native disclosures, quiet feedback. */
+.app-shell .task-center-view .harmony-filter-segment,
+.app-shell .task-center-view .task-center-view-switch,
+.app-shell .personal-settings .personal-usage-period{
+ position:relative;isolation:isolate;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:4px;border:1px solid var(--line);border-radius:12px;background:var(--surface-soft);min-width:0;
+}
+.app-shell .task-center-view .harmony-filter-segment{flex:0 1 auto;width:max-content;max-width:100%}
+.app-shell .task-center-view .task-center-view-switch{grid-template-columns:repeat(2,33px);gap:4px;padding:4px}
+.app-shell .personal-settings .personal-usage-period{grid-template-columns:repeat(4,minmax(0,1fr));width:fit-content;max-width:100%}
+.app-shell .harmony-segment-thumb{position:absolute;z-index:-1;top:4px;bottom:4px;left:4px;width:calc((100% - 20px)/4);border:1px solid color-mix(in srgb,var(--primary) 14%,var(--line));border-radius:8px;background:var(--surface);box-shadow:0 2px 7px rgba(30,41,68,.07);transform:translateX(0);transition:transform 280ms var(--harmony-ease,cubic-bezier(.22,1,.36,1));pointer-events:none}
+.app-shell .task-center-view .task-center-view-switch .harmony-segment-thumb{width:33px}
+.app-shell :is(.harmony-filter-segment,.personal-usage-period,.task-center-view-switch):has(>button:nth-of-type(2)[aria-pressed=true])>.harmony-segment-thumb{transform:translateX(calc(100% + 4px))}
+.app-shell :is(.harmony-filter-segment,.personal-usage-period):has(>button:nth-of-type(3)[aria-pressed=true])>.harmony-segment-thumb{transform:translateX(calc(200% + 8px))}
+.app-shell :is(.harmony-filter-segment,.personal-usage-period):has(>button:nth-of-type(4)[aria-pressed=true])>.harmony-segment-thumb{transform:translateX(calc(300% + 12px))}
+.app-shell .task-center-view .harmony-filter-segment>button{min-height:34px;min-width:0;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 10px;white-space:nowrap;font-size:12px;font-weight:620;line-height:1.35;color:var(--text-secondary);border:0;border-radius:8px;background:transparent;box-shadow:none;transition:color var(--harmony-motion),transform var(--harmony-motion)}
+.app-shell .task-center-view .harmony-filter-segment>button.is-active,
+.app-shell .task-center-view .task-center-view-switch button[aria-pressed=true],
+.app-shell .personal-settings .personal-usage-period button[aria-pressed=true]{color:var(--primary);border:0;background:transparent;box-shadow:none}
+.app-shell .task-center-view .harmony-filter-segment>button:hover,.app-shell .personal-settings .personal-usage-period button:hover{color:var(--primary)}
+.app-shell .task-center-view .harmony-filter-segment>button span{display:inline-flex;justify-content:center;align-items:center;min-width:20px;height:19px;padding:0 5px;line-height:1;border-radius:6px;font-size:10px;font-variant-numeric:tabular-nums;background:color-mix(in srgb,var(--muted) 9%,transparent);color:inherit}
+.app-shell .task-center-view .harmony-filter-segment>button.is-active span{background:var(--primary-soft)}
+.app-shell .task-center-view .task-center-list[data-view=grid]{animation:harmony-grid-in 180ms var(--harmony-ease) both}
+.app-shell .task-center-view .task-center-list[data-view=list]{animation:harmony-list-in 180ms var(--harmony-ease) both}
+@keyframes harmony-grid-in{from{opacity:.72;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
+@keyframes harmony-list-in{from{opacity:.72;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
+.app-shell .task-center-view .task-center-list.is-grid .task-center-card__info{min-height:77px;gap:5px;padding:10px;align-content:start}
+.app-shell .task-center-view .task-center-card__statusline{row-gap:4px;column-gap:5px}
+.app-shell .task-center-view .task-center-card__edit-state{max-width:100%;white-space:normal}
+.app-shell .task-center-view .task-center-card__cover:focus-visible,.app-shell .task-center-view .task-center-card__info:focus-visible{outline-color:var(--primary)}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview__media{background:var(--surface-soft);box-shadow:none}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview__status{padding:14px 16px;border-radius:14px;border:1px solid var(--line);background:var(--surface);align-self:stretch}
+.app-shell .production-workspace.task-layout-a .allwe-detail-overview__action{min-height:36px;gap:6px}
+.app-shell .production-workspace.task-layout-a .allwe-detail-advanced{background:var(--surface);box-shadow:none}
+.app-shell .production-workspace.task-layout-a .task-a-disclosure{box-shadow:none}
+.app-shell .production-workspace.task-layout-a .task-a-disclosure>summary{gap:8px}
+.app-shell .production-workspace.task-layout-a .task-a-disclosure__toggle{display:none}
+.app-shell .production-workspace.task-layout-a .task-a-disclosure>summary>svg:first-child{transition:transform 240ms var(--harmony-ease),color 180ms ease}
+.app-shell .production-workspace.task-layout-a .task-a-disclosure[open]>summary>svg:first-child{transform:rotate(90deg);color:var(--primary)}
+.app-shell .personal-settings .personal-settings-disclosure>summary{padding:11px 0;min-height:42px}
+.app-shell .personal-settings .personal-settings-disclosure[open]>summary>svg{transform:rotate(180deg);color:var(--primary)}
+.app-shell .personal-settings .prompt-confirmation-control:has(input:not(:disabled)) .prompt-confirmation-state{display:none}
+.app-shell .personal-settings .prompt-confirmation-feedback:empty{display:none}
+.app-shell .personal-settings .settings-switch{width:42px;height:24px}
+.app-shell .personal-settings .settings-switch>span{border-radius:999px;background:var(--line-strong);border-color:transparent;transition:background 200ms var(--harmony-ease),box-shadow 200ms ease}
+.app-shell .personal-settings .settings-switch>span::before{top:2px;left:2px;width:18px;height:18px;box-shadow:0 1px 4px rgba(15,23,42,.16);transition:transform 260ms var(--harmony-ease)}
+.app-shell .personal-settings .settings-switch input:checked+span{background:var(--primary);border-color:var(--primary)}
+.app-shell .personal-settings .settings-switch input:checked+span::before{transform:translateX(18px)}
+.app-shell .personal-settings .settings-switch:has(input:not(:disabled)):hover>span{box-shadow:0 0 0 4px var(--primary-soft)}
+.app-shell .personal-settings .settings-switch:has(input:not(:disabled)):active>span::before{scale:1.08 .96}
+.app-shell .personal-settings .personal-usage-dates{animation:harmony-content-in 200ms var(--harmony-ease) both}
+.app-shell .personal-settings .personal-usage-metrics>div{transition:background 180ms ease,border-color 180ms ease}
+/* Animate intrinsic disclosure height in both directions, preserving native keyboard behavior. */
+@supports (interpolate-size:allow-keywords) and selector(details::details-content){
+ .app-shell :is(.production-workspace.task-layout-a,.personal-settings,.task-center-view) :is(.task-a-disclosure,.allwe-detail-advanced,.personal-settings-disclosure,.task-center-history){interpolate-size:allow-keywords}
+ .app-shell :is(.production-workspace.task-layout-a,.personal-settings,.task-center-view) :is(.task-a-disclosure,.allwe-detail-advanced,.personal-settings-disclosure,.task-center-history)::details-content{block-size:0;opacity:0;overflow:clip;transition:block-size 260ms cubic-bezier(.22,1,.36,1),opacity 170ms ease,content-visibility 260ms allow-discrete}
+ .app-shell :is(.production-workspace.task-layout-a,.personal-settings,.task-center-view) :is(.task-a-disclosure,.allwe-detail-advanced,.personal-settings-disclosure,.task-center-history)[open]::details-content{block-size:auto;opacity:1}
+ .app-shell :is(.production-workspace.task-layout-a,.personal-settings,.task-center-view) :is(.task-a-disclosure,.allwe-detail-advanced,.personal-settings-disclosure,.task-center-history)[open]>:not(summary){animation:none}
+}
+@supports (appearance:base-select) and selector(select::picker(select)){
+ .app-shell :is(.production-workspace.task-layout-a,.personal-settings,.task-center-view) select{appearance:base-select;min-width:0;align-items:center;gap:6px;min-height:38px;border-radius:10px;border:1px solid var(--line);background:var(--surface-soft);color:var(--text);font-size:12px}
+ .app-shell :is(.production-workspace.task-layout-a,.personal-settings,.task-center-view) select::picker(select){appearance:base-select;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:5px;margin:5px 0;box-shadow:0 12px 36px rgba(24,35,53,.14);max-height:300px;overflow:auto;opacity:0;transform:translateY(-4px);transition:opacity 180ms ease,transform 220ms cubic-bezier(.22,1,.36,1),display 220ms allow-discrete,overlay 220ms allow-discrete}
+ .app-shell :is(.production-workspace.task-layout-a,.personal-settings,.task-center-view) select:open::picker(select){opacity:1;transform:translateY(0)}
+ @starting-style{.app-shell :is(.production-workspace.task-layout-a,.personal-settings,.task-center-view) select:open::picker(select){opacity:0;transform:translateY(-4px)}}
+ .app-shell :is(.production-workspace.task-layout-a,.personal-settings,.task-center-view) select option{min-height:34px;padding:7px 10px;border-radius:8px;font-size:12px}
+ .app-shell :is(.production-workspace.task-layout-a,.personal-settings,.task-center-view) select option:checked{color:var(--primary);background:var(--primary-soft)}
+ .app-shell :is(.production-workspace.task-layout-a,.personal-settings,.task-center-view) select option:hover{background:var(--surface-soft);color:var(--primary)}
+}
+@media(max-width:760px){.app-shell .task-center-view .harmony-filter-segment{width:100%;grid-template-columns:repeat(4,minmax(0,1fr))}.app-shell .task-center-view .harmony-filter-segment>button{padding:0 4px;font-size:11px;gap:3px}}
+@media(prefers-reduced-motion:reduce){
+ .app-shell :is(.task-center-view,.production-workspace.task-layout-a,.personal-settings) :is(.harmony-segment-thumb,.task-center-list,.settings-switch>span,.settings-switch>span::before,.personal-usage-dates){animation:none!important;transition:none!important}
+ @supports selector(details::details-content){.app-shell :is(.task-center-view,.production-workspace.task-layout-a,.personal-settings) details::details-content{transition:none!important}}
+ @supports selector(select::picker(select)){.app-shell :is(.task-center-view,.production-workspace.task-layout-a,.personal-settings) select::picker(select){transition:none!important}}
+}

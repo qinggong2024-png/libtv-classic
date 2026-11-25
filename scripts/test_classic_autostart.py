@@ -85,7 +85,7 @@ def test_manual_stop_prevents_startup_retry(monkeypatch):
 
 def record_stack():
     state = {
-        "apiPort": 8002, "webPort": 5176, "lanIp": "192.168.30.126",
+        "apiPort": 8002, "webPort": 5176, "lanIp": "10.12.34.56",
         "generationAuthorized": False,
         "processes": [
             {"name": "api", "pid": 100, "created": 1},

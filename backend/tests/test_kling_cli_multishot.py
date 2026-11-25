@@ -53,6 +53,10 @@ def _capture_runner(calls: list[list[str]], identity: dict[str, Any]):
                 {"name": "who_am_i", "description": "", "inputSchema": {}},
                 {"name": "omni_ref_video", "description": "", "inputSchema": {}},
             ]}
+        elif command == "file_upload":
+            # Fake transport must implement the existing upload-before-submit contract.
+            # Distinct local filenames receive distinct synthetic HTTPS URLs.
+            body = {"url": "https://example.invalid/" + Path(arguments[-1]).name}
         elif command == "omni_ref_video":
             body = {"generationId": "generated-once", "status": "submitted", "creditsConsumed": 60}
         else:

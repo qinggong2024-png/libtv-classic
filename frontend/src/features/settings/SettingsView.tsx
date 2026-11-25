@@ -4,7 +4,7 @@ import './personalSettings.css'
 import { type SystemStatus } from '../../types'
 import { removeStorage, writeStorage } from '../../safeStorage'
 import { BrowserNotificationSetting } from './BrowserNotificationSetting'
-import { PersonalPasswordSetting, PersonalPromptConfirmationSetting, PersonalVideoLearningSetting } from './PersonalSettings'
+import { PersonalPasswordSetting, PersonalVideoLearningSetting } from './PersonalSettings'
 import { AccountUsagePanel } from './AccountUsagePanel'
 
 export function SettingsView({
@@ -36,7 +36,6 @@ export function SettingsView({
       <aside className="personal-settings-sidebar">
         <div className="settings-section personal-settings-group">
           <h2>工作偏好</h2>
-          <PersonalPromptConfirmationSetting />
           <BrowserNotificationSetting enabled={browserNotificationsEnabled} permission={browserNotificationPermission} onEnable={onEnableBrowserNotifications} onDisable={onDisableBrowserNotifications} />
           <details className="personal-settings-disclosure"><summary>智能学习 <ChevronDown size={16} aria-hidden="true" /></summary><PersonalVideoLearningSetting /></details>
         </div>

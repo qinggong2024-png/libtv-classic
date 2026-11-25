@@ -341,3 +341,80 @@ async def test_admin_video_trace_reads_only_provider_matched_wire_snapshot(
     prepared = await client.get(f"{BASE}/{video_id}/trace", headers=actor(ids,"root"))
     assert prepared.status_code == 200
     assert prepared.json()["klingWireAudit"] is None
+
+
+async def test_admin_deep_trace_uploaded_depth_and_recreated_video(account_app, tmp_path, monkeypatch):
+    app, client, ids = account_app
+    now = datetime.now(UTC)
+    video = tmp_path / "depth.mp4"
+    video.write_bytes(b"existing-depth")
+    localize = AsyncMock(return_value=video)
+    monkeypatch.setattr(app.state.object_store, "localize", localize)
+    async with app.state.database.session_factory() as session:
+        config = {"generationMode": "deep_video", "deepVideoMode": "recreate",
+                  "deepVideoPipeline": "depth-input-v1", "referenceVideoType": "depth",
+                  "model": "bytedance/seedance-2.0/video-edit"}
+        task = ParentTask(user_id=ids["member"], client_task_id="deep-admin-trace",
+            title="深度复刻", asset_count=1, phase=ParentTaskPhase.DELIVERABLE,
+            workflow_kind="DEEP_VIDEO", settings_json=config)
+        session.add(task)
+        await session.flush()
+        source = Asset(parent_task_id=task.id, order_no=0, role="REFERENCE_VIDEO",
+            source_type="REFERENCE_VIDEO", original_filename="depth.mp4", sha256="a"*64,
+            mime_type="video/mp4", size_bytes=14, width=1080, height=1920, object_key="safe-upload/depth.mp4", used_for_generation=True)
+        variant = GenerationVariant(parent_task_id=task.id, variant_type=VariantKind.STABLE,
+            variant_index=1, generation_config_json=config, confirmed_at=now)
+        session.add_all([source, variant])
+        await session.flush()
+        attempt = GenerationAttempt(variant_id=variant.id, status=AttemptStatus.SUCCEEDED,
+            provider="wavespeed_video", provider_model=config["model"], submitted_at=now, completed_at=now)
+        session.add(attempt)
+        await session.flush()
+        command = GenerationCommand(attempt_id=attempt.id, command_manifest_json={
+            "depthPipeline": {"version": "depth-input-v1", "stage": "replacement",
+            "depthObjectKey": source.object_key, "replacementSubmittedAt": now.isoformat()}})
+        artifact = DownloadArtifact(attempt_id=attempt.id, status=DownloadStatus.READY,
+            object_key="safe-output/recreated.mp4", duration_seconds=10)
+        session.add_all([command, artifact])
+        await session.commit()
+        aid = artifact.id
+    root = actor(ids, "root")
+    response = await client.get(f"{BASE}/{aid}/trace", headers=root)
+    assert response.status_code == 200, response.text
+    trace = response.json()
+    assert trace["workflowKind"] == "DEEP_VIDEO"
+    assert trace["deepVideo"]["media"] == ["depth"]
+    assert trace["deepVideo"]["model"] == config["model"]
+    assert trace["klingWireAudit"] is None
+    assert not any(e["source"] == "depth_pipeline.depthCompletedAt" for e in trace["timeline"])
+    assert source.object_key not in response.text
+    path = f"{BASE}/{aid}/deep-media/depth"
+    assert (await client.get(path, headers=actor(ids, "member"))).status_code == 403
+    assert (await client.get(path)).status_code == 401
+    assert (await client.get(f"{BASE}/{uuid.uuid4()}/deep-media/depth", headers=root)).status_code == 404
+    assert (await client.get(f"{BASE}/{aid}/deep-media/source", headers=root)).status_code == 404
+    result = await client.get(path, headers=root)
+    assert result.status_code == 200 and result.content == video.read_bytes()
+    assert localize.await_args.args[0] == source.object_key
+    gallery = await client.get("/api/v1/admin/video-tasks", headers=root, params={"search":"深度复刻"})
+    assert gallery.status_code == 200, gallery.text
+    assert gallery.json()["items"][0]["clips"][0]["workflowKind"] == "DEEP_VIDEO"
+    assert gallery.json()["items"][0]["clips"][0]["model"] == config["model"]
+
+
+def test_depth_first_media_requires_exact_owned_intermediate():
+    from libtv_agent.services.admin_video_trace import _deep_media
+    from libtv_agent.config import get_settings
+    task = SimpleNamespace(id=uuid.uuid4(), user_id=uuid.uuid4(), workflow_kind="DEEP_VIDEO")
+    attempt = SimpleNamespace(id=uuid.uuid4())
+    expected = f"{get_settings().object_store_prefix}/users/{task.user_id}/intermediates/{task.id}/{attempt.id}/depth.mp4"
+    config = {"deepVideoMode":"recreate", "deepVideoPipeline":"depth-first-v1", "referenceVideoType":"original"}
+    source = SimpleNamespace(parent_task_id=task.id, role="REFERENCE_VIDEO", deleted_at=None,
+        used_for_generation=True, mime_type="video/mp4", object_key="source.mp4")
+    state = {"version":"depth-first-v1", "depthCompletedAt":"2026-11-25T00:00:00Z", "depthObjectKey":expected}
+    command = SimpleNamespace(command_manifest_json={"depthPipeline":state})
+    assert _deep_media(task, attempt, config, [source], command) == {
+        "source":("source.mp4","video/mp4"), "depth":(expected,"video/mp4")}
+    state["depthObjectKey"] = "other-task/depth.mp4"
+    assert "depth" not in _deep_media(task, attempt, config, [source], command)
+    assert _deep_media(task, attempt, {"deepVideoMode":"depth"}, [source], command) == {"source":("source.mp4","video/mp4")}

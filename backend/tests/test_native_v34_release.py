@@ -268,7 +268,7 @@ def test_lan_boot_enables_feature_and_keeps_i_as_rollback(monkeypatch, tmp_path)
     monkeypatch.setattr(classic_lan, "SECRET_FILE", secret)
     monkeypatch.setattr(classic_lan, "generation_authorized", lambda: True)
     monkeypatch.setattr(classic_lan, "cutflow_environment", lambda _: {})
-    env = classic_lan.lan_environment(8002, 5176, "192.168.30.126")
+    env = classic_lan.lan_environment(8002, 5176, "10.12.34.56")
     assert env["AI_OOTD_V1_ENABLED"] == "true"
     assert env["AI_DIRECTOR_V34_ENABLED"] == "false"
     assert env["FASTCUT_UGC_PACING_V1_ENABLED"] == "false"

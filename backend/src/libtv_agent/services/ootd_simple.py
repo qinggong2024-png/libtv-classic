@@ -17,6 +17,7 @@ from libtv_agent.config import Settings
 from libtv_agent.services.ai_creative_planner import (
     CompiledCreativeVariant,
     CreativePlannerError,
+    classify_planner_upstream_error,
 )
 from libtv_agent.services.ootd_cross_scene import (
     CROSS_SCENE_PROFILE,
@@ -28,6 +29,11 @@ from libtv_agent.services.ootd_direction import (
     FOCUS_LABELS,
     INTENSITY_GUIDANCE,
     use_product_evidence,
+)
+from libtv_agent.services.ootd_director_memory import (
+    MemoryDestination,
+    memory_hint_text,
+    runtime_memory,
 )
 from libtv_agent.services.ootd_dynamic import (
     DYNAMIC_OOTD_PROFILE,
@@ -274,6 +280,8 @@ async def plan_simple_ootd(
     display_focus: str = "overall",
     video_type: str = "ootd",
     director_mode: str = "cross_scene_v2",
+    brand_id: str = "",
+    garment_category: str | None = None,
     brand_tone: str = "",
     action_intensity: str = "standard",
     recent_prompts: tuple[str, ...] = (),
@@ -414,6 +422,15 @@ async def plan_simple_ootd(
             "text": " ".join(preferences) + " Use visible reference evidence; "
             "explicit user instructions take precedence.",
         })
+    # Print-agnostic memory; raw product graphics remain transient images.
+    if video_type == "ootd":
+        memory = runtime_memory(
+            brand=brand_id, destination=MemoryDestination.SOL,
+            director_mode=director_mode, garment_category=garment_category,
+        )
+        memory_text = memory_hint_text(memory, destination=MemoryDestination.SOL)
+        if memory_text:
+            content.append({"type": "input_text", "text": memory_text})
     results: list[CompiledCreativeVariant] = []
     previous: list[str] = []
     for index in range(variant_count):
@@ -448,9 +465,15 @@ async def plan_simple_ootd(
                 stage="first_request", variant=index + 1,
             )
         except Exception as exc:
+            failure = classify_planner_upstream_error(exc)
             raise CreativePlannerError(
                 "Sol OOTD request failed; no Kling task submitted",
-                code="AI_CREATIVE_PROVIDER_ERROR",
+                code=(
+                    "AI_CREATIVE_PROVIDER_ERROR"
+                    if failure.code == "AI_CREATIVE_RESPONSE_INVALID"
+                    else failure.code
+                ),
+                upstream_status=failure.upstream_status,
                 request_attempts=index + 1,
             ) from exc
         prompt = (getattr(response, "output_text", "") or "").strip()

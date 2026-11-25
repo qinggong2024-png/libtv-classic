@@ -77,6 +77,77 @@ def matches_loaded(settings, data: dict) -> bool:
     )
 
 
+HANDOFF = "runner-online-handoff.json"
+HANDOFF_QUEUE_STATUS = "QUEUING_DURING_HANDOFF"
+MAX_HANDOFF_SECONDS = 180
+
+
+def effective_runner_revision(runtime: Path, data: dict) -> str | None:
+    """V1 config remains immutable; the validated launcher pin selects code.
+
+    Missing pins retain the initial V1 contract. A malformed present pin
+    must fail closed. The supervisor verifies the actual source hash.
+    """
+    try:
+        pin = json.loads((runtime / "worker-runner-pin.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return data["runnerSourceRevision"]
+    if (not isinstance(pin, dict) or set(pin) != {"version", "releaseRoot", "sourceRevision"}
+            or type(pin["version"]) is not int or pin["version"] != 1
+            or not isinstance(pin["releaseRoot"], str) or not Path(pin["releaseRoot"]).is_absolute()
+            or not _is_revision(pin["sourceRevision"])):
+        raise ValueError("invalid Classic Runner source pin")
+    return pin["sourceRevision"]
+
+
+def _is_revision(value) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(
+        char in "0123456789abcdef" for char in value
+    )
+
+
+def handoff_queue_ready(runtime: Path, data: dict) -> bool:
+    """Authorize durable enqueue only, not actual provider execution.
+
+    The operator proof is short-lived and tied to one exact old checkpoint
+    and the approved new pin. An unrelated failure remains unavailable.
+    """
+    try:
+        marker = json.loads((runtime / HANDOFF).read_text(encoding="utf-8"))
+        checkpoint = json.loads(
+            (runtime / "checkpoint-runner-status.json").read_text(encoding="utf-8")
+        )
+        request = json.loads(
+            (runtime / "checkpoint-runner-request.json").read_text(encoding="utf-8")
+        )
+        now = time.time()
+        if (not isinstance(marker, dict)
+                or set(marker) != {"version", "configRevision", "fromRevision", "toRevision",
+                                   "checkpoint", "createdAt", "expiresAt"}
+                or type(marker["version"]) is not int or marker["version"] != 1
+                or marker["configRevision"] != revision(data)
+                or not _is_revision(marker["fromRevision"])
+                or not _is_revision(marker["toRevision"])
+                or marker["fromRevision"] == marker["toRevision"]
+                or not (marker["createdAt"] <= now <= marker["expiresAt"]
+                        <= marker["createdAt"] + MAX_HANDOFF_SECONDS)
+                or request != marker["checkpoint"]
+                or request["kind"] != "runner"
+                or request["sourceRevision"] != marker["fromRevision"]
+                or checkpoint["kind"] != "runner"):
+            return False
+        pin = effective_runner_revision(runtime, data)
+        old_identity = {k: v for k, v in checkpoint.items() if k != "state"}
+        if old_identity == request:
+            return (checkpoint["state"] in ("RUNNING", "DRAINING", "DRAINED")
+                    and (pin == marker["fromRevision"]
+                         or (pin == marker["toRevision"] and checkpoint["state"] == "DRAINED")))
+        return (pin == marker["toRevision"]
+                and checkpoint["sourceRevision"] == pin and checkpoint["state"] == "RUNNING")
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 def runner_ready(runtime: Path, data: dict) -> bool:
     import psutil
 
@@ -90,7 +161,7 @@ def runner_ready(runtime: Path, data: dict) -> bool:
             receipt["version"] != 1
             or receipt["ready"] is not True
             or receipt["configRevision"] != revision(data)
-            or receipt["sourceRevision"] != data["runnerSourceRevision"]
+            or receipt["sourceRevision"] != effective_runner_revision(runtime, data)
             or receipt["analysis"] is not data["analysis"]
             or receipt["confirmation"] is not data["confirmation"]
             or receipt["analysisConcurrency"] != data["analysisConcurrency"]
@@ -132,15 +203,21 @@ def acceptance_status(settings, feature: str) -> str:
             return "CONFIG_MISMATCH"
         if not data[feature]:
             return "DISABLED"
-        return "READY" if runner_ready(path.parent, data) else "RUNNER_NOT_READY"
+        if runner_ready(path.parent, data):
+            return "READY"
+        if handoff_queue_ready(path.parent, data):
+            return HANDOFF_QUEUE_STATUS
+        return "RUNNER_NOT_READY"
     except (OSError, ValueError, KeyError, TypeError):
         return "CONFIG_INVALID"
 
 
-def require_acceptance(settings, feature: str) -> None:
+def require_acceptance(settings, feature: str, *, allow_handoff_queue: bool = False) -> None:
     from fastapi import HTTPException
 
     result = acceptance_status(settings, feature)
+    if result == HANDOFF_QUEUE_STATUS and allow_handoff_queue:
+        return
     if result not in ("UNMANAGED", "DISABLED", "READY"):
         raise HTTPException(
             status_code=503,

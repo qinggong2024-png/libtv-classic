@@ -59,14 +59,16 @@ describe('经典版自适应任务详情', () => {
     const html = renderToStaticMarkup(<RecordsView tasks={[task]} hasMore={false} loadingMore={false} lastSyncedAt={null} onLoadMore={noop} onOpen={noop} onPlay={noop} onRemix={noop} onFeedbackChanged={noop} onCreateTask={noop} multiCutReady={false} />)
     expect(html).toContain('任务中心')
     expect(html.match(/class="task-center-card"/g)).toHaveLength(1)
-    expect(html).toContain('原片 1/1')
+    expect(html).toContain('1/1 原片')
     expect(html).not.toContain('最近生成原片')
   })
 
   it('原片完成且无剪辑回执时，只显示一个剪辑状态区而非重复进度', () => {
     const html = renderDetail(task)
-    expect(html).toContain('aria-label="当前剪辑状态"')
-    expect(html).toContain('还没有送剪')
+    expect(html).not.toContain('aria-label="当前剪辑状态"')
+    expect(html).toContain('原片已就绪 · 待送剪')
+    expect(html).toContain('选择原片送剪')
+    expect(html.match(/原片已就绪 · 待送剪/g)).toHaveLength(1)
     expect(html).toContain('aria-label="剪辑与成片"')
     expect(html).toContain('role="tablist"')
     expect(html).toContain('参考素材与生成设置')
@@ -85,9 +87,10 @@ describe('经典版自适应任务详情', () => {
       variants: [{ ...variant, generationStatus: 'RUNNING', downloadArtifactId: null }],
     } as unknown as Task
     const html = renderDetail(generating, true)
-    expect(html).toContain('aria-label="当前制作进度"')
+    expect(html).toContain('aria-label="生产流程"')
     expect(html).toContain('正在生成视频')
-    expect(html).toContain('原片已就绪 0/1')
+    expect(html).toContain('生成原片')
+    expect(html).toContain('<small>0 / 1</small>')
     expect(html).toContain('<strong>制作记录</strong>')
     expect(html).not.toContain('workspace-stages')
     expect(html).not.toContain('task-flow-journey')
@@ -107,10 +110,23 @@ describe('经典版自适应任务详情', () => {
     expect(html).not.toContain('task-flow-journey')
   })
 
+  it('已阻止重复风控的任务不再提供直接原素材重做按钮', () => {
+    const blocked = { ...task, phase: 'ACTION_REQUIRED',
+      phaseReasonCode: 'KLING_PRIOR_RISK_CONTROL_REJECTED',
+      variants: [{ ...variant, generationStatus: 'FAILED', downloadArtifactId: null }],
+      actionCapabilities: { canRegenerate: true, canCancel: false },
+    } as unknown as Task
+    const html = renderDetail(blocked, true)
+    expect(html).toContain('已阻止重复风控提交')
+    expect(html).toContain('至少两次被可灵审核拒绝')
+    expect(html).not.toContain('使用原素材重新制作')
+    expect(html).not.toContain('使用相同素材再制作')
+  })
+
   it('关闭自动送剪的任务只提示主动选择原片，不误认为已提交', () => {
     const manual = { ...task, settings: { ...task.settings, autoSubmitToCutflow: false } } as Task
     const html = renderDetail(manual)
-    expect(html).toContain('等待你送剪')
+    expect(html).toContain('原片已就绪 · 待送剪')
     expect(html).toContain('预览原片后选择送剪')
     expect(html).not.toContain('task-flow-journey')
   })
@@ -166,14 +182,16 @@ describe('经典版自适应任务详情', () => {
     expect(singleHtml).toContain('task-direct-cut-button')
   })
 
-  it('进度默认可见，参数与制作记录独立收起，并保留素材和历史信息', () => {
+  it('制作耗时单层收起，参数与制作记录独立收起，并保留素材和历史信息', () => {
     const example = { ...task, variants: [{ ...variant, promptText: 'Keep garment print exact.' }] } as Task
     const html = renderDetail(example, true)
     const disclosureStart = html.indexOf('<details class="task-a-disclosure"')
-    const progressStart = html.indexOf('class="task-timing task-timing--condensed"')
+    const progressStart = html.indexOf('class="task-timing task-timing--condensed task-timing-breakdown"')
     expect(progressStart).toBeGreaterThanOrEqual(0)
     expect(progressStart).toBeLessThan(disclosureStart)
-    expect(html).toContain('耗时明细 · 处理与等待')
+    expect(html).toContain('制作耗时')
+    expect(html.slice(progressStart, disclosureStart).match(/<details\b/g) ?? []).toHaveLength(0)
+    expect(html).not.toContain('task-timing-breakdown" open')
     const section = html.slice(disclosureStart)
     expect(section).toContain('<strong>生成参数</strong>')
     expect(section).toContain('<strong>制作记录</strong>')
@@ -190,13 +208,34 @@ describe('经典版自适应任务详情', () => {
     expect(section.indexOf('本次提示词与历史方案')).toBeLessThan(section.indexOf('<strong>制作记录</strong>'))
   })
 
+  it('提示词在视频生成中和失败后均可查看，无需等待生成完成', () => {
+    const generating = { ...task, phase: 'GENERATING',
+      variants: [{ ...variant, generationStatus: 'RUNNING', downloadArtifactId: null, promptText: 'EARLY_SAVED_PROMPT' }],
+    } as unknown as Task
+    const generatingHtml = renderDetail(generating, true)
+    expect(generatingHtml).toContain('EARLY_SAVED_PROMPT')
+    expect(generatingHtml).toContain('1 条提示词已保存')
+    expect(generatingHtml).toContain('id="task-generation-parameters"')
+    expect(generatingHtml).not.toContain('task-a-disclosure" id="task-generation-parameters" open=')
+
+    const failed = { ...task, phase: 'ACTION_REQUIRED',
+      variants: [{ ...variant, generationStatus: 'FAILED', downloadArtifactId: null, promptText: 'REJECTED_TASK_PROMPT' }],
+      actionCapabilities: { canRegenerate: true, canCancel: false },
+    } as unknown as Task
+    const failedHtml = renderDetail(failed, true)
+    expect(failedHtml).toContain('REJECTED_TASK_PROMPT')
+    expect(failedHtml).toContain('查看已保存的')
+    expect(failedHtml).toContain('1 条提示词')
+  })
+
   it('自动送剪设置不代表剪辑端已经有接单回执', () => {
     const automatic = { ...task, settings: { ...task.settings, autoSubmitToCutflow: true } } as Task
     const html = renderDetail(automatic)
-    expect(html).toContain('等待创建送剪任务')
-    expect(html).toContain('task-adaptive-cut--neutral')
-    expect(html).not.toContain('task-adaptive-cut--attention')
-    expect(html).toContain('刷新状态')
+    expect(html).toContain('等待自动送剪')
+    expect(html).not.toContain('task-adaptive-cut')
+    expect(html).toContain('allwe-detail-overview__status')
+    expect(html).not.toContain('CUT 已接单，排队中')
+    expect(html).toContain('无需操作')
     expect(html).not.toContain('已送剪成功')
     expect(html).not.toContain('task-flow-journey')
   })

@@ -1,0 +1,34 @@
+/* V2.3: fixed-size cards. Actions live in the row/cover, never in a second row. */
+.app-shell .task-center-list .task-center-card { position:relative; overflow:visible; isolation:isolate; }
+.app-shell .task-center-list .task-center-card:has(.task-center-card__more[open]) { z-index:20; isolation:auto; }
+.app-shell .task-center-list:not(.is-grid) .task-center-card__main { min-height:0; gap:13px; padding:7px 12px; }
+.app-shell .task-center-list:not(.is-grid) .task-center-card__cover { width:56px; aspect-ratio:9 / 16; }
+.app-shell .task-center-card__info { min-width:0; }
+.app-shell .task-center-card__controls { display:flex; align-items:center; justify-content:flex-end; flex:none; gap:7px; margin-left:auto; }
+.app-shell .task-center-card__pick { display:inline-flex; justify-content:center; align-items:center; gap:6px; min-width:64px; height:32px; padding:0 10px; border:1px solid #c5e3ec; border-radius:9px; background:#f0f9fc; color:#078caa; font-size:11px; font-weight:730; white-space:nowrap; cursor:pointer; transition:border-color .17s ease, background .17s ease, transform .17s ease; }
+.app-shell .task-center-card__pick:hover { border-color:#88d2e5; background:#e0f4fa; transform:translateY(-1px); }
+.app-shell .task-center-card__more { position:relative; }
+.app-shell .task-center-card__more > summary { display:grid; place-items:center; width:32px; height:32px; padding:0; border:1px solid #e0ebf0; border-radius:9px; background:#fff; color:#7793a0; cursor:pointer; list-style:none; transition:border-color .17s ease, background .17s ease; }
+.app-shell .task-center-card__more > summary::-webkit-details-marker { display:none; }
+.app-shell .task-center-card__more > summary:hover,.app-shell .task-center-card__more[open] > summary { border-color:#b2d7e4; background:#f0f9fc; color:#248ba5; }
+.app-shell .task-center-card__menu { position:absolute; right:0; top:calc(100% + 5px); z-index:100; min-width:128px; padding:5px; border:1px solid #dfeaf0; border-radius:10px; background:#fff; box-shadow:0 12px 30px rgba(20,58,76,.18); animation:allwe-modal-enter .16s cubic-bezier(.2,.8,.2,1) both; }
+.app-shell .task-center-card__menu button { display:block; width:100%; min-height:32px; padding:6px 9px; border:0; border-radius:6px; background:transparent; color:#4c6472; text-align:left; white-space:nowrap; font-size:11px; cursor:pointer; }
+.app-shell .task-center-card__menu button:hover:not(:disabled) { background:#edf6f9; color:#007a9e; }
+.app-shell .task-center-card__menu button:disabled { cursor:wait; opacity:.55; }
+.app-shell .task-center-card__muted-indicator { color:#8f9faa; font-size:10px; }
+.app-shell .task-center-list.is-grid { grid-template-columns:repeat(6,minmax(0,1fr)); align-items:start; gap:14px; }
+.app-shell .task-center-list.is-grid .task-center-card { width:100%; min-width:0; min-height:0; border-radius:14px; }
+.app-shell .task-center-list.is-grid .task-center-card__main { position:relative; display:flex; flex-direction:column; align-items:stretch; gap:0; min-height:0; padding:0; }
+.app-shell .task-center-list.is-grid .task-center-card__cover { width:100%; aspect-ratio:9 / 16; border-radius:13px 13px 0 0; }
+.app-shell .task-center-list.is-grid .task-center-card__info { width:100%; height:105px; min-height:105px; max-height:105px; box-sizing:border-box; padding:9px 10px; gap:5px; overflow:hidden; border-radius:0 0 13px 13px; }
+.app-shell .task-center-list.is-grid .task-center-card__statusline { gap:5px; max-height:44px; overflow:hidden; }
+.app-shell .task-center-list.is-grid .task-center-card__muted-indicator { display:none; }
+.app-shell .task-center-list.is-grid .task-center-card__controls { position:absolute; top:7px; right:7px; z-index:5; display:flex; flex-direction:row-reverse; align-items:center; gap:2px; margin:0; padding:2px; border:1px solid rgba(255,255,255,.82); border-radius:10px; background:rgba(255,255,255,.93); box-shadow:0 3px 12px rgba(15,52,71,.15); }
+.app-shell .task-center-list.is-grid .task-center-card__pick { width:29px; min-width:29px; height:29px; padding:0; border:0; background:transparent; box-shadow:none; }
+.app-shell .task-center-list.is-grid .task-center-card__pick span { display:none; }
+.app-shell .task-center-list.is-grid .task-center-card__more > summary { width:29px; height:29px; background:transparent; border:0; box-shadow:none; }
+.app-shell .task-center-list.is-grid .task-center-card__reason { position:absolute; bottom:111px; left:6px; right:6px; max-height:41px; overflow:hidden; margin:0; padding:5px 6px; border-radius:7px; background:rgba(255,244,240,.96); color:#ab594a; font-size:10px; line-height:1.4; }
+@media (max-width:1200px) { .app-shell .task-center-list.is-grid { grid-template-columns:repeat(5,minmax(0,1fr)); } }
+@media (max-width:1000px) { .app-shell .task-center-list.is-grid { grid-template-columns:repeat(4,minmax(0,1fr)); } }
+@media (max-width:650px) { .app-shell .task-center-list.is-grid { grid-template-columns:repeat(auto-fill,minmax(135px,1fr)); gap:11px; } .app-shell .task-center-list.is-grid .task-center-card { width:100%; } .app-shell .task-center-list:not(.is-grid) .task-center-card__cover { width:52px; } .app-shell .task-center-list:not(.is-grid) .task-center-card__main { gap:9px; padding:7px 9px; } .app-shell .task-center-card__pick { min-width:32px; padding:0 7px; } .app-shell .task-center-list:not(.is-grid) .task-center-card__pick span { display:none; } }
+@media (prefers-reduced-motion:reduce) { .app-shell .task-center-card__menu,.app-shell .task-center-card__pick,.app-shell .task-center-card__more > summary { animation:none; transition:none; } }

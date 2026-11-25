@@ -98,13 +98,19 @@ async def download_artifact(
         raise HTTPException(
             status.HTTP_410_GONE, "server copy has expired; use remote restore"
         ) from exc
-    if download and not artifact.depth:
-        await record_download(session, user_id=actor.id, action=ORIGINAL_DOWNLOAD, media_id=str(artifact.id))
     suffix = "depth" if artifact.depth else variant.variant_type.value.lower()
+    filename = f"{task.title}-{suffix}.mp4"
+    if download and not artifact.depth:
+        user_id, media_id = actor.id, str(artifact.id)
+        await session.commit()  # release read transaction before optional metadata
+        async with request.app.state.database.download_metadata_session_factory() as metadata:
+            await record_download(
+                metadata, user_id=user_id, action=ORIGINAL_DOWNLOAD, media_id=media_id,
+            )
     return FileResponse(
         local,
         media_type="video/mp4",
-        filename=f"{task.title}-{suffix}.mp4",
+        filename=filename,
     )
 
 

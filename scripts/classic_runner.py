@@ -3,7 +3,7 @@
 import os
 import sys
 
-from classic_lan import ROOT, STORAGE, generation_authorized, lan_environment
+from classic_lan import ROOT, STORAGE, configured_lan_ip, generation_authorized, lan_environment
 from classic_worker_lease import exclusive_classic_worker
 
 
@@ -11,7 +11,7 @@ def main() -> None:
     if not generation_authorized():
         raise SystemExit("Classic generation is not authorized; worker was not started.")
     # Only the LAN launcher may supply the exact, isolated database and storage.
-    expected = lan_environment(8002, 5176, "192.168.30.126")
+    expected = lan_environment(8002, 5176, configured_lan_ip() or "127.0.0.1")
     for key in (
         "DATABASE_URL",
         "RUNNER_ROOT",

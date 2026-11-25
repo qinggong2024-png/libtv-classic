@@ -6,10 +6,10 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from libtv_agent.domain.models import CutflowHandoff, MultiCutflowTask, ParentTask
+from libtv_agent.domain.models import Brand, CutflowHandoff, MultiCutflowTask, ParentTask, User
 from libtv_agent.services.admin_video_alerts import SEVERITY_RANK
 from libtv_agent.services.admin_video_review import list_admin_videos
 
@@ -56,6 +56,30 @@ async def list_admin_video_tasks(
     groups: dict[str, list[dict]] = defaultdict(list)
     for clip in result["items"]:
         groups[clip["taskId"]].append(clip)
+    # A task is inspectable even when no download artifact exists yet.
+    # Keep the existing recent-artifact scope and add tasks created in the window.
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    parent_query = (
+        select(ParentTask.id, ParentTask.user_id, ParentTask.title,
+               ParentTask.created_at, ParentTask.phase, ParentTask.phase_reason_code, ParentTask.workflow_kind,
+               ParentTask.analysis_started_at, ParentTask.analysis_stage,
+               User.username, Brand.name.label("brand_name"))
+        .join(User, User.id == ParentTask.user_id)
+        .outerjoin(Brand, Brand.id == User.brand_id)
+        .where(or_(ParentTask.created_at >= cutoff, ParentTask.id.in_(
+            [uuid.UUID(task_id) for task_id in groups]
+        )))
+    )
+    if brand_id is not None:
+        parent_query = parent_query.where(Brand.id == brand_id)
+    if search.strip():
+        term = f"%{search.strip()}%"
+        parent_query = parent_query.where(or_(
+            ParentTask.title.ilike(term), User.username.ilike(term), Brand.name.ilike(term),
+        ))
+    parents = {str(row.id): row for row in (await session.execute(parent_query)).all()}
+    for task_id in parents:
+        groups.setdefault(task_id, [])
     if not groups:
         return {"total": 0, "limit": limit, "offset": offset, "days": days,
                 "healthSummary": {"critical": 0, "warning": 0, "normal": 0},
@@ -64,9 +88,7 @@ async def list_admin_video_tasks(
     ids = {uuid.UUID(task_id) for task_id in groups}
     artifact_tasks = {c["artifactId"]: c["taskId"] for c in result["items"]}
     # Restrict multi-source lookups to actual owners of the matched tasks.
-    owners = set((await session.scalars(select(ParentTask.user_id).where(
-        ParentTask.id.in_(ids),
-    ))).all())
+    owners = {row.user_id for row in parents.values()}
     singles = (await session.scalars(select(CutflowHandoff).where(
         CutflowHandoff.parent_task_id.in_(ids),
     ))).all()
@@ -97,7 +119,8 @@ async def list_admin_video_tasks(
 
     tasks = []
     for task_id, all_clips in groups.items():
-        newest = max(all_clips, key=lambda v: _timestamp(v["createdAt"]))
+        parent = parents[task_id]
+        newest = max(all_clips, key=lambda v: _timestamp(v["createdAt"]), default=None)
         candidates = sorted(cut_by_task[task_id], reverse=True, key=lambda item: item[0])
         # Prefer the newest actual deliverable; a retry in progress does not
         # make a previously imported CUT video disappear.
@@ -121,12 +144,23 @@ async def list_admin_video_tasks(
         ))
         severity = min(
             (c.get("health", {}).get("severity", "normal") for c in all_clips),
-            key=lambda s: SEVERITY_RANK.get(s, 99),
+            key=lambda s: SEVERITY_RANK.get(s, 99), default="normal",
         )
+        if parent.phase == "ACTION_REQUIRED":
+            severity = "critical"
+        elif parent.phase == "PARTIALLY_DELIVERABLE" and severity == "normal":
+            severity = "warning"
         tasks.append({
-            "taskId": task_id, "title": newest["title"],
-            "username": newest["username"], "brandName": newest["brandName"],
-            "createdAt": newest["createdAt"], "clips": clips,
+            "taskId": task_id, "title": parent.title,
+            "username": parent.username, "brandName": parent.brand_name,
+            "createdAt": parent.created_at.isoformat(),
+            "latestRawAt": newest["createdAt"] if newest else None,
+            "phase": parent.phase.value,
+            "workflowKind": parent.workflow_kind,
+            "phaseReasonCode": parent.phase_reason_code,
+            "analysisStage": parent.analysis_stage,
+            "analysisStartedAt": parent.analysis_started_at.isoformat() if parent.analysis_started_at else None,
+            "clips": clips,
             "rawClipCount": len(all_clips), "severity": severity,
             "cut": deliverable[1] if deliverable else None,
             "cutStatus": current_cut[2] if current_cut else None,

@@ -46,6 +46,63 @@ def plan_api(root):
                 note="Only the installed, explicitly reviewed API pair may be switched. Existing compatibility gate still runs.")
 
 
+def promote_candidate(root: Path, candidate: Path, *, expected_main, expected_candidate, apply=False, reviewed=False):
+    """Promote only a clean, reviewed fast-forward candidate; no build or live activation."""
+    from classic_isolated_frontend import SHA40
+    root, candidate = root.resolve(), candidate.resolve()
+    if not all(isinstance(x, str) and SHA40.fullmatch(x) for x in (expected_main, expected_candidate)):
+        return blocked("FULL_CANDIDATE_AND_MAIN_PINS_REQUIRED")
+    def inspect():
+        if candidate == root or candidate.is_relative_to(root) or root.is_relative_to(candidate):
+            return blocked("CANDIDATE_NOT_ISOLATED")
+        if release.git(root, "branch", "--show-current") != "main" or not clean(root):
+            return blocked("PRODUCTION_MAIN_CHANGED_OR_DIRTY")
+        if release.git(root, "rev-parse", "HEAD") != expected_main:
+            return blocked("MAIN_CHANGED_SINCE_REVIEW")
+        if release.git(candidate, "rev-parse", "HEAD") != expected_candidate or not clean(candidate):
+            return blocked("CANDIDATE_CHANGED_OR_DIRTY")
+        if release.git(root, "rev-parse", "--path-format=absolute", "--git-common-dir") != release.git(candidate, "rev-parse", "--path-format=absolute", "--git-common-dir"):
+            return blocked("CANDIDATE_NOT_SAME_REPOSITORY")
+        try:
+            release.git(root, "merge-base", "--is-ancestor", expected_main, expected_candidate)
+        except subprocess.CalledProcessError:
+            return blocked("CANDIDATE_REBASE_RETEST_REQUIRED")
+        # Main is the delivered backend, not a queue of future backend code.
+        # Activate an approved backend candidate first, then promote its source.
+        from classic_active_release_status import workspace_source_revision
+        state = release.report(root)
+        active = state.get("activeApi") or {}
+        revision = workspace_source_revision(candidate)
+        if (not state.get("ok") or active.get("diskMatchesRunning") is not True
+                or not revision or active.get("sourceRevision") != revision):
+            return blocked("CANDIDATE_BACKEND_NOT_ACTIVE_KEEP_IN_CANDIDATE",
+                           candidateApiRevision=revision, activeApiRevision=active.get("sourceRevision"))
+        return dict(ready=True, action="preview", mainHead=expected_main, candidateHead=expected_candidate,
+                    paths=release.git(root, "diff", "--name-only", expected_main, expected_candidate).splitlines(), deployed=False)
+    try:
+        plan = inspect()
+        if not plan["ready"] or not apply:
+            return plan
+        if not reviewed:
+            return blocked("REVIEW_EXACT_CANDIDATE_AND_TESTS_FIRST")
+        with release.activation_lock(root):
+            plan = inspect()
+            if not plan["ready"]:
+                return plan
+            if expected_main != expected_candidate:
+                release.git(root, "merge", "--ff-only", expected_candidate)
+            if release.git(root, "rev-parse", "HEAD") != expected_candidate or not clean(root):
+                return blocked("PROMOTED_MAIN_RECONCILIATION_REQUIRED")
+            from classic_active_release_status import workspace_source_revision
+            after = release.report(root)
+            if ((after.get("activeApi") or {}).get("sourceRevision") != workspace_source_revision(root)
+                    or (after.get("activeApi") or {}).get("diskMatchesRunning") is not True):
+                return blocked("PROMOTED_MAIN_API_RECONCILIATION_REQUIRED")
+            return dict(plan, action="promoted", mainHead=expected_candidate, sourcePromoted=True, deployed=False)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+        return blocked("CHECK_CANDIDATE_AND_MAIN_BEFORE_RETRY")
+
+
 def deploy(root: Path, *, apply=False, api_only=False, reviewed=False, expected_main=None, expected_api=None, approved=None):
     start = time.monotonic()
     try:

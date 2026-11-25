@@ -174,7 +174,8 @@ def test_api_continuity_receipt_only_from_verified_existing_proof(tmp_path, monk
     assert receipt["activeApiRevision"] == pins["target_revision"]
 
 
-def test_integrate_only_fast_forward_tested_candidate(tmp_path):
+def test_integrate_only_fast_forward_tested_candidate(tmp_path, monkeypatch):
+    monkeypatch.setattr(mod, "report", lambda _: {"mainCheckout": {"matchesRunning": True}})
     from classic_isolated_frontend import git
     root = tmp_path / "main"
     root.mkdir()
@@ -194,3 +195,11 @@ def test_integrate_only_fast_forward_tested_candidate(tmp_path):
     result = mod.integrate_main(root, base, target)
     assert result["sourceSynchronized"] and not result["productionActivated"]
     assert (root / "source.txt").read_text() == "new"
+    backend = candidate / "backend/src/test.py"
+    backend.parent.mkdir(parents=True)
+    backend.write_text("pending = True")
+    git(candidate, "add", ".")
+    git(candidate, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "pending API")
+    pending = git(candidate, "rev-parse", "HEAD")
+    assert mod.integrate_main(root, target, pending)["blockers"] == ["USE_PINNED_API_CANDIDATE_DELIVERY"]
+    assert git(root, "rev-parse", "HEAD") == target

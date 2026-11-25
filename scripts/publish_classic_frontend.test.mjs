@@ -43,3 +43,24 @@ test('publish switches HTML only after assets exist and retains prior chunks for
     await rm(temp, { recursive: true, force: true })
   }
 })
+
+
+test('missing or conflicting entry assets cannot replace the live index', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'classic-asset-gate-'))
+  const live = join(temp, 'live')
+  try {
+    await makeBuild(join(temp, 'first'), 'first')
+    await publishClassicFrontend({ stageDir: join(temp, 'first'), distDir: live })
+    const old = await (await import('node:fs/promises')).readFile(join(live, 'index.html'))
+    await makeBuild(join(temp, 'partial'), 'second')
+    await rm(join(temp, 'partial', 'assets', 'index-second.js'))
+    await writeFile(join(temp, 'partial', 'assets', 'unrelated.js'), 'other')
+    await assert.rejects(publishClassicFrontend({ stageDir: join(temp, 'partial'), distDir: live }))
+    await makeBuild(join(temp, 'collision'), 'first')
+    await writeFile(join(temp, 'collision', 'assets', 'index-first.js'), 'wrong bytes')
+    await assert.rejects(publishClassicFrontend({ stageDir: join(temp, 'collision'), distDir: live }), /Immutable frontend asset collision/)
+    assert.deepEqual(await (await import('node:fs/promises')).readFile(join(live, 'index.html')), old)
+  } finally {
+    await rm(temp, { recursive: true, force: true })
+  }
+})

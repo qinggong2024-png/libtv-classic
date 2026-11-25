@@ -48,6 +48,18 @@ export async function publishClassicFrontend({
     throw new Error('Incomplete frontend build: assets directory empty')
   }
 
+  // Vite entry references must resolve inside the staged asset directory.
+  // Refuse a partial build before copying or changing the live HTML.
+  const entryAssets = [...index.toString('utf8').matchAll(/(?:src|href)=["']\/assets\/([^"'?#]+)["']/g)]
+  if (entryAssets.length === 0) throw new Error('Incomplete frontend build: entry assets missing')
+  for (const [, name] of entryAssets) {
+    const asset = resolve(stage, 'assets', name)
+    if (!asset.startsWith(resolve(stage, 'assets') + (process.platform === 'win32' ? '\\' : '/'))) {
+      throw new Error('Invalid frontend entry asset path')
+    }
+    if (!(await readFile(asset)).length) throw new Error('Empty frontend entry asset: ' + name)
+  }
+
   await mkdir(destination, { recursive: true })
   for (const entry of entries) {
     if (entry.name === 'index.html') continue
@@ -57,6 +69,12 @@ export async function publishClassicFrontend({
       force: entry.name !== 'assets',
       errorOnExist: false,
     })
+  }
+
+  for (const [, name] of entryAssets) {
+    const staged = await readFile(join(stage, 'assets', name))
+    const published = await readFile(join(destination, 'assets', name))
+    if (!published.equals(staged)) throw new Error('Immutable frontend asset collision: ' + name)
   }
 
   // Existing tabs continue to resolve their immutable, content-hashed JS chunks.

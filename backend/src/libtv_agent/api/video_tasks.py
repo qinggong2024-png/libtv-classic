@@ -208,6 +208,7 @@ async def create_video_task(
             object_store=request.app.state.object_store,
         )
     except FixedVideoTaskValidationError as exc:
+        await session.rollback()
         await release_idempotency_claim(
             session,
             tenant_id=str(actor_id),
@@ -233,6 +234,7 @@ async def create_video_task(
             detail={"code": exc.code, "message": str(exc), "details": exc.details},
         ) from exc
     except Exception:
+        await session.rollback()
         await release_idempotency_claim(
             session,
             tenant_id=str(actor_id),

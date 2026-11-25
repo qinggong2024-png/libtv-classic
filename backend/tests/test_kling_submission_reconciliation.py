@@ -18,12 +18,16 @@ from libtv_agent.adapters.video_provider import (
 )
 from libtv_agent.config import Settings
 from libtv_agent.db import Database
-from libtv_agent.domain.enums import AttemptStatus, ChargeStatus, CommandStatus
+from libtv_agent.domain.enums import (
+    AttemptStatus, ChargeStatus, CommandStatus, GenerationStatus, ParentTaskPhase,
+)
 from libtv_agent.domain.models import (
     Base,
     GenerationAttempt,
     GenerationCommand,
     GenerationSubmissionAttempt,
+    GenerationVariant,
+    ParentTask,
 )
 from libtv_agent.runner.supervisor import RunnerSupervisor
 from sqlalchemy import select
@@ -135,6 +139,199 @@ async def test_api_parallel_limit_is_durably_queued_and_retried_without_duplicat
     assert api.submit.await_count == 2
 
 
+async def test_api_balance_rejection_waits_and_resumes_same_attempt_after_recharge(lab):
+    factory, supervisor, _ = lab
+    supervisor.settings.kling_api_enabled = True
+    attempt_id, command_id = await ready(factory, supervisor)
+    provider = supervisor.settings.kling_api_provider_name
+    adapter = SimpleNamespace(
+        submission_account_id=AsyncMock(return_value="api-account"),
+        submit=AsyncMock(side_effect=[
+            KlingCliError(
+                "KLING_API_BALANCE_INSUFFICIENT", "Account balance not enough",
+                details={"serviceCode": 1102},
+            ),
+            ProviderSubmissionResult("recharged-cloud-id", "SUBMITTED", 5, "fake", {}),
+        ]),
+    )
+    supervisor._kling_adapters[provider] = adapter
+    async with factory() as session:
+        attempt = await session.get(GenerationAttempt, attempt_id)
+        attempt.provider = provider
+        await session.commit()
+    assert await execute(factory, supervisor, command_id) is True
+    async with factory() as session:
+        attempt = await session.get(GenerationAttempt, attempt_id)
+        command = await session.get(GenerationCommand, command_id)
+        assert attempt.status == AttemptStatus.DISPATCH_PENDING, (
+            attempt.last_error_code, attempt.error_message, attempt.provider_status,
+        )
+        assert attempt.provider_status == "waiting_balance"
+        assert attempt.charge_status == ChargeStatus.NOT_CHARGED
+        assert attempt.task_id is None
+        assert attempt.last_error_code == "KLING_API_BALANCE_INSUFFICIENT"
+        assert command.status == CommandStatus.READY
+        assert command.lease_expires_at.replace(tzinfo=UTC) > datetime.now(UTC)
+        command.lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await session.commit()
+    assert await execute(factory, supervisor, command_id) is False
+    async with factory() as session:
+        attempt = await session.get(GenerationAttempt, attempt_id)
+        receipts = list(await session.scalars(
+            select(GenerationSubmissionAttempt)
+            .where(GenerationSubmissionAttempt.attempt_id == attempt_id)
+            .order_by(GenerationSubmissionAttempt.sequence)
+        ))
+        assert attempt.status == AttemptStatus.RUNNING
+        assert attempt.task_id == "recharged-cloud-id"
+        assert [item.status for item in receipts] == ["FAILED_BEFORE_SUBMIT", "ACCEPTED"]
+        assert len({item.idempotency_key for item in receipts}) == 2
+    assert adapter.submit.await_count == 2
+
+
+@pytest.mark.parametrize("unsafe", [
+    None, "uncertain", "accepted", "has_cloud_id", "wrong_fingerprint", "not_balance",
+])
+async def test_legacy_balance_recovery_requires_only_proven_rejections(lab, unsafe):
+    factory, supervisor, _ = lab
+    attempt_id, command_id = await ready(factory, supervisor)
+    provider = supervisor.settings.kling_api_provider_name
+    async with factory() as session:
+        attempt = await session.get(GenerationAttempt, attempt_id)
+        command = await session.get(GenerationCommand, command_id)
+        variant = await session.get(GenerationVariant, attempt.variant_id)
+        task = await session.get(ParentTask, variant.parent_task_id)
+        attempt.provider = provider
+        attempt.status = AttemptStatus.FAILED_BEFORE_SUBMIT
+        attempt.charge_status = ChargeStatus.NOT_CHARGED
+        attempt.last_error_code = "KLING_API_ACCOUNT_UNAVAILABLE"
+        attempt.error_message = (
+            "Account unavailable" if unsafe == "not_balance" else "Account balance not enough"
+        )
+        command.status = CommandStatus.TERMINAL
+        variant.generation_status = GenerationStatus.FAILED
+        task.phase = ParentTaskPhase.ACTION_REQUIRED
+        session.add(GenerationSubmissionAttempt(
+            attempt_id=attempt.id,
+            sequence=1,
+            provider=provider,
+            idempotency_key=f"{attempt.id.hex}:generation",
+            input_fingerprint=(
+                "bad" if unsafe == "wrong_fingerprint" else attempt.intent_hash
+            ),
+            status=("UNCERTAIN" if unsafe == "uncertain" else
+                    "ACCEPTED" if unsafe == "accepted" else "FAILED_BEFORE_SUBMIT"),
+            provider_task_id=("cloud-id" if unsafe == "has_cloud_id" else None),
+            error_code="KLING_API_ACCOUNT_UNAVAILABLE",
+            error_message="Account balance not enough",
+        ))
+        await session.commit()
+    async with factory() as session:
+        result = await supervisor.requeue_confirmed_balance_rejections(session)
+    assert result == (1 if unsafe is None else 0)
+    async with factory() as session:
+        attempt = await session.get(GenerationAttempt, attempt_id)
+        command = await session.get(GenerationCommand, command_id)
+        variant = await session.get(GenerationVariant, attempt.variant_id)
+        assert command.status == (CommandStatus.READY if unsafe is None else CommandStatus.TERMINAL)
+        assert attempt.status == (
+            AttemptStatus.DISPATCH_PENDING if unsafe is None else AttemptStatus.FAILED_BEFORE_SUBMIT
+        )
+        assert variant.generation_status == (
+            GenerationStatus.PENDING if unsafe is None else GenerationStatus.FAILED
+        )
+        assert await supervisor.requeue_confirmed_balance_rejections(session) == 0
+
+
+@pytest.mark.parametrize("account_state", ["mismatch", "missing", "matched"])
+async def test_manual_api_reconciliation_requires_original_account_and_never_reposts(
+    lab, account_state,
+):
+    factory, supervisor, _ = lab
+    attempt_id, command_id = await ready(factory, supervisor)
+    provider = supervisor.settings.kling_api_provider_name
+    adapter = SimpleNamespace(
+        submission_account_id=AsyncMock(
+            return_value="account-b" if account_state == "mismatch" else "account-a"
+        ),
+        query=AsyncMock(return_value=ProviderTaskResult("running", "RUNNING", (), {})),
+        submit=AsyncMock(),
+    )
+    supervisor._kling_adapters[provider] = adapter
+    async with factory() as session:
+        attempt = await session.get(GenerationAttempt, attempt_id)
+        command = await session.get(GenerationCommand, command_id)
+        attempt.provider = provider
+        attempt.provider_account_id = (
+            None if account_state == "missing" else "account-a"
+        )
+        attempt.task_id = "original-cloud-id"
+        attempt.status = AttemptStatus.UNKNOWN_AFTER_SUBMIT
+        attempt.charge_status = ChargeStatus.UNKNOWN
+        command.status = CommandStatus.UNCERTAIN
+        await session.commit()
+
+    async with factory() as session:
+        if account_state == "matched":
+            assert await supervisor.reconcile_attempt(session, attempt_id) == "RUNNING"
+            adapter.query.assert_awaited_once_with("original-cloud-id")
+        else:
+            with pytest.raises(KlingCliError) as caught:
+                await supervisor.reconcile_attempt(session, attempt_id)
+            assert caught.value.code == (
+                "KLING_ACCOUNT_CHANGED" if account_state == "mismatch"
+                else "KLING_RECONCILIATION_ACCOUNT_UNVERIFIED"
+            )
+            adapter.query.assert_not_awaited()
+    async with factory() as session:
+        attempt = await session.get(GenerationAttempt, attempt_id)
+        command = await session.get(GenerationCommand, command_id)
+        assert attempt.task_id == "original-cloud-id"
+        assert attempt.provider_account_id == (
+            None if account_state == "missing" else "account-a"
+        )
+        assert attempt.charge_status == ChargeStatus.UNKNOWN
+        if account_state == "matched":
+            assert attempt.status == AttemptStatus.RUNNING
+            assert command.status == CommandStatus.PROCESS_STARTED
+        else:
+            assert attempt.status == AttemptStatus.UNKNOWN_AFTER_SUBMIT
+            assert command.status == CommandStatus.UNCERTAIN
+    adapter.submit.assert_not_awaited()
+
+
+async def test_manual_api_reconciliation_without_cloud_id_never_guesses_or_reposts(lab):
+    factory, supervisor, _ = lab
+    attempt_id, command_id = await ready(factory, supervisor)
+    provider = supervisor.settings.kling_api_provider_name
+    adapter = SimpleNamespace(
+        submission_account_id=AsyncMock(return_value="account-a"),
+        query=AsyncMock(), submit=AsyncMock(),
+    )
+    supervisor._kling_adapters[provider] = adapter
+    async with factory() as session:
+        attempt = await session.get(GenerationAttempt, attempt_id)
+        command = await session.get(GenerationCommand, command_id)
+        attempt.provider = provider
+        attempt.provider_account_id = "account-a"
+        attempt.task_id = None
+        attempt.status = AttemptStatus.UNKNOWN_AFTER_SUBMIT
+        attempt.charge_status = ChargeStatus.UNKNOWN
+        command.status = CommandStatus.UNCERTAIN
+        await session.commit()
+    async with factory() as session:
+        with pytest.raises(KlingCliError) as caught:
+            await supervisor.reconcile_attempt(session, attempt_id)
+        assert caught.value.code == "KLING_HISTORY_EVIDENCE_MISSING"
+    async with factory() as session:
+        attempt = await session.get(GenerationAttempt, attempt_id)
+        assert attempt.status == AttemptStatus.UNKNOWN_AFTER_SUBMIT
+        assert attempt.task_id is None
+        assert attempt.charge_status == ChargeStatus.UNKNOWN
+    adapter.query.assert_not_awaited()
+    adapter.submit.assert_not_awaited()
+
+
 async def test_api_cloud_active_capacity_tracks_remote_jobs_not_http_requests(lab):
     factory, supervisor, _ = lab
     provider = supervisor.settings.kling_api_provider_name
@@ -234,6 +431,90 @@ async def test_api_fifo_queue_refills_after_one_cloud_slot_frees(lab, monkeypatc
         assert await supervisor._run_ready_provider(session, "kling") == 1
         assert started == ordered_commands
         assert await supervisor._kling_api_at_cloud_capacity(session) is True
+
+
+@pytest.mark.parametrize("stop_at", ["first_submit", "capacity_acquire"])
+async def test_checkpoint_stops_new_claims_and_preserves_fifo(lab, monkeypatch, stop_at):
+    from threading import Event
+    from libtv_agent.domain.models import CapacitySlot
+    from sqlalchemy import func
+
+    factory, supervisor, _ = lab
+    stopping = Event()
+    supervisor._stop_claiming = stopping.is_set
+    provider = supervisor.settings.kling_api_provider_name
+    supervisor.settings.kling_api_enabled = True
+    supervisor.settings.kling_api_max_active_cloud_tasks = 5
+    supervisor._kling_adapters[provider] = SimpleNamespace(
+        submission_account_id=AsyncMock(return_value="api-account")
+    )
+    monkeypatch.setattr("libtv_agent.runner.supervisor.provider_claims_allowed",
+                        AsyncMock(return_value=True))
+    ordered = []
+    for index in range(3):
+        aid, cid = await ready(factory, supervisor)
+        ordered.append((aid, cid))
+        async with factory() as session:
+            attempt = await session.get(GenerationAttempt, aid)
+            attempt.provider = provider
+            attempt.status = AttemptStatus.DISPATCH_PENDING
+            command = await session.get(GenerationCommand, cid)
+            command.created_at = datetime(2026, 11, 11, tzinfo=UTC) + timedelta(seconds=index)
+            await session.commit()
+
+    started = []
+
+    async def fake_execute(session, command_id):
+        command = await session.get(GenerationCommand, command_id)
+        attempt = await session.get(GenerationAttempt, command.attempt_id)
+        started.append(command_id)
+        if stop_at == "first_submit" and len(started) == 1:
+            stopping.set()
+        attempt.status = AttemptStatus.RUNNING
+        attempt.provider_account_id = "api-account"
+        attempt.task_id = f"cloud-{len(started)}"
+        command.status = CommandStatus.PROCESS_STARTED
+        await session.commit()
+        return False
+
+    supervisor._execute = fake_execute
+
+    # Write a real provisional capacity row in the transaction, then raise
+    # the checkpoint before claim commit. This must leave no leased slots.
+    async def acquire(session, settings, command):
+        import uuid
+        session.add(CapacitySlot(
+            id=uuid.uuid4(), scope_type="GLOBAL", scope_id=str(command.id),
+            slot_no=1, command_id=command.id,
+            lease_expires_at=datetime.now(UTC) + timedelta(seconds=60),
+        ))
+        await session.flush()
+        if stop_at == "capacity_acquire" and not started and not stopping.is_set() and not resumed:
+            stopping.set()
+        return object()
+
+    resumed = False
+    monkeypatch.setattr("libtv_agent.runner.supervisor.acquire_capacity", acquire)
+    expected_started = 1 if stop_at == "first_submit" else 0
+    async with factory() as session:
+        assert await supervisor._run_ready_provider(session, "kling") == expected_started
+    async with factory() as session:
+        assert started == [cid for _, cid in ordered[:expected_started]]
+        assert await session.scalar(select(func.count()).select_from(CapacitySlot)
+                                    .where(CapacitySlot.command_id.is_not(None))) == 0
+        for aid, cid in ordered[expected_started:]:
+            assert (await session.get(GenerationCommand, cid)).status == CommandStatus.READY
+            attempt = await session.get(GenerationAttempt, aid)
+            assert attempt.status == AttemptStatus.DISPATCH_PENDING
+            assert attempt.task_id is None
+    # Simulate the newly started singleton using the same durable queue.
+    resumed = True
+    supervisor._stop_claiming = lambda: False
+    async with factory() as session:
+        assert await supervisor._run_ready_provider(session, "kling") == 3 - expected_started
+        assert started == [cid for _, cid in ordered]
+        if expected_started:
+            assert (await session.get(GenerationAttempt, ordered[0][0])).task_id == "cloud-1"
 
 
 async def _unknown_api_job(factory, supervisor, *, task_id="known-cloud-id", minutes_old=1):

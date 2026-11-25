@@ -8,7 +8,10 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # In-process migration tests must not disable existing application loggers
+    # (the stdlib fileConfig default is disable_existing_loggers=True).
+    # Disabling the Sol logger silently drops required timing/audit events.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
 target_metadata = Base.metadata

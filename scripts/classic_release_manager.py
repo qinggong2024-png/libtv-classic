@@ -80,7 +80,7 @@ def api_matches(state, pins, *, target=False):
             and state.get("admissionPaused") is False)
 
 
-def switch_reviewed_api(root, pins):
+def switch_reviewed_api(root, pins, *, candidate_delivery=None):
     # Node owns api-routing.lock; never acquire it twice. Frontend publishers
     # share classic-release.lock and route lock, and the original API-only
     # compatibility, durable ownership and installed-slot proof remain mandatory.
@@ -90,6 +90,15 @@ def switch_reviewed_api(root, pins):
                 or http_digest() != pins["frontend"]):
             return {"ready": False, "blockers": ["LIVE_API_BASELINE_CHANGED"]}
         proof = live_frontend_baseline(root, before)
+        if candidate_delivery:
+            from classic_api_candidate import plan
+            review = plan(root, Path(candidate_delivery["candidate"]),
+                          expected_main=candidate_delivery["main"],
+                          expected_candidate=candidate_delivery["candidate_head"],
+                          expected_api=pins["target_revision"],
+                          expected_standby=candidate_delivery["previous_standby"])
+            if not review["ready"] or review["pins"] != pins or review["prepare"] or not proof:
+                return {"ready": False, "blockers": ["API_CANDIDATE_CHANGED_BEFORE_SWITCH"]}
         node = shutil.which("node")
         if not node:
             return {"ready": False, "blockers": ["NODE_UNAVAILABLE"]}
@@ -113,6 +122,20 @@ def switch_reviewed_api(root, pins):
                     or receipt.get("to") != pins["target"] or not api_matches(after, pins, target=True)
                     or http_digest() != pins["frontend"]):
                 raise RuntimeError("API_POST_SWITCH_VERIFICATION_FAILED")
+            if candidate_delivery:
+                from classic_active_release_status import workspace_source_revision, verify_release
+                candidate = Path(candidate_delivery["candidate"])
+                head = candidate_delivery["candidate_head"]
+                if (git(root, "rev-parse", "HEAD") != candidate_delivery["main"] or not clean(root)
+                        or not clean(candidate) or git(candidate, "rev-parse", "HEAD") != head
+                        or workspace_source_revision(candidate) != pins["target_revision"]):
+                    raise RuntimeError("API_SWITCHED_MAIN_PROMOTION_RECONCILIATION_REQUIRED")
+                git(root, "merge", "--ff-only", head)
+                after = report(root)
+                issues = verify_release(after, expected_api_revision=pins["target_revision"],
+                                        expected_frontend_sha256=pins["frontend"], expected_main_head=head)
+                if issues or not clean(root) or not api_matches(after, pins, target=True):
+                    raise RuntimeError("API_MAIN_FULL_ACCEPTANCE_FAILED")
             result = {"ready": True, "apiSwitched": True, "switchReceipt": receipt,
                       "activeApiRevision": pins["target_revision"], "frontendIndexSha256": pins["frontend"],
                       "activeConfigRevision": pins["config"], "activeSchemaRevision": pins["schema"]}
@@ -136,6 +159,11 @@ def switch_reviewed_api(root, pins):
                 })
             else:
                 result["warnings"] = ["FRONTEND_PROVENANCE_RECONCILIATION_REQUIRED"]
+            if candidate_delivery:
+                if not result.get("compatibilityReceipt"):
+                    raise RuntimeError("API_CANDIDATE_FRONTEND_CONTINUITY_MISSING")
+                result.update(mainHead=candidate_delivery["candidate_head"], mainApiMatches=True,
+                              sourcePromoted=True, fullReleaseVerified=True)
             return result
 
 
@@ -206,7 +234,12 @@ def run_claimed(root, publisher, api_publisher, *, expected_id=None):
     identifier = row["id"]
     try:
         intent = json.loads(row["intent"])
-        if intent.get("kind") == "online-api-only":
+        if intent.get("kind") == "api-candidate":
+            from classic_api_candidate import deliver
+            result = deliver(root, Path(intent["candidate"]), intent)
+            published = result.get("apiSwitched") is True
+            evidence = result.get("compatibilityReceipt") if result.get("fullReleaseVerified") is True else None
+        elif intent.get("kind") == "online-api-only":
             result = api_publisher(root, intent["pins"])
             published = result.get("apiSwitched") is True
             evidence = result.get("switchReceipt")
@@ -254,6 +287,26 @@ def reconcile(root, identifier):
             intent = json.loads(row["intent"])
             pins = intent["pins"]
             state = report(root)
+            if intent.get("kind") == "api-candidate":
+                # Do not silently clear a release that may have switched but not promoted.
+                # Reconciliation requires exact source, running API and frontend receipt.
+                if api_matches(state, pins, target=True):
+                    from classic_active_release_status import verify_release
+                    if (verify_release(state, expected_api_revision=pins["target_revision"],
+                            expected_frontend_sha256=pins["frontend"], expected_main_head=intent["candidate_head"])
+                            or not live_frontend_baseline(root, state)):
+                        raise RuntimeError("API candidate requires exact main/receipt reconciliation")
+                    outcome = "reconciled"
+                elif (api_matches(state, pins) and (state.get("mainCheckout") or {}).get("gitHead") == intent["main"]
+                      and (state.get("mainCheckout") or {}).get("matchesRunning") is True):
+                    outcome = "blocked"
+                else:
+                    raise RuntimeError("API candidate identity cannot be reconciled")
+                result = {"nextAction": "review exact live source and receipt; never replay uncertainty"}
+                with db:
+                    db.execute("UPDATE releases SET state=?,updated=?,result=? WHERE id=? AND state IN ('running','needs-review')",
+                               (outcome, now(), json.dumps(result), identifier))
+                return {"id": identifier, "state": outcome, "result": result}
             if intent.get("kind") == "online-api-only":
                 if (not (api_matches(state, pins) or api_matches(state, pins, target=True))
                         or http_digest() != pins["frontend"]):
@@ -307,6 +360,11 @@ def integrate_main(root, expected_main, candidate_head):
             git(root, "merge-base", "--is-ancestor", expected_main, candidate_head)
         except subprocess.CalledProcessError:
             return {"ready": False, "blockers": ["INTEGRATION_REBASE_AND_RETEST_REQUIRED"]}
+        state = report(root)
+        if ((state.get("mainCheckout") or {}).get("matchesRunning") is not True
+                or git(root, "diff", "--name-only", expected_main, candidate_head, "--",
+                       "backend/src", "backend/alembic", "backend/alembic.ini", "pyproject.toml", "uv.lock")):
+            return {"ready": False, "blockers": ["USE_PINNED_API_CANDIDATE_DELIVERY"]}
         git(root, "merge", "--ff-only", candidate_head)
         if git(root, "rev-parse", "HEAD") != candidate_head or not clean(root):
             raise RuntimeError("Integration result changed; inspect source")

@@ -102,4 +102,4 @@ def test_settings_force_shared_authentication(tmp_path, monkeypatch):
     monkeypatch.setattr("libtv_agent.api_windows_service.Settings", lambda **values: SimpleNamespace(**values))
     settings = service_settings(tmp_path)
     assert settings.shared_authentication_enabled is True
-    assert settings.app_public_origins == ["http://192.168.30.126:5173"]
+    assert settings.app_public_origins == ["http://127.0.0.1:5173"]

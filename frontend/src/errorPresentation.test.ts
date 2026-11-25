@@ -3,6 +3,12 @@ import { ApiError } from './api'
 import { errorMessage, plainText, userFacingError, validationMessage } from './errorPresentation'
 
 describe('plain-language errors', () => {
+  it('explains the classic new-task maintenance freeze without implying existing tasks stopped', () => {
+    const message = userFacingError({ code: 'CLASSIC_NEW_VIDEO_TASKS_PAUSED', status: 503 })
+    expect(message).toContain('暂停新建视频任务')
+    expect(message).toContain('已提交任务')
+  })
+
   it('explains how to recover from login, permissions, budget and unavailable generation', () => {
     expect(userFacingError({ code: 'CSRF_REJECTED' })).toContain('刷新页面')
     expect(userFacingError({ code: 'PAGE_ACCESS_DENIED' })).toContain('联系管理员')
@@ -25,6 +31,17 @@ describe('plain-language errors', () => {
       expect(error[flag]).toBe(true)
     },
   )
+
+  it('shows exact recharge guidance for current and historical balance errors', () => {
+    const expected = 'API 余额不足，请联系管理员充值。'
+    expect(userFacingError({ code: 'KLING_API_BALANCE_INSUFFICIENT' })).toBe(expected)
+    expect(userFacingError({
+      code: 'KLING_API_ACCOUNT_UNAVAILABLE', message: 'Account balance not enough',
+    })).toBe(expected)
+    expect(userFacingError({
+      code: 'KLING_API_ACCOUNT_UNAVAILABLE', message: 'Account unavailable',
+    })).not.toContain('充值')
+  })
 
   it('separates historical point-limit errors from current USD budget rejections', () => {
     for (const code of ['POINTS_LIMIT_EXCEEDED', 'IMAGE_DAILY_LIMIT_EXCEEDED', 'VIDEO_QUOTA_REJECTED']) {

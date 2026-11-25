@@ -41,7 +41,7 @@ def service_settings(data_root: Path) -> Settings:
         _env_file=data_root / ".env",
         shared_authentication_enabled=True,
         session_cookie_secure=False,
-        app_public_origins=["http://192.168.30.126:5173"],
+        app_public_origins=["http://127.0.0.1:5173"],
     )
 
 

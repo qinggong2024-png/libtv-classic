@@ -172,3 +172,84 @@ async def test_live_or_nonplanning_tasks_are_untouched(tmp_path, monkeypatch):
             ).phase == ParentTaskPhase.PREPARING
     finally:
         await engine.dispose()
+
+@pytest.mark.asyncio
+async def test_interrupted_direct_admission_review_is_fenced_and_never_replays(tmp_path, monkeypatch):
+    from libtv_agent.domain.models import GenerationAttempt
+    from libtv_agent.domain.enums import AttemptStatus
+    from libtv_agent.services.async_video_submission import mark_interrupted_direct_admissions
+
+    engine, factory = await make_factory(tmp_path, monkeypatch)
+    try:
+        eligible, paid, active, fresh = [planned_task() for _ in range(4)]
+        for task in (eligible, paid, active, fresh):
+            task.phase = ParentTaskPhase.PREPARING
+            task.analysis_stage = "COMPLETED"
+            task.paid_submission_consent_at = datetime.now(UTC)
+        fresh.updated_at = datetime.now(UTC)
+        async with factory() as session:
+            session.add_all([eligible, paid, active, fresh])
+            for task in (eligible, paid, active, fresh):
+                vid = uuid.uuid4()
+                session.add(GenerationVariant(id=vid, parent_task_id=task.id,
+                                               variant_type=VariantKind.STABLE, revision=1))
+                if task is paid:
+                    session.add(GenerationAttempt(variant_id=vid, status=AttemptStatus.UNKNOWN_AFTER_SUBMIT))
+            await session.commit()
+        async with factory() as session:
+            assert await mark_interrupted_direct_admissions(session, exclude_ids=(active.id,)) == 1
+            assert await mark_interrupted_direct_admissions(session, exclude_ids=(active.id,)) == 0
+        async with factory() as session:
+            recovered = await session.get(ParentTask, eligible.id)
+            assert recovered.phase == ParentTaskPhase.ACTION_REQUIRED
+            assert recovered.phase_reason_code == "DIRECT_ADMISSION_INTERRUPTED"
+            for task in (paid, active, fresh):
+                assert (await session.get(ParentTask, task.id)).phase == ParentTaskPhase.PREPARING
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_same_live_plan_retries_sqlite_busy_without_new_plan_or_paid_replay(tmp_path, monkeypatch):
+    import sqlite3
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from sqlalchemy.exc import OperationalError
+    from libtv_agent.domain.models import User, GenerationAttempt
+    from libtv_agent.domain.enums import AttemptStatus, UserRole
+    from libtv_agent.services import async_video_submission as service
+
+    engine, factory = await make_factory(tmp_path, monkeypatch)
+    try:
+        task = planned_task()
+        task.phase = ParentTaskPhase.PREPARING
+        task.analysis_stage = "COMPLETED"
+        task.paid_submission_consent_at = datetime.now(UTC)
+        variant = GenerationVariant(id=uuid.uuid4(), parent_task_id=task.id,
+                                    variant_type=VariantKind.STABLE, revision=1,
+                                    prompt_text="frozen prompt")
+        async with factory() as session:
+            session.add_all([User(id=task.user_id, username="retry", password_hash="test",
+                                  role=UserRole.USER, is_active=True), task, variant])
+            await session.commit()
+        called = []
+        async def queue(session, *, task, **kwargs):
+            called.append(task.id)
+            assert task.variants[0].prompt_text == "frozen prompt"
+            if len(called) == 1:
+                raise OperationalError("UPDATE", {}, sqlite3.OperationalError("database is locked"))
+        monkeypatch.setattr(service, "queue_video_task", queue)
+        db = SimpleNamespace(session_factory=factory)
+        assert await service.retry_direct_admission_after_db_busy(
+            db, None, None, None, task.id, task.analysis_run_id, delays=(0, 0),
+        )
+        assert called == [task.id, task.id]
+        async with factory() as session:
+            session.add(GenerationAttempt(variant_id=variant.id, status=AttemptStatus.UNKNOWN_AFTER_SUBMIT))
+            await session.commit()
+        assert not await service.retry_direct_admission_after_db_busy(
+            db, None, None, None, task.id, task.analysis_run_id, delays=(0, 0),
+        )
+        assert len(called) == 2
+    finally:
+        await engine.dispose()

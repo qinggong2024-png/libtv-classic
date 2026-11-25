@@ -261,3 +261,45 @@ async def test_migrated_upload_record_fault_rolls_back_and_later_upload_continue
     assert await session.scalar(select(func.count()).select_from(ApiIdempotencyRecord)) == 0
     assert not list(app.state.settings.artifact_root.glob("**/normalized.jpg"))
     assert (await upload(client, data, key=key)).status_code == 201
+
+
+async def test_upload_storage_does_not_hold_database_transaction(lab, monkeypatch):
+    client, app, session = lab
+    original = app.state.object_store.put_file
+
+    async def observed_put(*args, **kwargs):
+        assert not session.in_transaction()
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(app.state.object_store, "put_file", observed_put)
+    key = uuid.uuid4().hex
+    data = image_bytes()
+    first = await upload(client, data, key=key)
+    replay = await upload(client, data, key=key)
+    assert first.status_code == replay.status_code == 201
+    assert first.json()["id"] == replay.json()["id"]
+    assert len(list(app.state.settings.artifact_root.glob("**/normalized.jpg"))) == 1
+    assert await session.scalar(select(func.count()).select_from(StagedUpload)) == 1
+
+
+async def test_sqlite_upload_lock_is_retryable_with_same_key(lab):
+    client, app, session = lab
+    engine = session.get_bind()
+
+    def fail(connection, cursor, statement, parameters, context, many):
+        if statement.startswith("INSERT INTO api_idempotency_record "):
+            raise OperationalError(statement, parameters, RuntimeError("database is locked"))
+
+    event.listen(engine, "before_cursor_execute", fail)
+    key = uuid.uuid4().hex
+    data = image_bytes()
+    try:
+        response = await upload(client, data, key=key)
+    finally:
+        event.remove(engine, "before_cursor_execute", fail)
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "DATABASE_UNAVAILABLE"
+    assert await session.scalar(select(func.count()).select_from(StagedUpload)) == 0
+    assert await session.scalar(select(func.count()).select_from(ApiIdempotencyRecord)) == 0
+    assert not list(app.state.settings.artifact_root.glob("**/normalized.jpg"))
+    assert (await upload(client, data, key=key)).status_code == 201

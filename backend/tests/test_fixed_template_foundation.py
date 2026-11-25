@@ -1163,7 +1163,10 @@ async def test_fixed_video_task_queues_only_kling_commands_without_analysis(
     async def allow_kling(*args, **kwargs) -> None:
         del args, kwargs
 
-    async def prepare_without_provider_call(session, adapter, object_store, task, settings):
+    async def prepare_without_provider_call(
+        session, adapter, object_store, task, settings, *, persist_prepared,
+    ):
+        assert persist_prepared is False
         del adapter, object_store, settings
         attempts = []
         for variant in task.variants:
@@ -1300,7 +1303,10 @@ async def test_fixed_video_task_uses_subject_images_and_creates_reusable_element
     async def allow_kling(*args, **kwargs) -> None:
         del args, kwargs
 
-    async def prepare_without_provider_call(session, adapter, object_store, task, settings):
+    async def prepare_without_provider_call(
+        session, adapter, object_store, task, settings, *, persist_prepared,
+    ):
+        assert persist_prepared is False
         del adapter, object_store, settings
         attempts = []
         for variant in task.variants:

@@ -413,3 +413,24 @@ async def test_opt_out_creates_no_automatic_cut_reservation(handoff_env):
         await s.commit()
         usage = (await s.scalars(select(AccountUsage).where(AccountUsage.kind == "CUTFLOW"))).all()
         assert usage == []
+
+async def test_historical_budget_miss_is_read_only_while_other_writer_active(handoff_env):
+    import sqlite3
+
+    db, settings, _, ids = handoff_env
+    await _prepare(handoff_env)
+    async with db.session_factory() as session:
+        parent = await session.get(ParentTask, ids['task'])
+        parent.settings_json = {**parent.settings_json, BUDGET_KEY: str(uuid.uuid4())}
+        await session.commit()
+    # An unrelated transaction already owns the reserved lock. A historical
+    # parent with no held reservation must not attempt a zero-row UPDATE.
+    writer = sqlite3.connect(db.engine.url.database, timeout=0.1)
+    try:
+        writer.execute('BEGIN IMMEDIATE')
+        async with db.session_factory() as session:
+            parent = await session.get(ParentTask, ids['task'])
+            assert await release_unused_auto_cutflow(session, parent) is False
+    finally:
+        writer.rollback()
+        writer.close()

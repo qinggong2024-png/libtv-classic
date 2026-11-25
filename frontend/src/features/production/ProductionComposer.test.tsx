@@ -409,6 +409,41 @@ describe('OOTD composer integration', () => {
     expect(button(render(), '结束本批').props.disabled).toBe(false)
   })
 
+  it('safely recovers a not_found submission using the exact original request identity', async () => {
+    vi.mocked(createVideoTask)
+      .mockRejectedValueOnce(new ApiError(503, 'WRITE_UNCERTAIN', 'injected response loss'))
+      .mockResolvedValueOnce({ id: 'original-task', title: 'OOTD', phase: 'ANALYZING' } as Awaited<ReturnType<typeof createVideoTask>>)
+    vi.mocked(querySubmissionRecovery).mockResolvedValue(recovery('not_found'))
+    const { render, props } = await mount()
+    invoke(submitButton(render()), 'onClick')
+    await vi.waitFor(() => expect(content(render())).toContain('提交结果未知'))
+    invoke(button(render(), '核对任务状态'), 'onClick')
+    await vi.waitFor(() => expect(content(render())).toContain('核对结果：not_found'))
+    expect(submitButton(render()).props.disabled).toBe(true)
+    const originalRequest = vi.mocked(createVideoTask).mock.calls[0]
+    invoke(button(render(), '使用原提交编号安全重试'), 'onClick')
+    await vi.waitFor(() => expect(createVideoTask).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(createVideoTask).mock.calls[1]).toEqual(originalRequest)
+    expect(querySubmissionRecovery).toHaveBeenCalledTimes(2)
+    await vi.waitFor(() => expect(props.onCreated).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'original-task' }), true,
+    ))
+    expect(content(render())).not.toContain('提交结果未知')
+  })
+
+  it.each(['unknown', 'in_progress'] as const)('never exposes an original replay for %s', async (state) => {
+    vi.mocked(createVideoTask).mockRejectedValue(new ApiError(503, 'WRITE_UNCERTAIN', 'injected response loss'))
+    vi.mocked(querySubmissionRecovery).mockResolvedValue(recovery(state))
+    const { render } = await mount()
+    invoke(submitButton(render()), 'onClick')
+    await vi.waitFor(() => expect(content(render())).toContain('提交结果未知'))
+    invoke(button(render(), '核对任务状态'), 'onClick')
+    await vi.waitFor(() => expect(content(render())).toContain(`核对结果：${state}`))
+    expect(nodes(render()).some((node) => node.type === 'button'
+      && content(node).includes('使用原提交编号安全重试'))).toBe(false)
+    expect(createVideoTask).toHaveBeenCalledTimes(1)
+  })
+
   it('blocks another submit while the original submission result is unknown', async () => {
     vi.mocked(createVideoTask).mockRejectedValue(new ApiError(503, 'WRITE_UNCERTAIN', 'unavailable'))
     const { render } = await mount()

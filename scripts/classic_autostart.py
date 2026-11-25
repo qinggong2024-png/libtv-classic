@@ -223,7 +223,7 @@ def start() -> None:
                 all(owned_process(p) for p in state.get("processes", []))
                 and (not classic_lan.generation_authorized() or classic_lan.runner_ready(state))
             ):
-                print("Classic LAN supervised and ready: http://192.168.30.126:5176/")
+                print(f"Classic LAN supervised and ready: {state['url']}")
                 return
         time.sleep(0.5)
     raise SystemExit("Classic startup is not ready; inspect var/classic-lan/logs/autostart.log.")

@@ -175,6 +175,13 @@ def lan_environment(api_port: int, web_port: int, lan_ip: str) -> dict[str, str]
             "ALLWE_OOTD_SUBMISSION_AUDIT_ENABLED": "1" if (
                 STORAGE / "runtime" / "enable-ootd-wire-audit.flag"
             ).exists() else "0",
+            # Kling 3.0 Omni OOTD Sol -> camera-language Lite.
+            # Disable instantly for new prompts by creating the marker
+            # file below; the running Runner/API check it for each prompt.
+            "ALLWE_KLING_TRANSLATOR_LITE_ENABLED": "1",
+            "ALLWE_KLING_TRANSLATOR_LITE_DISABLE_FILE": str(
+                STORAGE / "runtime" / "disable-kling-translator-lite.flag"
+            ),
             # USP/V3.4 and prior pacing are OFF for new automatic jobs.
             "AI_CREATIVE_V25_ENABLED": "false",
             "FASTCUT_UGC_PACING_V1_ENABLED": "false",
@@ -326,6 +333,46 @@ def save_state(state: dict) -> None:
     temporary.replace(STATE)
 
 
+def configured_lan_ip() -> str | None:
+    """Persist only this installation's address, never an inherited site default."""
+    site = STATE.parent / "site-lan.json"
+    if site.exists():
+        data = json.loads(site.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or set(data) != {"version", "lanIp"} or data["version"] != 1:
+            raise ValueError("Invalid classic site configuration")
+        value = data["lanIp"]
+    elif STATE.exists():
+        value = json.loads(STATE.read_text(encoding="utf-8")).get("lanIp")
+    else:
+        return None
+    address = ipaddress.ip_address(value)
+    if address.version != 4 or not address.is_private or address.is_loopback or address.is_unspecified:
+        raise ValueError("Invalid classic LAN address")
+    return str(address)
+
+
+def remember_lan_ip(lan_ip: str) -> None:
+    site = STATE.parent / "site-lan.json"
+    if (site.exists() or STATE.exists()) and configured_lan_ip() != lan_ip:
+        raise SystemExit("Existing site address differs; review the local deployment configuration.")
+    if not site.exists():
+        with site.open("x", encoding="utf-8") as stream:
+            json.dump({"version": 1, "lanIp": lan_ip}, stream)
+
+
+def initialize_fresh_route(api_port: int) -> None:
+    """Seed routing only for a new instance, never repair an existing route by guessing."""
+    route = STATE.parent / "api-routing.json"
+    if route.exists():
+        return
+    if any(path.exists() for path in (STATE, STORAGE / "classic.db",
+                                      STATE.parent / "green-api.json",
+                                      STATE.parent / "blue-api-pin.json")):
+        raise SystemExit("Existing classic instance has no routing file; inspect before recovery.")
+    with route.open("x", encoding="utf-8") as stream:
+        json.dump({"version": 1, "activeApiPort": api_port}, stream)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -334,7 +381,7 @@ def main() -> None:
         default="start",
         nargs="?",
     )
-    parser.add_argument("--lan-ip", default="192.168.30.126")
+    parser.add_argument("--lan-ip")
     parser.add_argument("--web-port", type=int, default=5176)
     parser.add_argument("--api-port", type=int, default=8002)
     args = parser.parse_args()
@@ -368,8 +415,11 @@ def main() -> None:
     if args.action == "bootstrap":
         asyncio.run(initialize_admin())
         return
+    args.lan_ip = args.lan_ip or configured_lan_ip()
+    if args.lan_ip is None:
+        raise SystemExit("First start requires --lan-ip with this server's private IPv4 address.")
     address = ipaddress.ip_address(args.lan_ip)
-    if address.version != 4 or not address.is_private or address.is_loopback:
+    if address.version != 4 or not address.is_private or address.is_loopback or address.is_unspecified:
         raise SystemExit("Use this computer's private LAN IPv4 address.")
     if args.web_port == args.api_port or not all(
         1024 <= p <= 65535 for p in [args.web_port, args.api_port]
@@ -409,6 +459,8 @@ def main() -> None:
     if not node:
         raise SystemExit("Node.js is required.")
     protect_runtime()
+    remember_lan_ip(args.lan_ip)
+    initialize_fresh_route(args.api_port)
     if not SECRET_FILE.exists():
         SECRET_FILE.write_text(secrets.token_urlsafe(48), encoding="utf-8")
     if not LOGIN_FILE.exists():

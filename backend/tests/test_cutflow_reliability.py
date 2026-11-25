@@ -209,7 +209,9 @@ async def test_discovery_failure_does_not_starve_polling_or_kill_worker(monkeypa
     monkeypatch.setattr(cutflow_worker.asyncio, "sleep", sleeping)
     with pytest.raises(asyncio.CancelledError):
         await cutflow_worker.run(once=False)
-    assert len(polled) == 2 and waits == [15, 15] and disposed == [True]
+    # The 30s admission sweep is throttled after the first discovery failure;
+    # status polling still runs on the next healthy 1s cycle.
+    assert len(polled) == 2 and waits == [15, 1] and disposed == [True]
     assert "CUTFLOW_WORKER_CYCLE_FAILED" in caplog.text
     assert "operation=enqueue_completed" in caplog.text
     assert "error_code=RuntimeError" in caplog.text

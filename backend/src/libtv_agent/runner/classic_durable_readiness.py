@@ -7,7 +7,12 @@ import logging
 import time
 
 from libtv_agent.runner.classic_checkpoint import atomic_json
-from libtv_agent.services.classic_durable_config import READY, matches_loaded, read_config
+from libtv_agent.services.classic_durable_config import (
+    READY,
+    effective_runner_revision,
+    matches_loaded,
+    read_config,
+)
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
@@ -43,6 +48,8 @@ async def publish_readiness(database, settings, stopping, workers):
                 ) + int(settings.classic_durable_confirmation_enabled)
                 if (
                     matches_loaded(settings, data)
+                    and effective_runner_revision(path.parent, data)
+                    == stopping.identity["sourceRevision"]
                     and len(workers) == expected_workers
                     and all(not worker.done() for worker in workers)
                 ):
@@ -55,7 +62,15 @@ async def publish_readiness(database, settings, stopping, workers):
                     ready = not stopping.is_set()
             except Exception:
                 logger.exception("durable Runner readiness check failed")
-            publish(ready)
+            try:
+                publish(ready)
+            except OSError as exc:
+                # A concurrent Windows read can briefly deny atomic replacement.
+                # Do not let that transient error permanently kill the publisher.
+                logger.warning("Runner readiness write failed: %s", type(exc).__name__)
             await asyncio.sleep(2)
     finally:
-        publish(False)
+        try:
+            publish(False)
+        except OSError as exc:
+            logger.warning("Runner readiness final write failed: %s", type(exc).__name__)

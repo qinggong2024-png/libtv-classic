@@ -540,3 +540,59 @@ async def test_unavailable_ootd_provider_or_model_does_not_switch_routes(harness
     assert caught.value.code == "OOTD_ROUTE_UNAVAILABLE"
     h.planner.assert_not_called()
     h.queue.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_director_memory_snapshot_persists_for_preparation_and_retries(
+    harness, monkeypatch, tmp_path,
+):
+    """Real preparation freezes the provider hint, without any paid submission."""
+    path = tmp_path / "director_memory.json"
+    path.write_text(json.dumps({
+        "schema": "allwe-director-memory-v1",
+        "rules": [{
+            "rule_id": "pw.material.keep-hem",
+            "revision": 1,
+            "state": "ACTIVE",
+            "kind": "FIT_MATERIAL",
+            "destination": "KLING",
+            "brand": "pagewings",
+            "text": (
+                "Preserve original garment silhouette and drape for "
+                "the current apparel without inventing fabric details."
+            ),
+            "origin": "CURATED",
+            "evidence_ids": ["human-approved:fit"],
+            "priority": 20,
+        }],
+    }), encoding="utf-8")
+    monkeypatch.setenv("ALLWE_DIRECTOR_MEMORY_MODE", "on")
+    monkeypatch.setenv("ALLWE_DIRECTOR_MEMORY_FILE", str(path))
+    h = harness
+    task = await h.create()
+    assert task.settings_json["directorMemoryBrand"] == "pagewings"
+    # Test only the official API preparation route: adapter is still mocked.
+    h.settings.kling_provider_backend = "api"
+    h.settings.kling_api_model = "kling-3.0-omni"
+    first = await prepare_kling_task(
+        h.session, h.adapter, h.store, task, h.settings,
+    )
+    assert len(first) == 1
+    hint = task.variants[0].generation_config_json["directorMemoryKlingHint"]
+    assert "original garment silhouette" in hint
+    intent_hash = first[0].intent_hash
+    prepared = h.adapter.validate_request.call_args.args[0]
+    assert prepared.director_memory_kling_hint == hint
+
+    # Later rule changes cannot change the same submission's prompt/hash.
+    path.write_text(
+        json.dumps({"schema": "allwe-director-memory-v1", "rules": []}),
+        encoding="utf-8",
+    )
+    second = await prepare_kling_task(
+        h.session, h.adapter, h.store, task, h.settings,
+    )
+    assert second[0].id == first[0].id
+    assert second[0].intent_hash == intent_hash
+    assert task.variants[0].generation_config_json["directorMemoryKlingHint"] == hint
+    assert h.adapter.validate_request.call_args.args[0].director_memory_kling_hint == hint

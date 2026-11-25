@@ -96,3 +96,10 @@ AI_VIDEO_PROD_*
 /.worktrees/
 /design-demos/
 /docsai-video-prod/
+
+# TypeScript Vite configuration is source; generated JS/declarations are not.
+/frontend/vite.config.js
+/frontend/vite.config.d.ts
+
+# Installation-local, curated director rules; never commit the actual rule set.
+/backend/knowledge/ootd_director_memory_v1.json

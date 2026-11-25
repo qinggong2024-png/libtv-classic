@@ -61,8 +61,8 @@ describe('automatic CUT admission waiting', () => {
     expect(autoCutflowPollDelay(candidates, [], readyAt, false, true)).toBe(30_000)
   })
   it('keeps waiting in progress and moves only overdue waits to attention', () => {
-    expect(taskCenterState(task, [], { now: readyAt + 179_999 })).toMatchObject({ group: 'active', label: '等待创建送剪任务', manualSelection: false })
-    expect(taskCenterState(task, [], { now: readyAt + 180_000 })).toMatchObject({ group: 'attention', label: '送剪任务尚未建立', manualSelection: false })
+    expect(taskCenterState(task, [], { now: readyAt + 179_999 })).toMatchObject({ group: 'active', label: '等待自动送剪', manualSelection: false })
+    expect(taskCenterState(task, [], { now: readyAt + 180_000 })).toMatchObject({ group: 'attention', label: '自动送剪等待较久', manualSelection: false })
   })
   it('never replaces an accepted job or a read failure with a timeout diagnosis', () => {
     expect(taskCenterState(task, [batch('ACCEPTED')], { now: readyAt + 900_000 })).toMatchObject({ group: 'active', label: 'CUT 已接单，排队中' })

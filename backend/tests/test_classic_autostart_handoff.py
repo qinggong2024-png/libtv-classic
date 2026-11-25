@@ -16,7 +16,7 @@ import classic_worker_handoff as handoff  # noqa: E402
 def test_dead_worker_with_handoff_marker_is_not_restarted(tmp_path, monkeypatch):
     state_path = tmp_path / "stack.json"
     state_path.write_text(json.dumps({
-        "apiPort": 8002, "webPort": 5176, "lanIp": "192.168.30.126",
+        "apiPort": 8002, "webPort": 5176, "lanIp": "10.12.34.56",
         "generationAuthorized": True,
         "processes": [
             {"name": "api", "pid": 1},

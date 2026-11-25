@@ -30,7 +30,7 @@ def test_real_catalog_domain_has_stable_uuid5():
     assert site_identity("https://www.geeksoutfit.com/")["site_id"] != GUIDINGCROSS_SITE_ID
 
 
-@pytest.mark.parametrize("url", [None, "", "http://192.168.30.126:5173/", "https://192.168.30.126/",
+@pytest.mark.parametrize("url", [None, "", "http://10.12.34.56:5173/", "https://10.12.34.56/",
                                  "https://localhost/", "https://user@site.com/", "https://site.com/a",
                                  "https://site.com/?token=x", "https://site.com/#x"])
 def test_missing_or_server_site_never_gets_an_identity(url):

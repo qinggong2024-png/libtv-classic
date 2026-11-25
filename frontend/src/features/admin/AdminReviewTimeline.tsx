@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { CheckCircle2, Clock3, AlertCircle } from 'lucide-react'
 import type { AdminVideoTask, AdminVideoTrace } from '../../types'
+import { generationProviderKind, videoModelDisplayName } from '../../providerPresentation'
 import { reviewDate, taskCreationTime } from './adminReviewTime'
 
 export type ReviewTimelineTone = 'ok' | 'warning' | 'critical' | 'missing'
@@ -51,14 +52,43 @@ function createReviewTimeline(task: AdminVideoTask, traces: AdminVideoTrace[]): 
   ).map(event => event.at))
   const stages: Array<{ id: string; label: string; at: string | null; risk?: string; failed?: boolean }> = [
     { id: 'created', label: '任务创建', at: createdAt },
-    { id: 'analysis', label: '最近分析', at: eventTime(traces, 'parent_task.analysis_started_at') },
-    { id: 'confirmed', label: '方案确认', at: clipEventTime('generation_variant.confirmed_at') },
+    { id: 'analysis', label: '最近分析', at: eventTime(traces, 'parent_task.analysis_started_at') ?? task.analysisStartedAt ?? null, failed: task.phase === 'ACTION_REQUIRED' && /^(ANALYSIS_|AI_CREATIVE_)/.test(task.phaseReasonCode ?? '') },
+    { id: 'confirmed', label: '方案确认', at: clipEventTime('generation_variant.confirmed_at'), failed: task.phase === 'ACTION_REQUIRED' && /^(DURABLE_CONFIRM_|CONFIRMATION_|MATERIALIZATION_|PREPARE_)/.test(task.phaseReasonCode ?? '') },
     { id: 'submitted', label: 'Kling 提交', at: clipEventTime('generation_attempt.submitted_at'), risk: 'SLOW_BEFORE_SUBMIT' },
     { id: 'provider', label: 'Kling 完成', at: clipEventTime('generation_attempt.completed_at'), risk: 'SLOW_PROVIDER' },
     { id: 'raw', label: '原片保存', at: clipEventTime('download_artifact.created_at'), risk: 'SLOW_SAVED_RECORD' },
     { id: 'cut', label: failedCut(task) ? 'CUT 异常' : 'CUT 送剪记录', at: earliest(cutHandoffs), failed: failedCut(task), risk: 'CUT_UNCERTAIN' },
     { id: 'final', label: '成片保存', at: task.cut?.createdAt ?? null },
   ]
+  const deep = traces.find(t => t.deepVideo)?.deepVideo
+  const deepClip = task.clips.find(c => c.workflowKind === 'DEEP_VIDEO')
+  const isDeep = task.workflowKind === 'DEEP_VIDEO' || !!deep || !!deepClip
+  const providers = [...new Set(task.clips.map(c => generationProviderKind(c.provider)))]
+  const provider = providers.length === 1 ? ({ kling: 'Kling', wavespeed: 'WaveSpeed', bach: 'Bach', legacy: '生成' }[providers[0]]) : '生成'
+  stages[3].label = provider + ' 提交'
+  stages[4].label = provider + ' 完成'
+  if (isDeep) {
+    const depthOnly = (deep?.mode ?? deepClip?.deepVideoMode) === 'depth'
+    const model = videoModelDisplayName(deep?.model ?? deepClip?.model) ?? (depthOnly ? 'Depth Anything' : '复刻')
+    const depthStages: typeof stages = []
+    if (!depthOnly && deep?.pipeline === 'depth-first-v1') {
+      depthStages.push(
+        { id: 'depth-submit', label: '深度提取提交', at: eventTime(traces, 'depth_pipeline.depthSubmittedAt') },
+        { id: 'depth-done', label: '深度提取完成', at: eventTime(traces, 'depth_pipeline.depthCompletedAt') },
+      )
+    } else if (!depthOnly && deep?.referenceVideoType === 'depth') {
+      // The uploaded depth is an input, not a newly completed provider stage.
+      depthStages.push({ id: 'depth-input', label: '已有深度素材', at: null })
+    }
+    const actual = [
+      stages[0], ...depthStages,
+      { ...stages[3], label: depthOnly ? '深度提取提交' : model + ' 复刻提交', at: depthOnly ? stages[3].at : eventTime(traces, 'depth_pipeline.replacementSubmittedAt') ?? stages[3].at },
+      { ...stages[4], label: depthOnly ? '深度提取完成' : '复刻完成' },
+      { ...stages[5], label: depthOnly ? '深度片段保存' : '复刻原片保存' },
+      ...(task.cut || task.cutStatus || cutHandoffs.length ? stages.slice(6) : []),
+    ]
+    stages.splice(0, stages.length, ...actual)
+  }
   return stages.map((step, index) => ({
     id: step.id,
     label: step.label,
@@ -108,24 +138,24 @@ export function AdminReviewTimeline({ task, traces, loading }: {
     </header>
     <div className="admin-review-metrics">
       <div><small>{task.cut ? '创建至成片' : '创建至原片记录'}</small><strong>{loading ? '—' : span(elapsed)}</strong></div>
-      <div><small>{task.cut ? '最近分析至成片' : '最近分析至原片记录'}</small><strong>{loading ? '—' : span(analysisSpan)}</strong></div>
-      <div data-tone={analysis?.tone}><small>分析前跨度</small><strong>{loading ? '—' : span(preAnalysis)}</strong></div>
+      {analysis ? <><div><small>{task.cut ? '最近分析至成片' : '最近分析至原片记录'}</small><strong>{loading ? '—' : span(analysisSpan)}</strong></div>
+      <div data-tone={analysis?.tone}><small>分析前跨度</small><strong>{loading ? '—' : span(preAnalysis)}</strong></div></> : null}
     </div>
     <ol className="admin-review-timeline-steps">
       {steps.map((step, index) => <li key={step.id} className="admin-review-step"
         data-tone={loading ? 'missing' : step.tone}
-        title={step.at ? reviewDate(step.at)?.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '无可核实的时间记录'}>
+        title={step.id === 'depth-input' ? '使用已上传深度视频，不重新提取' : step.at ? reviewDate(step.at)?.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '无可核实的时间记录'}>
         <button type="button" className="admin-review-segment" aria-pressed={active.id === step.id} onClick={() => setSelected(step.id)} disabled={loading}>
           <span className="admin-review-segment-bar" aria-hidden="true" />
           <strong>{step.label}</strong>
-          <time className="admin-review-milestone-time" dateTime={step.at || undefined}>{loading ? '读取中' : step.at ? (index === 0 || step.id === 'final' ? milestoneDate(step.at) : clock(step.at)) : '未记录'}</time>
+          <time className="admin-review-milestone-time" dateTime={step.at || undefined}>{loading ? '读取中' : step.at ? (index === 0 || step.id === 'final' ? milestoneDate(step.at) : clock(step.at)) : step.id === 'depth-input' ? '已上传' : '未记录'}</time>
           {index > 0 && step.elapsedSeconds !== null && <small>{loading ? '—' : span(step.elapsedSeconds)}</small>}
         </button>
       </li>)}
     </ol>
     <div className="admin-review-selected" data-tone={active.tone} aria-live="polite">
       <strong>{active.label}</strong><time dateTime={active.at || undefined}>{loading ? '—' : milestoneDate(active.at)}</time><span>{loading ? '—' : span(active.elapsedSeconds)}</span>
-      <span className="admin-review-selected-state">{loading ? '' : active.tone === 'critical' ? '异常' : active.tone === 'warning' ? '待核实' : active.tone === 'missing' ? '未记录' : '已记录'}</span>
+      <span className="admin-review-selected-state">{loading ? '' : active.tone === 'critical' ? '异常' : active.tone === 'warning' ? '待核实' : active.id === 'depth-input' ? '已上传' : active.tone === 'missing' ? '未记录' : '已记录'}</span>
     </div>
   </section>
 }

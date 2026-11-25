@@ -559,7 +559,10 @@ def test_v2_http_error_body_only_exposes_whitelisted_reason():
     response = b'{"error":"IMPORT_REJECTED","reason":"INVALID_PRODUCT_REFERENCE","token":"private"}'
     error = HTTPError("http://cut.invalid", 409, "Conflict", {}, BytesIO(response))
     assert worker._http_detail(error) == "INVALID_PRODUCT_REFERENCE"
-    error = HTTPError("http://cut.invalid", 409, "Conflict", {}, BytesIO(b'{"reason":"secret/token"}'))
+    error = HTTPError(
+        "http://cut.invalid", 409, "Conflict", {},
+        BytesIO(b'{"reason":"secret/token"}'),
+    )
     assert worker._http_detail(error) == ""
 
 

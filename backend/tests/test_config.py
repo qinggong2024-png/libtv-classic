@@ -226,13 +226,13 @@ def test_production_rejects_insecure_session_cookie() -> None:
 
 
 def test_comma_separated_public_origins_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("APP_PUBLIC_ORIGINS", "http://localhost:5173,http://192.168.30.126:5173")
+    monkeypatch.setenv("APP_PUBLIC_ORIGINS", "http://localhost:5173,http://10.12.34.56:5173")
 
     settings = Settings(_env_file=None)
 
     assert settings.app_public_origins == [
         "http://localhost:5173",
-        "http://192.168.30.126:5173",
+        "http://10.12.34.56:5173",
     ]
 
 

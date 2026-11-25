@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import re
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
@@ -20,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 _TENANT = "classic-cutflow-downloads"
 _OPERATION = "cutflow-download-name"
 _TIMEZONE = ZoneInfo("Asia/Shanghai")
+logger = logging.getLogger(__name__)
 
 
 def _brand_code(source: dict) -> str | None:
@@ -91,6 +93,8 @@ async def download_filename(
     kind = "single" if isinstance(row, CutflowHandoff) else "multi"
     identity = f"{kind}:{row.id}:{output_id}"
     # Capture ORM attributes before any rollback, which expires loaded instances.
+    fallback = f"edited-{hashlib.sha256(identity.encode()).hexdigest()[:24]}.mp4"
+    lock_failures = 0
     for _ in range(12):
         record = (await session.execute(select(
             ApiIdempotencyRecord.payload_hash, ApiIdempotencyRecord.response_body_json,
@@ -136,4 +140,11 @@ async def download_filename(
             await session.rollback()
             if "locked" not in str(exc).lower() and "busy" not in str(exc).lower():
                 raise
-    raise RuntimeError("成片命名暂不可用，请稍后重新下载")
+            # The file is already verified. Do not retry a contended ledger
+            # twelve times or prevent delivery merely to allocate a name.
+            lock_failures += 1
+            if lock_failures >= 2:
+                logger.warning("CUT download name ledger busy; using unreserved fallback")
+                return fallback
+    logger.warning("CUT download name ledger contention; using unreserved fallback")
+    return fallback

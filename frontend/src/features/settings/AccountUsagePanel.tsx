@@ -65,7 +65,7 @@ export function AccountUsagePanel({ actorId }: { actorId?: string }) {
       <div><h2>用量概览</h2><small>USD · 预估费用</small></div>
       <button className="icon-button" type="button" title="刷新用量" aria-label="刷新用量" disabled={busy || !actorId || invalidRange} onClick={() => setRefresh(v => v + 1)}><RefreshCw size={17} className={busy ? 'spin' : undefined} /></button>
     </header>
-    <div className="personal-usage-period" role="group" aria-label="统计范围">
+    <div className="personal-usage-period" role="group" aria-label="统计范围"><span className="harmony-segment-thumb" aria-hidden="true"/>
       {periods.map(({ id, label }) => <button type="button" key={id} aria-pressed={period === id} onClick={() => changePeriod(id)}>{label}</button>)}
     </div>
     {period === 'custom' ? <div className="personal-usage-dates">

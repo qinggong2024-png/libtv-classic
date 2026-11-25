@@ -413,9 +413,16 @@ async def multi_output_media(
         )
     except FileNotFoundError as exc:
         raise HTTPException(status.HTTP_410_GONE, "edited output has expired") from exc
-    filename = await download_filename(session, task, output) if download else None
+    # Naming may roll back the session and expire all ORM instances.
+    user_id, media_id = actor.id, f"{task.id}/{output_id}"
+    filename = None
     if download:
-        await record_download(session, user_id=actor.id, action=CUTFLOW_DOWNLOAD, media_id=f"{task.id}/{output_id}")
+        await session.commit()
+        async with request.app.state.database.download_metadata_session_factory() as metadata:
+            filename = await download_filename(metadata, task, output)
+            await record_download(
+                metadata, user_id=user_id, action=CUTFLOW_DOWNLOAD, media_id=media_id,
+            )
     return FileResponse(
         local,
         media_type="video/mp4",
@@ -488,9 +495,15 @@ async def output_media(
         )
     except FileNotFoundError as exc:
         raise HTTPException(status.HTTP_410_GONE, "edited output has expired") from exc
-    filename = await download_filename(session, handoff, output) if download else None
+    user_id, media_id = actor.id, f"{handoff.id}/{output_id}"
+    filename = None
     if download:
-        await record_download(session, user_id=actor.id, action=CUTFLOW_DOWNLOAD, media_id=f"{handoff.id}/{output_id}")
+        await session.commit()
+        async with request.app.state.database.download_metadata_session_factory() as metadata:
+            filename = await download_filename(metadata, handoff, output)
+            await record_download(
+                metadata, user_id=user_id, action=CUTFLOW_DOWNLOAD, media_id=media_id,
+            )
     return FileResponse(local, media_type="video/mp4",
                         filename=filename,
                         headers={"Cache-Control": "private, no-store"})

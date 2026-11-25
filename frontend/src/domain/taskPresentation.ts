@@ -83,7 +83,18 @@ export function isKlingRiskControlFailure(task: Task): boolean {
     )
 }
 
+export function isKlingApiBalanceFailure(task: Task): boolean {
+  return task.generationProvider?.startsWith('kling') === true
+    && task.variants.some(variant =>
+      variant.errorCode === 'KLING_API_BALANCE_INSUFFICIENT'
+      || (variant.errorCode === 'KLING_API_ACCOUNT_UNAVAILABLE'
+        && /(?:balance|credits?|余额|灵感值).*(?:not enough|insufficient|不足|用完)/i.test(variantErrorMessage(variant) ?? '')),
+    )
+}
+
 export function taskRecoveryHeadline(task: Task): string {
+  if (isKlingApiBalanceFailure(task)) return 'API 余额不足'
+  if (task.phaseReasonCode === 'KLING_PRIOR_RISK_CONTROL_REJECTED') return '已阻止重复风控提交'
   if (isKlingRiskControlFailure(task)) return '可灵云端风控审核未通过'
   if (isWaveSpeedBalanceFailure(task)) {
     return task.workflowKind === 'DEEP_VIDEO' && task.settings?.deepVideoStage === 'replacement'
@@ -95,6 +106,9 @@ export function taskRecoveryHeadline(task: Task): string {
 
 export function taskFailureMessage(task: Task): string {
   if (task.phase === 'ACTION_REQUIRED') {
+    if (isKlingApiBalanceFailure(task)) {
+      return 'API 余额不足，请联系管理员充值。已确认没有提交成功的失败片段会自动恢复；已完成的视频继续保留。状态不明的请求仍须先核对。'
+    }
     if (isKlingRiskControlFailure(task)) {
       return '可灵已受理任务，但云端风控审核未通过，未生成视频。服务未说明是哪张图片或哪段提示词触发；请管理员核对参考图和提示词，暂勿直接重试。扣费请以可灵回执与任务账务记录为准。'
     }

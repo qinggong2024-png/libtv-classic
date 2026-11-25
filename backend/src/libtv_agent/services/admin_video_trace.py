@@ -150,6 +150,64 @@ def _confirmed_wire_audit(
     return None
 
 
+def _depth_state(command):
+    manifest = command.command_manifest_json if command else None
+    state = manifest.get("depthPipeline") if isinstance(manifest, dict) else None
+    return state if isinstance(state, dict) else {}
+
+
+def _deep_media(task, attempt, config, assets, command):
+    """Internal object keys are never serialized; source must belong to this task."""
+    if _enum(task.workflow_kind) != "DEEP_VIDEO":
+        return {}
+    source = next((a for a in assets if a.parent_task_id == task.id and a.role == "REFERENCE_VIDEO"
+                   and a.deleted_at is None and a.used_for_generation
+                   and a.mime_type in {"video/mp4", "video/quicktime"} and a.object_key), None)
+    media = {}
+    if source:
+        kind = "depth" if config.get("referenceVideoType") == "depth" else "source"
+        media[kind] = (source.object_key, source.mime_type)
+    state = _depth_state(command)
+    # Never accept a URL, arbitrary key or another task's intermediate object.
+    expected = f"users/{task.user_id}/intermediates/{task.id}/{attempt.id}/depth.mp4"
+    if (config.get("deepVideoPipeline") == "depth-first-v1"
+            and state.get("version") == "depth-first-v1"
+            and state.get("depthCompletedAt") and state.get("depthObjectKey") in {expected, f"{get_settings().object_store_prefix}/{expected}"}):
+        media["depth"] = (state["depthObjectKey"], "video/mp4")
+    return media
+
+
+def _saved_time(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+async def get_admin_deep_media(session: AsyncSession, artifact_id: uuid.UUID, kind: str):
+    if kind not in {"source", "depth"}:
+        raise HTTPException(404, "deep video media unavailable")
+    row = (await session.execute(
+        select(GenerationAttempt, GenerationVariant, ParentTask)
+        .join(GenerationVariant, GenerationVariant.id == GenerationAttempt.variant_id)
+        .join(ParentTask, ParentTask.id == GenerationVariant.parent_task_id)
+        .join(DownloadArtifact, DownloadArtifact.attempt_id == GenerationAttempt.id)
+        .where(DownloadArtifact.id == artifact_id, DownloadArtifact.status == DownloadStatus.READY,
+               DownloadArtifact.deleted_at.is_(None), DownloadArtifact.object_key.is_not(None))
+    )).first()
+    if not row:
+        raise HTTPException(404, "deep video media unavailable")
+    attempt, variant, task = row
+    assets = list(await session.scalars(select(Asset).where(Asset.parent_task_id == task.id).order_by(Asset.order_no, Asset.id)))
+    command = await session.scalar(select(GenerationCommand).where(GenerationCommand.attempt_id == attempt.id))
+    media = _deep_media(task, attempt, variant.generation_config_json or {}, assets, command)
+    if kind not in media:
+        raise HTTPException(404, "deep video media unavailable")
+    return media[kind]
+
+
 async def get_admin_video_trace(session: AsyncSession, artifact_id: uuid.UUID) -> dict:
     row = (await session.execute(
         select(DownloadArtifact, GenerationAttempt, GenerationVariant, ParentTask)
@@ -167,7 +225,7 @@ async def get_admin_video_trace(session: AsyncSession, artifact_id: uuid.UUID) -
         raise HTTPException(404, "saved video not found")
     artifact, attempt, variant, task = row
 
-    wire_audit = _confirmed_wire_audit(attempt, variant, task)
+    wire_audit = _confirmed_wire_audit(attempt, variant, task) if _enum(task.workflow_kind) != "DEEP_VIDEO" else None
     config = variant.generation_config_json or {}
     settings = task.settings_json or {}
     if not isinstance(config, dict):
@@ -227,6 +285,9 @@ async def get_admin_video_trace(session: AsyncSession, artifact_id: uuid.UUID) -
         select(GenerationCommand).where(GenerationCommand.attempt_id == attempt.id)
     )).scalars().all()
     command = commands[0] if commands else None
+    deep = _enum(task.workflow_kind) == "DEEP_VIDEO"
+    depth_state = _depth_state(command) if deep else {}
+    deep_media = _deep_media(task, attempt, config, task_assets, command) if deep else {}
     submissions = (await session.scalars(
         select(GenerationSubmissionAttempt)
         .where(GenerationSubmissionAttempt.attempt_id == attempt.id)
@@ -318,6 +379,14 @@ async def get_admin_video_trace(session: AsyncSession, artifact_id: uuid.UUID) -
         event(f"素材准备：{item.step_type}", item.started_at,
               "materialization_operation.started_at",
               end=item.completed_at, status=item.status)
+    if deep:
+        event("深度提取提交", _saved_time(depth_state.get("depthSubmittedAt")), "depth_pipeline.depthSubmittedAt")
+        event("深度提取完成", _saved_time(depth_state.get("depthCompletedAt")), "depth_pipeline.depthCompletedAt")
+        event("复刻提交", _saved_time(depth_state.get("replacementSubmittedAt")), "depth_pipeline.replacementSubmittedAt")
+        if config.get("referenceVideoType") == "depth" and "depth" in deep_media:
+            source = next((a for a in task_assets if a.role == "REFERENCE_VIDEO" and a.object_key == deep_media["depth"][0]), None)
+            if source:
+                event("已有深度素材记录", source.created_at, "asset.depth_input.created_at")
     event("保存原片记录创建", artifact.created_at, "download_artifact.created_at")
     # updated_at is the last saved-record update; not proof of download completion.
     event("保存原片记录最后更新", artifact.updated_at,
@@ -389,6 +458,15 @@ async def get_admin_video_trace(session: AsyncSession, artifact_id: uuid.UUID) -
         "attemptId": str(attempt.id),
         "variantId": str(variant.id),
         "klingWireAudit": wire_audit,
+        "workflowKind": _enum(task.workflow_kind),
+        "deepVideo": ({
+            "mode": config.get("deepVideoMode"),
+            "pipeline": config.get("deepVideoPipeline"),
+            "referenceVideoType": config.get("referenceVideoType"),
+            "model": attempt.provider_model or config.get("model"),
+            "depthModel": config.get("depthModel"),
+            "media": sorted(deep_media),
+        } if deep else None),
         "taskCreatedAt": _iso(task.created_at),
         "prompt": {
             "savedText": variant.prompt_text or None,

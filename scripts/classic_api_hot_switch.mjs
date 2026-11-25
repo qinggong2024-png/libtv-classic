@@ -10,7 +10,8 @@
  *     --route-file E:\\Projects\\libtv-classic-0e3d1c8-main\\var\\classic-lan\\runtime\\api-routing.json --apply
  */
 import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { open, rm } from 'node:fs/promises'
 import { parseArgs } from 'node:util'
 import { activeClassicApiPort, atomicallySetClassicApiPort } from './classic_api_routing.mjs'
@@ -35,12 +36,32 @@ export async function inspectClassicApiRoute({ webPort = 5176, fetchJson = readJ
   return status
 }
 
+function verifyOnlineApiOnly({ routeFile, webPort, expectedCurrent, targetPort,
+  expectedCurrentRevision, expectedSourceRevision }) {
+  if (resolve(routeFile) !== resolve(DEFAULT_ROUTE_FILE) || webPort !== 5176 ||
+      ![8002, 8003].includes(expectedCurrent) || ![8002, 8003].includes(targetPort)) {
+    throw new Error('API-only switch requires the installed Classic runtime and fixed slots')
+  }
+  try {
+    execFileSync(join(PROJECT, '.venv', 'Scripts', 'python.exe'), [
+      join(PROJECT, 'scripts', 'classic_online_standby.py'),
+      '--current', String(expectedCurrent), '--target', String(targetPort),
+      '--expected-active', expectedCurrentRevision, '--expected-target', expectedSourceRevision,
+    ], { cwd: PROJECT, encoding: 'utf8', timeout: 30000, windowsHide: true, stdio: 'pipe' })
+  } catch (error) {
+    throw new Error('Reviewed API-only compatibility proof failed: ' + (error.stderr || error.message))
+  }
+}
+
 export async function switchClassicApiRoute({
   routeFile = DEFAULT_ROUTE_FILE,
   webPort = 5176,
   expectedCurrent,
   targetPort,
   expectedSourceRevision,
+  expectedCurrentRevision,
+  onlineApiOnly = false,
+  verifyOnline = verifyOnlineApiOnly,
   apply = false,
   fetchJson = readJson,
 } = {}) {
@@ -50,6 +71,9 @@ export async function switchClassicApiRoute({
   }
   if (!/^[0-9a-f]{64}$/.test(expectedSourceRevision || '')) {
     throw new Error('Specify the full 64-character target source fingerprint')
+  }
+  if (onlineApiOnly && !/^[0-9a-f]{64}$/.test(expectedCurrentRevision || '')) {
+    throw new Error('API-only switch requires the full expected active source fingerprint')
   }
   const lockPath = join(dirname(routeFile), 'api-routing.lock')
   let lock
@@ -71,8 +95,10 @@ export async function switchClassicApiRoute({
     const newGate = await fetchJson(`${direct}/api/v1/system/classic-new-video-admission`)
     for (const gate of [oldGate, newGate]) {
       if (gate.gateVersion !== 1 || gate.deploymentId !== EXPECTED_DEPLOYMENT ||
-          gate.configured !== true || gate.newVideoAdmissionsPaused !== true) {
-        throw new Error('Both classic API deployments must verify the SAME paused intake gate')
+          gate.configured !== true || gate.newVideoAdmissionsPaused !== !onlineApiOnly) {
+        throw new Error(onlineApiOnly
+          ? 'Both classic API deployments must verify the SAME open intake gate'
+          : 'Both classic API deployments must verify the SAME paused intake gate')
       }
     }
     const oldConfig = await fetchJson(`${original}/api/v1/system/status`)
@@ -81,6 +107,15 @@ export async function switchClassicApiRoute({
         !source.configRevision || source.configRevision !== oldConfig.configRevision ||
         !source.schemaRevision || source.schemaRevision !== oldConfig.schemaRevision) {
       throw new Error('Target API revision, configuration or schema is incompatible with the active API')
+    }
+    if (onlineApiOnly) {
+      if (oldConfig.sourceRevision !== expectedCurrentRevision) {
+        throw new Error('Active API revision changed')
+      }
+      // Reuse the process, durable, schema and task checks under the route lock.
+      // Only an explicitly reviewed source pair is permitted; no Worker changes.
+      await verifyOnline({ routeFile, webPort, expectedCurrent, targetPort,
+        expectedCurrentRevision, expectedSourceRevision })
     }
     if (!apply) return { action: 'dry-run', from: expectedCurrent, to: targetPort,
       expectedSourceRevision, inFlightByPort: before.inFlightByPort }
@@ -114,6 +149,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     'expected-current': { type: 'string' }, target: { type: 'string' },
     'expected-source-revision': { type: 'string' }, 'web-port': { type: 'string' },
     apply: { type: 'boolean', default: false },
+    'online-api-only': { type: 'boolean', default: false },
+    'expected-current-revision': { type: 'string' },
     'route-file': { type: 'string' },
   } })
   try {
@@ -129,6 +166,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
         expectedCurrent: Number(values['expected-current']),
         targetPort: Number(values.target),
         expectedSourceRevision: values['expected-source-revision'],
+        expectedCurrentRevision: values['expected-current-revision'],
+        onlineApiOnly: values['online-api-only'],
         routeFile: values['route-file'] || DEFAULT_ROUTE_FILE,
         webPort: Number(values['web-port'] || '5176'),
         apply: values.apply,

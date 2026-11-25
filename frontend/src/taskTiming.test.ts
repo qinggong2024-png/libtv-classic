@@ -95,3 +95,16 @@ it('shows only replacement and download for supplied depth input', () => {
   expect(visibleTaskTimingStageKeys('DEEP_VIDEO', false, true)).toEqual(['SOURCE_UPLOAD', 'REPLACEMENT', 'DOWNLOAD'])
   expect(visibleProductionStageKeys('DEEP_VIDEO', undefined, false, true)).toEqual(['MATERIALS', 'REPLACEMENT', 'RESULT'])
 })
+
+it('shows the two separate stages for a depth-first Seedance recreation', () => {
+  expect(visibleTaskTimingStageKeys('DEEP_VIDEO', true)).toEqual(['SOURCE_UPLOAD', 'DEPTH_EXTRACTION', 'REPLACEMENT', 'DOWNLOAD'])
+  expect(visibleProductionStageKeys('DEEP_VIDEO', undefined, true)).toEqual(['MATERIALS', 'DEPTH_EXTRACTION', 'REPLACEMENT', 'RESULT'])
+  expect(currentProductionStageIndex('GENERATING', 'DEEP_VIDEO', undefined, true, 'depth')).toBe(1)
+  expect(currentProductionStageIndex('GENERATING', 'DEEP_VIDEO', undefined, true, 'replacement')).toBe(2)
+})
+
+it('shows a depth-only task as Depth Anything extraction', () => {
+  expect(visibleTaskTimingStageKeys('DEEP_VIDEO', false, false, true)).toEqual(['SOURCE_UPLOAD', 'DEPTH_EXTRACTION', 'DOWNLOAD'])
+  expect(visibleProductionStageKeys('DEEP_VIDEO', undefined, false, false, true)).toEqual(['MATERIALS', 'DEPTH_EXTRACTION', 'RESULT'])
+  expect(currentProductionStageIndex('GENERATING', 'DEEP_VIDEO', undefined, false, 'depth', false, true)).toBe(1)
+})

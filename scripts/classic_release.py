@@ -316,7 +316,7 @@ def plan_live_frontend(root: Path, approved=None) -> dict:
                 if tree(root, base) == tree(root, approved):
                     result.update(ready=True, nextAction="frontend-already-current")
                 else:
-                    scope = frontend_scope(root, base, approved)
+                    scope = frontend_scope(root, base, approved, api=active.get('sourceRevision'))
                     result["changes"] = scope
                     if scope["frontendHotEligible"]:
                         result.update(ready=True, nextAction="review-api-compatibility-and-prepare-isolated",
@@ -333,7 +333,7 @@ def plan_live_frontend(root: Path, approved=None) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("deploy", "status", "check", "plan", "plan-live-frontend", "publish", "publish-frontend", "verify", "prepare-isolated", "plan-isolated", "publish-isolated", "verify-isolated"))
+    parser.add_argument("command", choices=("deploy", "deploy-api-candidate", "promote-candidate", "status", "check", "plan", "plan-live-frontend", "publish", "publish-frontend", "verify", "prepare-isolated", "plan-isolated", "publish-isolated", "verify-isolated"))
     parser.add_argument("--api-only", action="store_true", help="Deploy an already installed reviewed API-only standby")
     parser.add_argument("--change-base", help="Approved prior commit for exact change-scope verification")
     parser.add_argument("--apply", action="store_true", help="Required for publish-frontend")
@@ -341,15 +341,36 @@ def main() -> int:
     parser.add_argument("--expected-old-frontend", help="Approved current live index SHA256 for frontend-only publish")
     parser.add_argument("--expected-main-head")
     parser.add_argument("--expected-api-revision")
+    parser.add_argument("--expected-standby-revision", help="Pinned previous standby source fingerprint")
     parser.add_argument("--expected-frontend-sha256")
     parser.add_argument("--baseline-unknown", type=int, default=BASELINE_PAID_UNKNOWN)
     parser.add_argument("--candidate-root", type=Path, help="Isolated checkout composed of live API base and approved frontend")
     parser.add_argument("--expected-candidate-head", help="Full isolated candidate commit")
     parser.add_argument("--approved-frontend-head", help="Full reviewed frontend source commit, ancestor of main")
     parser.add_argument("--reviewed-api-compatible", action="store_true", help="Explicit approval of the exact frontend/API compatibility")
+    parser.add_argument("--reviewed-candidate", action="store_true", help="Exact candidate diff and tests reviewed before source-only fast-forward")
     args = parser.parse_args()
     if args.baseline_unknown < 0:
         parser.error("--baseline-unknown must be nonnegative")
+    if args.command == "deploy-api-candidate":
+        from classic_api_candidate import deploy as deploy_api_candidate
+        if not args.candidate_root:
+            parser.error("--candidate-root is required")
+        result = deploy_api_candidate(ROOT, args.candidate_root, expected_main=args.expected_main_head,
+            expected_candidate=args.expected_candidate_head, expected_api=args.expected_api_revision,
+            expected_standby=args.expected_standby_revision, apply=args.apply,
+            reviewed=args.reviewed_candidate and args.reviewed_api_compatible)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ready"] else 2
+    if args.command == "promote-candidate":
+        from classic_simple_deploy import promote_candidate
+        if not args.candidate_root:
+            parser.error("--candidate-root is required")
+        result = promote_candidate(ROOT, args.candidate_root, expected_main=args.expected_main_head,
+                                   expected_candidate=args.expected_candidate_head, apply=args.apply,
+                                   reviewed=args.reviewed_candidate)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ready"] else 2
     if args.command == "deploy":
         from classic_simple_deploy import deploy
         result = deploy(ROOT, apply=args.apply, api_only=args.api_only,

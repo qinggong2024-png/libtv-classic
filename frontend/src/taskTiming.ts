@@ -62,7 +62,9 @@ export function visibleTaskTimingStageKeys(
   workflowKind?: string | null,
   depthFirst = false,
   depthInput = false,
+  depthOnly = false,
 ): readonly TaskTimingStageKey[] {
+  if (workflowKind === 'DEEP_VIDEO' && depthOnly) return ['SOURCE_UPLOAD', 'DEPTH_EXTRACTION', 'DOWNLOAD']
   if (workflowKind === 'DEEP_VIDEO' && depthInput) return ['SOURCE_UPLOAD', 'REPLACEMENT', 'DOWNLOAD']
   if (workflowKind === 'DEEP_VIDEO' && depthFirst) return ['SOURCE_UPLOAD', 'DEPTH_EXTRACTION', 'REPLACEMENT', 'DOWNLOAD']
   return workflowKind === 'FIXED_TEMPLATE' || workflowKind === 'DEEP_VIDEO'
@@ -75,7 +77,9 @@ export function visibleProductionStageKeys(
   generationMode?: unknown,
   depthFirst = false,
   depthInput = false,
+  depthOnly = false,
 ): readonly ProductionStageKey[] {
+  if (workflowKind === 'DEEP_VIDEO' && depthOnly) return ['MATERIALS', 'DEPTH_EXTRACTION', 'RESULT']
   if (workflowKind === 'DEEP_VIDEO' && depthInput) return ['MATERIALS', 'REPLACEMENT', 'RESULT']
   if (workflowKind === 'DEEP_VIDEO' && depthFirst) return ['MATERIALS', 'DEPTH_EXTRACTION', 'REPLACEMENT', 'RESULT']
   if (workflowKind === 'DEEP_VIDEO') return CUSTOM_PRODUCTION_STAGE_KEYS
@@ -91,8 +95,10 @@ export function currentProductionStageIndex(
   generationMode?: unknown,
   depthFirst = false,
   depthStage?: unknown,
+  depthInput = false,
+  depthOnly = false,
 ): number {
-  const stages = visibleProductionStageKeys(workflowKind, generationMode, depthFirst)
+  const stages = visibleProductionStageKeys(workflowKind, generationMode, depthFirst, depthInput, depthOnly)
   if (phase === 'DRAFT') return 0
   if (phase === 'DELIVERABLE' || phase === 'PARTIALLY_DELIVERABLE') return stages.length - 1
   if (workflowKind === 'DEEP_VIDEO') return depthFirst && depthStage === 'replacement' ? 2 : 1

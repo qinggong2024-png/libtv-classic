@@ -36,10 +36,29 @@ describe('compact production status', () => {
     expect(html).not.toContain('任务累计用时')
   })
 
+  it('shows depth extraction and Seedance replacement as separate progress stages', () => {
+    const deepFirst = {
+      ...task,
+      workflowKind: 'DEEP_VIDEO',
+      settings: {
+        deepVideoMode: 'recreate',
+        deepVideoPipeline: 'depth-first-v1',
+        deepVideoStage: 'replacement',
+        model: 'bytedance/seedance-2.5-flash/video-edit',
+        depthModel: 'wavespeed-ai/depth-anything/video',
+      },
+    } as unknown as Task
+    const html = renderToStaticMarkup(<TaskAdaptiveProgress task={deepFirst} />)
+    expect(html).toContain('Depth Anything 深度提取')
+    expect(html).toContain('Seedance 2.5 Flash 人物与商品替换')
+    expect(html).toContain('aria-label="制作阶段"')
+    expect(html).not.toContain('视频制作')
+  })
+
   it('uses the replacement-stage language for deep video workflows', () => {
     const deep = { ...task, workflowKind: 'DEEP_VIDEO' } as unknown as Task
     const html = renderToStaticMarkup(<TaskAdaptiveProgress task={deep} />)
-    expect(html).toContain('视频制作')
+    expect(html).toContain('视频替换')
     expect(html).not.toContain('原片生成中')
   })
 })

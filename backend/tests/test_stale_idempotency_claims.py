@@ -145,3 +145,31 @@ async def test_release_claim_leaves_a_settled_row_for_the_same_key(session) -> N
     )
 
     assert await _count(session) == 1, "a settled response must not be deleted by a late release"
+
+@pytest.mark.asyncio
+async def test_sweep_rechecks_receipt_after_candidate_scan(session, monkeypatch):
+    from sqlalchemy import update
+
+    old = _record(age=timedelta(hours=2), response_status=UNSETTLED)
+    session.add(old)
+    await session.commit()
+    rid = old.id
+    original_commit = session.commit
+    committed = False
+
+    async def concurrent_finish():
+        nonlocal committed
+        await original_commit()
+        if not committed:
+            committed = True
+            # A response lands between candidate scan and conditional deletion.
+            await session.execute(update(ApiIdempotencyRecord).where(
+                ApiIdempotencyRecord.id == rid,
+            ).values(response_status=201, response_body_json={"taskId": "original"}))
+            await original_commit()
+
+    monkeypatch.setattr(session, "commit", concurrent_finish)
+    assert await release_stale_idempotency_claims(session) == 0
+    fresh = await session.get(ApiIdempotencyRecord, rid, populate_existing=True)
+    assert fresh.response_status == 201
+    assert fresh.response_body_json == {"taskId": "original"}

@@ -159,3 +159,33 @@ async def test_single_clip_cut_and_failed_cut_do_not_confuse_playable_state(acco
     assert (await client.get(
         f"{BASE}/{parent_id}/cut/single/{handoff_id}/edited-1/play", headers=root,
     )).status_code == 404
+
+async def test_gallery_includes_tasks_that_failed_before_any_video(account_app):
+    app, client, ids = account_app
+    async with app.state.database.session_factory() as session:
+        for suffix, phase, reason in (
+            ("analysis", ParentTaskPhase.ACTION_REQUIRED, "AI_CREATIVE_WORKER_FAILED"),
+            ("prepare", ParentTaskPhase.ACTION_REQUIRED, "MATERIALIZATION_INTERNAL_ERROR"),
+            ("running", ParentTaskPhase.ANALYZING, None),
+        ):
+            session.add(ParentTask(
+                user_id=ids["member"], client_task_id=f"early-{suffix}",
+                title=f"early-{suffix}", asset_count=1, phase=phase,
+                phase_reason_code=reason, created_at=datetime.now(UTC),
+            ))
+        await session.commit()
+    root = actor(ids, "root")
+    response = await client.get(BASE, headers=root, params={"search": "early-"})
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["total"] == 3
+    assert result["healthSummary"] == {"critical": 2, "warning": 0, "normal": 1}
+    rows = {row["title"]: row for row in result["items"]}
+    assert rows["early-analysis"]["phaseReasonCode"] == "AI_CREATIVE_WORKER_FAILED"
+    assert rows["early-prepare"]["phaseReasonCode"] == "MATERIALIZATION_INTERNAL_ERROR"
+    assert all(row["clips"] == [] and row["cut"] is None and row["latestRawAt"] is None for row in rows.values())
+    filtered = await client.get(BASE, headers=root, params={"search": "early-", "health": "critical", "limit": 1})
+    assert filtered.status_code == 200
+    assert filtered.json()["total"] == 2
+    assert len(filtered.json()["items"]) == 1
+    assert (await client.get(BASE, headers=actor(ids, "member"))).status_code == 403

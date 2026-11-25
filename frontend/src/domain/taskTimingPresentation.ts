@@ -15,23 +15,27 @@ export function stageElapsedSeconds(stage: TaskTimingStage, now: number): number
 }
 
 export function taskTimingStages(task: Task): TaskTimingStage[] {
+  const depthOnly = task.workflowKind === 'DEEP_VIDEO' && task.settings?.deepVideoMode === 'depth'
   return (task.timing?.stages ?? []).map((stage) => {
     // Also handle snapshots from an API process that predates stopped-stage
     // support. A settled parent must never leave a client timer running.
     const unknown = stage.key === 'GENERATION' && task.variants.some((variant) => variant.generationStatus === 'UNKNOWN')
     const failed = stage.key === 'GENERATION' && task.variants.some((variant) => variant.generationStatus === 'FAILED')
     const invalidCompletion = stage.status === 'COMPLETED' && (unknown || failed)
+    const displayStage: TaskTimingStage = depthOnly && stage.key === 'GENERATION'
+      ? { ...stage, key: 'DEPTH_EXTRACTION' }
+      : stage
     if (STOPPED_TIMING_STATUSES.has(stage.status)) {
-      return { ...stage, stoppedAt: stage.stoppedAt ?? task.updatedAt, activeStartedAt: null }
+      return { ...displayStage, stoppedAt: stage.stoppedAt ?? task.updatedAt, activeStartedAt: null }
     }
-    if ((!invalidCompletion && stage.status !== 'ACTIVE') || !SETTLED_PHASES.has(task.phase)) return stage
+    if ((!invalidCompletion && stage.status !== 'ACTIVE') || !SETTLED_PHASES.has(task.phase)) return displayStage
     const stoppedAt = stage.stoppedAt ?? task.updatedAt
     const end = parseTaskTimestamp(stoppedAt)
     const start = stage.activeStartedAt ? parseTaskTimestamp(stage.activeStartedAt) : NaN
     const status = task.phase === 'CANCELLED' ? 'CANCELLED'
       : unknown ? 'UNKNOWN' : failed ? 'FAILED' : 'INTERRUPTED'
     return {
-      ...stage,
+      ...displayStage,
       status,
       durationSeconds: Number.isFinite(start) && Number.isFinite(end) && end >= start
         ? stageElapsedSeconds(stage, end)

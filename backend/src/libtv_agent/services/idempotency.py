@@ -153,6 +153,15 @@ async def release_stale_idempotency_claims(
     )
     if not stale:
         return 0
-    await session.execute(delete(ApiIdempotencyRecord).where(ApiIdempotencyRecord.id.in_(stale)))
+    # End the read transaction before attempting the conditional delete. A
+    # concurrent request may have committed a real response since the scan.
     await session.commit()
-    return len(stale)
+    deleted = await session.execute(
+        delete(ApiIdempotencyRecord).where(
+            ApiIdempotencyRecord.id.in_(stale),
+            ApiIdempotencyRecord.response_status == 0,
+            ApiIdempotencyRecord.created_at <= cutoff,
+        )
+    )
+    await session.commit()
+    return deleted.rowcount

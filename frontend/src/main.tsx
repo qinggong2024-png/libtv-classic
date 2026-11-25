@@ -4,6 +4,7 @@ import App from './app/App'
 import { ErrorBoundary } from './ErrorBoundary'
 import './styles.css'
 import './visualSystem.css'
+import './shared/components/workspaceHarmony.css'
 import { installPageVersionSync } from './pageVersionSync'
 
 // New navigations use no-store HTML; only restored documents need a version check.

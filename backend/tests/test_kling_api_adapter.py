@@ -701,6 +701,21 @@ async def test_rejected_account_submission_is_not_unknown(
 
 
 @pytest.mark.asyncio
+async def test_explicit_balance_shortage_has_own_error_code(tmp_path: Path) -> None:
+    async def reject(method, url, headers, body, request_timeout):
+        return ApiHttpResponse(
+            200, {}, json.dumps({"code": 1102, "message": "Account balance not enough"}).encode(),
+        )
+
+    adapter = KlingOfficialApiAdapter(_settings(tmp_path), http_request=reject)
+    with pytest.raises(KlingApiError) as caught:
+        await adapter.submit(_request(_image(tmp_path / "first.png", "red")))
+    assert caught.value.code == "KLING_API_BALANCE_INSUFFICIENT"
+    assert caught.value.submitted is False
+    assert caught.value.uncertain is False
+
+
+@pytest.mark.asyncio
 async def test_ip_allowlist_error_is_not_retried(tmp_path: Path) -> None:
     calls = []
 

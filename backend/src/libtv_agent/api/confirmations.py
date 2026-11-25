@@ -89,7 +89,6 @@ async def execute_confirmations(
         ) from exc
     if cached:
         return BatchConfirmationResponse.model_validate(cached[1])
-    require_acceptance(settings, "confirmation")
     if settings.classic_durable_confirmation_enabled:
         # Ordinary batch confirmations share one acceptance transaction. Keep
         # the legacy prepared-dispatch path for WAITING_FOR_SEAL batches.
@@ -103,6 +102,7 @@ async def execute_confirmations(
                 use_legacy = True
                 break
         if not use_legacy:
+            require_acceptance(settings, "confirmation", allow_handoff_queue=True)
             results = []
             for item in payload.tasks:
                 try:
@@ -154,6 +154,8 @@ async def execute_confirmations(
             )
             await session.commit()
             return response
+
+    require_acceptance(settings, "confirmation")
 
     # A per-task budget rejection rolls back the session. Persist the claim first
     # so failed batches still get a stable, replayable idempotent response.

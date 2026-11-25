@@ -44,7 +44,7 @@ def release(tmp_path, monkeypatch):
     api = "a" * 64
     mod.record_receipt(root, {"candidateHead": base, "frontendNew": old, "servedFrontendSha256": old})
     def live(_):
-        return {"ok": True, "userUrl": "http://192.168.30.126:5176/", "activeApiPort": 8002,
+        return {"ok": True, "userUrl": "http://10.12.34.56:5176/", "activeApiPort": 8002,
                 "mainCheckout": {"gitHead": main, "matchesRunning": False},
                 "activeApi": {"sourceRevision": api, "diskMatchesRunning": True,
                               "gitHead": base, "root": str(tmp_path / "running-api")},
@@ -55,6 +55,23 @@ def release(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "http_digest", lambda path="/": mod.digest(entry if path == "/" else dist / path.lstrip("/")))
     pins = dict(base=base, approved=main, main=main, api=api, old=old, candidate_head=candidate_head)
     return root, candidate, pins
+
+
+def test_exact_reviewed_status_presentation_scope_is_pinned(monkeypatch):
+    api = "ad6d7b8ed034520060f8f9df71ae9dde35e1e018c037a7ed05215a198d4a8edb"
+    trees = {"base": "7b84c98f36b42b52c261c376cecb6f3d4544318c",
+             "approved": "e6117fd78ea61caa10bd164d9934058a18dd745d"}
+    monkeypatch.setattr(mod, "tree", lambda root, commit: trees[commit])
+    monkeypatch.setattr(mod, "committed_changes", lambda root, base, approved: {
+        "base": base, "target": approved,
+        "paths": ["frontend/src/domain/taskCenterState.ts", "frontend/src/features/production/TaskMediaOverview.tsx"]})
+    assert not mod.frontend_scope(None, "base", "approved")["frontendHotEligible"]
+    assert not mod.frontend_scope(None, "base", "approved", api="a" * 64)["frontendHotEligible"]
+    approved = mod.frontend_scope(None, "base", "approved", api=api)
+    assert approved["frontendHotEligible"]
+    assert approved["exactPresentationReview"] == "classic-status-20261124"
+    trees["approved"] = "f" * 40
+    assert not mod.frontend_scope(None, "base", "approved", api=api)["frontendHotEligible"]
 
 
 def test_isolated_frontend_is_not_blocked_by_unrelated_main_api(release):
@@ -258,3 +275,96 @@ def test_public_svg_actual_content_change_is_not_normalized(release, monkeypatch
     with pytest.raises(ValueError, match="PUBLIC_FILE_CHANGE_REQUIRES_REVIEW"):
         mod.publish_isolated(root, candidate, lock=lambda _: nullcontext(), **pins)
     assert live.read_bytes() == b"<svg>original</svg>"
+
+
+
+def test_feedback_build_input_is_pinned_to_live_receipt(release, monkeypatch):
+    root, candidate, pins = release
+    value = "https://example.invalid/feedback"
+    digest = hashlib.sha256(value.encode()).hexdigest()
+    receipt = mod.record_receipt(root, {"candidateHead": pins["base"], "frontendNew": pins["old"],
+        "servedFrontendSha256": pins["old"], "buildInputDigests": {"VITE_FEEDBACK_URL": digest}})
+    config = root / "var/classic-lan/runtime/frontend-build-env.json"
+    config.write_text(json.dumps({"VITE_FEEDBACK_URL": value}))
+    monkeypatch.setenv("VITE_FEEDBACK_URL", "https://wrong.invalid/")
+    env, hashes = mod.frontend_build_inputs(root, Path(receipt).name)
+    assert env["VITE_FEEDBACK_URL"] == value and hashes == {"VITE_FEEDBACK_URL": digest}
+    config.unlink()
+    with pytest.raises(ValueError, match="FRONTEND_BUILD_INPUT_CHANGED"):
+        mod.frontend_build_inputs(root, Path(receipt).name)
+    config.write_text(json.dumps({"VITE_FEEDBACK_URL": "https://changed.invalid/"}))
+    with pytest.raises(ValueError, match="FRONTEND_BUILD_INPUT_CHANGED"):
+        mod.frontend_build_inputs(root, Path(receipt).name)
+
+
+def test_candidate_promotion_is_pinned_and_source_only(release, monkeypatch):
+    from classic_simple_deploy import promote_candidate
+    import classic_active_release_status as active_status
+    import classic_release as release_module
+    root, candidate, pins = release
+    monkeypatch.setattr(release_module, "report", mod.report)
+    monkeypatch.setattr(active_status, "workspace_source_revision", lambda _: pins["api"])
+    head = mod.git(root, "rev-parse", "HEAD")
+    fresh = root.parent / "integration"
+    mod.git(root, "worktree", "add", "--detach", str(fresh), head)
+    (fresh / "frontend/src/App.tsx").write_text("reviewed")
+    target = commit(fresh, "candidate")
+    args = dict(expected_main=head, expected_candidate=target)
+    monkeypatch.setattr(active_status, "workspace_source_revision", lambda _: "b" * 64)
+    assert "CANDIDATE_BACKEND_NOT_ACTIVE_KEEP_IN_CANDIDATE" in promote_candidate(root, fresh, **args)["blockers"]
+    monkeypatch.setattr(active_status, "workspace_source_revision", lambda _: pins["api"])
+    assert promote_candidate(root, fresh, **args)["ready"]
+    assert not promote_candidate(root, fresh, apply=True, **args)["ready"]
+    assert mod.git(root, "rev-parse", "HEAD") == head
+    (fresh / "frontend/src/App.tsx").write_text("unreviewed")
+    assert not promote_candidate(root, fresh, apply=True, reviewed=True, **args)["ready"]
+    (fresh / "frontend/src/App.tsx").write_text("reviewed")
+    result = promote_candidate(root, fresh, apply=True, reviewed=True, **args)
+    assert result["sourcePromoted"] and not result["deployed"]
+    assert mod.git(root, "rev-parse", "HEAD") == target
+    assert (root / "frontend/dist/index.html").read_bytes() == b"old"
+    assert not promote_candidate(root, fresh, apply=True, reviewed=True, **args)["ready"]
+
+
+
+def test_deep_video_exact_presentation_review_is_pinned(monkeypatch):
+    api = "68333d6b064d48c62c995a449fa53cd2620ebfdde85b552c143ea1dfc9a8bd61"
+    trees = {"base": "e6117fd78ea61caa10bd164d9934058a18dd745d",
+             "approved": "cccbed2c7a74453cb9806c69aeaef7c3538d4f72"}
+    monkeypatch.setattr(mod, "tree", lambda root, commit: trees[commit])
+    monkeypatch.setattr(mod, "committed_changes", lambda *args: {"base": "base", "target": "approved",
+        "paths": ["frontend/src/domain/taskTimingPresentation.ts"]})
+    assert mod.frontend_scope(None, "base", "approved", api=api)["exactPresentationReview"] == "classic-deep-video-20261125"
+    assert not mod.frontend_scope(None, "base", "approved", api="a" * 64)["frontendHotEligible"]
+    trees["approved"] = "0" * 40
+    assert not mod.frontend_scope(None, "base", "approved", api=api)["frontendHotEligible"]
+
+
+def test_public_svg_continuity_receipt_reuses_same_artifact_evidence(release, monkeypatch):
+    root, candidate, pins = release
+    stage = candidate / "frontend/dist-build"
+    stage.mkdir(parents=True, exist_ok=True)
+    (stage / "favicon.svg").write_bytes(b"<svg>\r\n</svg>")
+    live = root / "frontend/dist/favicon.svg"
+    live.write_bytes(b"<svg>\n</svg>")
+    sha = mod.digest(live)
+    monkeypatch.setattr(mod, "http_digest", lambda path="/": sha if path == "/favicon.svg" else pins["old"])
+    original = mod.record_receipt(root, {
+        "candidateHead": pins["base"], "frontendNew": pins["old"],
+        "servedFrontendSha256": pins["old"], "artifactFileDigests": {"favicon.svg": sha},
+    })
+    continuity = {"mode": "api-only-compatibility", "frontendPublished": False,
+                  "frontendOld": pins["old"], "frontendNew": pins["old"],
+                  "servedFrontendSha256": pins["old"], "artifactSourceHead": pins["base"],
+                  "priorReceipt": Path(original).name}
+    first = mod.record_receipt(root, continuity)
+    second = mod.record_receipt(root, dict(continuity, priorReceipt=Path(first).name))
+    assert mod.preserve_verified_public_svg(root, stage, live.parent, Path(second).name) == ["favicon.svg"]
+    assert (stage / "favicon.svg").read_bytes() == live.read_bytes()
+    (stage / "favicon.svg").write_bytes(b"<svg>\r\n</svg>")
+    wrong = mod.record_receipt(root, dict(continuity, artifactSourceHead="f"*40))
+    assert mod.preserve_verified_public_svg(root, stage, live.parent, Path(wrong).name) == []
+    wrong = mod.record_receipt(root, dict(continuity, frontendNew="f"*64, servedFrontendSha256="f"*64, frontendOld="f"*64))
+    assert mod.preserve_verified_public_svg(root, stage, live.parent, Path(wrong).name) == []
+    wrong = mod.record_receipt(root, dict(continuity, priorReceipt="../outside.json"))
+    assert mod.preserve_verified_public_svg(root, stage, live.parent, Path(wrong).name) == []

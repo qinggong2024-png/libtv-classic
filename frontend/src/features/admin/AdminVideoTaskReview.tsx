@@ -1,5 +1,5 @@
 import {
-  AlertCircle, ArrowLeft, ChevronLeft, ChevronRight, Clapperboard,
+  AlertCircle, ArrowLeft, ChevronLeft, ChevronRight, Clapperboard, Clock3,
   FileText, Image, LoaderCircle, Play, RefreshCw, Search, Workflow, X,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -7,9 +7,11 @@ import { createPortal } from 'react-dom'
 import { useDismiss } from '../../shared/hooks/useDismiss'
 import {
   adminCutUrl, adminVideoThumbnailUrl, fetchAdminCutObjectUrl,
-  fetchAdminReferenceObjectUrl, fetchAdminVideoObjectUrl, getAdminVideoTasks, getAdminVideoTrace,
+  fetchAdminReferenceObjectUrl, fetchAdminVideoObjectUrl, fetchAdminDeepVideoObjectUrl, getAdminVideoTasks, getAdminVideoTrace,
 } from '../../api'
-import { errorMessage } from '../../errorPresentation'
+import { errorMessage, userFacingError } from '../../errorPresentation'
+import { generationProviderKind, videoModelDisplayName } from '../../providerPresentation'
+import { TASK_PHASE_META } from '../../domain/workflowStates'
 import { PortalVideoModal } from '../../shared/components/Media'
 import { useMediaObjectUrl } from '../../shared/hooks/useMediaObjectUrl'
 import type {
@@ -24,16 +26,26 @@ import './adminVideoTaskReviewCompact.css'
 
 type VideoChoice = { kind: 'cut'; task: AdminVideoTask; cut: AdminCutDeliverable }
   | { kind: 'raw'; clip: AdminVideoRecord }
+  | { kind: 'source' | 'depth'; clip: AdminVideoRecord }
 
 function videoUrl(adminId: string, choice: VideoChoice) {
   return choice.kind === 'cut'
     ? fetchAdminCutObjectUrl(adminId, choice.task.taskId, choice.cut)
-    : fetchAdminVideoObjectUrl(adminId, choice.clip.artifactId)
+    : choice.kind === 'raw' ? fetchAdminVideoObjectUrl(adminId, choice.clip.artifactId)
+    : fetchAdminDeepVideoObjectUrl(adminId, choice.clip.artifactId, choice.kind)
+}
+function isDeep(clip: AdminVideoRecord) {
+  return clip.workflowKind === 'DEEP_VIDEO' || (clip.workflowKind == null && generationProviderKind(clip.provider) === 'wavespeed' && /seedance|depth-anything/i.test(clip.model ?? ''))
 }
 function label(clip: AdminVideoRecord) {
-  if (clip.variantIndex != null) return clip.variantIndex < 27 ? `Kling 原片 ${String.fromCharCode(64 + clip.variantIndex)}` : `Kling 原片 ${clip.variantIndex}`
-  return clip.variant === 'STABLE' ? 'Kling 原片 A'
-    : clip.variant === 'DYNAMIC' ? 'Kling 原片 B' : 'Kling 原片'
+  if (isDeep(clip)) return clip.deepVideoMode === 'depth' || /depth-anything/i.test(clip.model ?? '') ? '深度片段' : '复刻原片'
+  const provider = generationProviderKind(clip.provider)
+  const prefix = provider === 'kling' ? 'Kling 原片' : provider === 'wavespeed' ? 'WaveSpeed 原片' : provider === 'bach' ? 'Bach 原片' : '生成原片'
+  if (clip.variantIndex != null) return clip.variantIndex < 27 ? `${prefix} ${String.fromCharCode(64 + clip.variantIndex)}` : `${prefix} ${clip.variantIndex}`
+  return clip.variant === 'STABLE' ? prefix + ' A' : clip.variant === 'DYNAMIC' ? prefix + ' B' : prefix
+}
+function mediaLabel(choice: VideoChoice | null) {
+  return !choice ? '无视频' : choice.kind === 'cut' ? 'CUT 成片' : choice.kind === 'source' ? '参考原视频' : choice.kind === 'depth' ? '深度片段' : label(choice.clip)
 }
 function date(value: string | null) {
   if (!value) return '时间未记录'
@@ -138,12 +150,21 @@ function ReferenceSection({ adminId, clip, trace, failed }: {
 function choiceTitle(choice: VideoChoice) {
   return choice.kind === 'cut'
     ? `${choice.task.title} · CUT 最终成片`
-    : `${choice.clip.title} · ${label(choice.clip)}`
+    : `${choice.clip.title} · ${mediaLabel(choice)}`
 }
 function cover(task: AdminVideoTask) {
   return task.cut
     ? adminCutUrl(task.taskId, task.cut, 'thumbnail')
     : task.clips[0] ? adminVideoThumbnailUrl(task.clips[0].artifactId) : ''
+}
+function taskPhaseLabel(task: AdminVideoTask) {
+  if (task.phase === 'ACTION_REQUIRED') {
+    const code = task.phaseReasonCode ?? ''
+    if (/^(ANALYSIS_|AI_CREATIVE_)/.test(code)) return '方案分析异常'
+    if (/^(DURABLE_CONFIRM_|CONFIRMATION_|MATERIALIZATION_|PREPARE_)/.test(code)) return '生成准备异常'
+    return '任务需要处理'
+  }
+  return TASK_PHASE_META[task.phase ?? '']?.label ?? '暂无可播放视频'
 }
 function mainChoice(task: AdminVideoTask): VideoChoice | null {
   return task.cut ? { kind: 'cut', task, cut: task.cut }
@@ -212,10 +233,10 @@ function VideoPreviewContent({ adminId, choice, title }: {
       ? <button type="button" className="admin-task-video-cover"
           title={`播放${title}`} aria-label={`播放${title}`}
           onClick={play}>
-          <img src={thumbnail} alt={`${title}封面`} />
+          {thumbnail ? <img src={thumbnail} alt={`${title}封面`} /> : <span className="admin-deep-media-placeholder"><Clapperboard size={34} />{title}</span>}
           {wanted ? <LoaderCircle size={30} className="spin" /> : <Play size={30} fill="currentColor" />}
         </button>
-      : <div className="admin-task-video-missing">尚无 CUT 最终成片</div>}
+      : <div className="admin-task-video-missing">尚无可播放视频</div>}
     {error && <p className="admin-task-video-error" role="alert">{error}</p>}
   </>
 }
@@ -253,7 +274,7 @@ function TaskDetail({ adminId, task, position, total, onBack, onPrevious, onNext
   }
   const currentVideoKey = playing?.kind === 'cut'
     ? `cut-${playing.cut.batchId}-${playing.cut.outputId}`
-    : playing?.kind === 'raw' ? playing.clip.artifactId : 'none'
+    : playing ? playing.kind + '-' + playing.clip.artifactId : 'none'
   return <section className="admin-task-detail" aria-label="任务巡检详情">
     <header className="admin-task-detail-header">
       <button className="secondary-button" type="button" onClick={onBack}><ArrowLeft size={17} />返回视频目录</button>
@@ -271,10 +292,10 @@ function TaskDetail({ adminId, task, position, total, onBack, onPrevious, onNext
     <div className="admin-task-layout">
       <div className="admin-task-media-column">
         <div className="admin-task-video">
-          <h3>{playing?.kind === 'cut' ? 'CUT 成片' : playing?.kind === 'raw' ? label(playing.clip) : '无视频'}</h3>
+          <h3>{mediaLabel(playing)}{playing && playing.kind !== 'cut' && playing.kind !== 'source' && isDeep(playing.clip) && <small> · {playing.kind === 'depth' && trace?.deepVideo?.referenceVideoType === 'depth' ? '已上传' : videoModelDisplayName(playing.kind === 'depth' ? trace?.deepVideo?.depthModel : playing.clip.model) ?? '深度视频'}</small>}</h3>
           <div className="admin-task-video-frame">
             <VideoPreviewContent key={currentVideoKey} adminId={adminId} choice={playing}
-              title={playing?.kind === 'cut' ? 'CUT 成片' : playing?.kind === 'raw' ? label(playing.clip) : '无视频'} />
+              title={mediaLabel(playing)} />
           </div>
         </div>
         <div className="admin-task-media-strip" role="group" aria-label="切换预览视频">
@@ -283,6 +304,13 @@ function TaskDetail({ adminId, task, position, total, onBack, onPrevious, onNext
             <img src={adminCutUrl(task.taskId, task.cut, 'thumbnail')} alt="CUT 成片封面" />
             <span>CUT 成片</span>
           </button>}
+          {clip && trace?.deepVideo?.media.map(kind => <button type="button" key={kind + clip.artifactId}
+            className={playing?.kind === kind ? 'is-active' : ''}
+            aria-pressed={playing?.kind === kind}
+            onClick={() => setPlaying({ kind, clip })}>
+            <span className="admin-deep-media-placeholder"><Clapperboard size={22}/></span>
+            <span>{kind === 'depth' ? '深度片段' : '参考原视频'}</span>
+          </button>)}
           {task.clips.map(item => <button type="button" key={item.artifactId}
             className={playing?.kind === 'raw' && playing.clip.artifactId === item.artifactId ? 'is-active' : ''}
             aria-pressed={playing?.kind === 'raw' && playing.clip.artifactId === item.artifactId}
@@ -294,6 +322,12 @@ function TaskDetail({ adminId, task, position, total, onBack, onPrevious, onNext
       </div>
       <div className="admin-task-inspector">
         <AdminReviewTimeline task={task} traces={Object.values(traces)} loading={traceLoading} />
+        {task.phase === 'ACTION_REQUIRED' && <section className="admin-task-detail-section">
+          <h3><AlertCircle size={17} /> {taskPhaseLabel(task)}</h3>
+          <p>{userFacingError({ code: task.phaseReasonCode, mayHaveBeenAccepted: /UNKNOWN|UNCERTAIN/.test(task.phaseReasonCode ?? '') })}</p>
+          <p>请核对原任务及提交回执，确认是否已受理或扣费后再处理，避免重复生成。</p>
+          {task.phaseReasonCode && <small>原因代码：{task.phaseReasonCode}</small>}
+        </section>}
         <section className="admin-task-detail-section" aria-label="上传参考图与生成参数">
           <header className="admin-task-panel-heading">
             <h3><Image size={17} /> 生成参数与参考图</h3>
@@ -301,24 +335,25 @@ function TaskDetail({ adminId, task, position, total, onBack, onPrevious, onNext
               {task.clips.map(item => <button key={item.artifactId} type="button"
                 className={clip?.artifactId === item.artifactId ? 'is-active' : ''}
                 aria-pressed={clip?.artifactId === item.artifactId}
-                onClick={() => setInspectedClipId(item.artifactId)}>{label(item).replace('Kling 原片 ', '')}</button>)}
+                onClick={() => setInspectedClipId(item.artifactId)}>{label(item)}</button>)}
             </div>}
           </header>
           {clip && <ReferenceSection adminId={adminId} clip={clip}
             trace={trace} failed={!traceLoading && Boolean(traceError)} />}
+          {!clip && <p className="admin-task-reference-empty">暂无原片关联记录；当前任务的参考资料未通过此接口返回。</p>}
         </section>
-        <section className="admin-task-detail-section" aria-label="Sol和Kling提示词">
+        <section className="admin-task-detail-section" aria-label="生成提示词">
           <h3><FileText size={17} /> 提示词 {clip ? `· ${label(clip)}` : ''}</h3>
           {traceError && <p role="status" className="admin-task-reference-empty">{traceError}</p>}
           <div className="admin-task-prompt-pair">
             <details>
-              <summary>{trace?.prompt.plan.masterPrompt ? 'Sol 编排草案' : '已保存编排提示词'}</summary>
+              <summary>{clip && isDeep(clip) ? '已保存生成提示词' : trace?.prompt.plan.masterPrompt ? 'Sol 编排草案' : '已保存编排提示词'}</summary>
               <pre>{trace ? (trace.prompt.plan.masterPrompt || trace.prompt.savedText || '未记录编排提示词') : traceLoading ? '读取中…' : '未记录'}</pre>
             </details>
-            <details>
+            {clip && generationProviderKind(clip.provider) === 'kling' && !isDeep(clip) && <details>
               <summary>Kling 实际接单提示词</summary>
               <pre>{trace ? (trace.klingWireAudit?.exactKlingPrompt || '未找到已核实的 Kling 接单快照') : traceLoading ? '读取中…' : '未记录'}</pre>
-            </details>
+            </details>}
           </div>
         </section>
       </div>
@@ -355,12 +390,12 @@ export function AdminVideoTaskReview({ adminId }: { adminId: string }) {
   const openDetail = (taskId: string) => {
     galleryScroll.current = document.scrollingElement?.scrollTop || 0
     setActiveId(taskId)
-    if (document.scrollingElement) document.scrollingElement.scrollTop = 0
+    document.scrollingElement?.scrollTo?.(0, 0)
   }
   const closeDetail = () => {
     setActiveId(null)
     requestAnimationFrame(() => {
-      if (document.scrollingElement) document.scrollingElement.scrollTop = galleryScroll.current
+      document.scrollingElement?.scrollTo?.(0, galleryScroll.current)
     })
   }
 
@@ -395,7 +430,7 @@ export function AdminVideoTaskReview({ adminId }: { adminId: string }) {
             })[value]}{value !== 'all' ? ` ${page.healthSummary[value]}` : ''}</button>)}
         </div>
         <label>排序 <select aria-label="视频排序" value={sort} onChange={e => { if (e.target.value !== sort) { reset(); setSort(e.target.value as AdminVideoSort) } }}>
-          <option value="newest">最近生成优先</option><option value="priority">异常优先</option>
+          <option value="newest">最近创建优先</option><option value="priority">异常优先</option>
         </select></label>
       </div>}
       <div className="admin-video-summary"><span>本条件下共 <strong>{page?.total ?? '—'}</strong> 个生产任务</span></div>
@@ -406,9 +441,9 @@ export function AdminVideoTaskReview({ adminId }: { adminId: string }) {
         {tasks.map(task => {
           const selected = mainChoice(task)
           return <article key={task.taskId} className="admin-video-card admin-task-card" data-health={task.severity}>
-            <button type="button" className="admin-video-preview" data-orientation={selected?.kind === 'raw' && selected.clip.width && selected.clip.height && selected.clip.width > selected.clip.height ? 'landscape' : 'portrait'} onClick={() => selected && setPlayer(selected)}
-              disabled={!selected} aria-label={task.cut ? `播放成片：${task.title}` : `播放原片：${task.title}`}>
-              <img src={cover(task)} alt={`${task.title} ${task.cut ? 'CUT 成片' : '原片'}封面`} loading="lazy"
+            <button type="button" className="admin-video-preview" data-orientation={selected?.kind === 'raw' && selected.clip.width && selected.clip.height && selected.clip.width > selected.clip.height ? 'landscape' : 'portrait'} onClick={() => selected ? setPlayer(selected) : openDetail(task.taskId)}
+              aria-label={selected ? (task.cut ? `播放成片：${task.title}` : `播放原片：${task.title}`) : `查看任务：${task.title}`}>
+              {selected ? <><img src={cover(task)} alt={`${task.title} ${task.cut ? 'CUT 成片' : '原片'}封面`} loading="lazy"
                 onError={e => {
                   const image = e.currentTarget
                   if (!image.dataset.fallback && task.clips[0]) {
@@ -417,15 +452,15 @@ export function AdminVideoTaskReview({ adminId }: { adminId: string }) {
                   }
                 }} />
               <span className="admin-video-play"><Play size={23} fill="currentColor"/></span>
-              <span className="admin-task-cover-label">{task.cut ? 'CUT 成片' : 'Kling 原片'}</span>
+              <span className="admin-task-cover-label">{task.cut ? 'CUT 成片' : '原片'}</span>
               {(task.cut?.durationSeconds ?? task.clips[0]?.durationSeconds) != null &&
-                <span className="admin-video-duration">{Math.round(task.cut?.durationSeconds ?? task.clips[0].durationSeconds!)}s</span>}
+                <span className="admin-video-duration">{Math.round(task.cut?.durationSeconds ?? task.clips[0].durationSeconds!)}s</span>}</> : <span className="admin-task-no-media">{task.severity === 'normal' ? <Clock3 size={25}/> : <AlertCircle size={25}/>}<strong>{taskPhaseLabel(task)}</strong><small>暂无可播放视频 · 查看详情</small></span>}
             </button>
             <button type="button" className="admin-video-card-body admin-task-detail-trigger" onClick={() => openDetail(task.taskId)}>
               <strong title={task.title}>{task.title}</strong>
               <span>{task.brandName || '未归属品牌'} · {task.username}</span>
               <small>{taskCreationTime(task) ? '创建 ' + date(taskCreationTime(task)) : '原片保存 ' + date(task.latestRawAt ?? task.createdAt)} · {task.clips.length} 条原片 · {task.cut ? '成片已保存' : task.cutStatus ? `CUT ${task.cutStatus}` : '暂无成片'}</small>
-              {task.severity !== 'normal' && <span className="admin-task-issue"><AlertCircle size={13}/> {task.severity === 'critical' ? '存在明确链路异常' : '存在需要检查的记录'}</span>}
+              {task.severity !== 'normal' && <span className="admin-task-issue"><AlertCircle size={13}/> {task.phase === 'ACTION_REQUIRED' ? taskPhaseLabel(task) : task.severity === 'critical' ? '存在明确链路异常' : '存在需要检查的记录'}</span>}
               <span className="admin-video-card-actions">
                 <span className="text-button"><Workflow size={14}/>查看完整详情</span>
               </span>

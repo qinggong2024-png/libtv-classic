@@ -221,3 +221,37 @@ async def test_aggregate_is_a_noop_when_the_phase_is_unchanged(session) -> None:
     assert task.phase is ParentTaskPhase.GENERATING
     assert task.state_version == before
     assert task.phase_reason_code is None
+
+@pytest.mark.asyncio
+async def test_delayed_aggregate_cannot_overwrite_newer_cancellation(session, monkeypatch):
+    from sqlalchemy import update
+    from sqlalchemy.sql.dml import Update
+
+    task, variant = await _task_with_variant(
+        session, ParentTaskPhase.GENERATING, None, GenerationStatus.FAILED
+    )
+    tid, vid, version = task.id, variant.id, task.state_version
+    execute = session.execute
+    intervened = False
+    async def concurrent_cancel(statement, *args, **kwargs):
+        nonlocal intervened
+        if isinstance(statement, Update) and not intervened:
+            intervened = True
+            await execute(update(ParentTask).where(ParentTask.id == tid).values(
+                phase=ParentTaskPhase.CANCELLED,
+                state_version=ParentTask.state_version + 1,
+            ).execution_options(synchronize_session=False))
+        return await execute(statement, *args, **kwargs)
+    monkeypatch.setattr(session, "execute", concurrent_cancel)
+    await _supervisor()._aggregate_task(session, vid)
+    await session.refresh(task)
+    assert intervened
+    assert task.phase == ParentTaskPhase.CANCELLED
+    assert task.state_version == version + 1
+
+def test_generating_clears_resolved_generic_aggregation_failure():
+    assert reason_code_for_aggregate(
+        AGGREGATED_ACTION_REQUIRED,
+        ParentTaskPhase.ACTION_REQUIRED,
+        ParentTaskPhase.GENERATING,
+    ) is None

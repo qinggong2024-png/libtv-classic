@@ -6,6 +6,10 @@ import asyncio
 import base64
 import io
 import logging
+import time
+
+import httpx
+from openai import APIConnectionError, APITimeoutError, AsyncOpenAI
 
 from libtv_agent.services.ai_creative_planner import classify_planner_upstream_error
 from PIL import Image
@@ -53,6 +57,49 @@ def _lossless_png_input(messages: list[dict]) -> list[dict] | None:
     return converted if changed else None
 
 
+async def _create_response(client, **kwargs):
+    """Collect a complete Responses SSE terminal object before returning it.
+
+    Explicitly injected non-SDK clients retain the existing complete-response
+    interface used by offline planner tests. Production uses AsyncOpenAI.
+    """
+    if not isinstance(client, AsyncOpenAI):
+        return await client.responses.create(**kwargs)
+    started = time.perf_counter()
+    first_event = None
+    event_count = 0
+    outcome = "error"
+    stream = await client.responses.create(**kwargs, stream=True)
+    try:
+        async with stream:
+            async for event in stream:
+                event_count += 1
+                if first_event is None:
+                    first_event = time.perf_counter() - started
+                if event.type in {"response.failed", "response.incomplete", "response.refusal.delta", "response.refusal.done"}:
+                    raise ValueError("Sol stream did not produce a usable completed response")
+                if event.type != "response.completed":
+                    continue
+                response = event.response
+                if response.status != "completed" or any(
+                    part.type == "refusal"
+                    for item in response.output
+                    for part in (getattr(item, "content", None) or [])
+                ):
+                    raise ValueError("Sol stream did not produce a usable completed response")
+                outcome = "ok"
+                return response
+            raise APIConnectionError(message="Sol stream ended before completion", request=stream.response.request)
+    except httpx.TimeoutException as exc:
+        raise APITimeoutError(request=stream.response.request) from exc
+    except httpx.TransportError as exc:
+        raise APIConnectionError(message="Sol stream transport interrupted", request=stream.response.request) from exc
+    finally:
+        logger.info("SOL_STREAM_TIMING outcome=%s events=%d first_event_seconds=%s elapsed_seconds=%.3f",
+                    outcome, event_count, round(first_event, 3) if first_event is not None else None,
+                    time.perf_counter() - started)
+
+
 async def create_sol_response(client, **kwargs):
     """Retry the exact known relay 400 once, using lossless image serialization.
 
@@ -60,7 +107,7 @@ async def create_sol_response(client, **kwargs):
     video requests never enter this path. Original assets are never written.
     """
     try:
-        return await client.responses.create(**kwargs)
+        return await _create_response(client, **kwargs)
     except Exception as error:
         failure = classify_planner_upstream_error(error)
         if failure.upstream_status != 400 or failure.code != "AI_CREATIVE_UPSTREAM_UNAVAILABLE":
@@ -73,4 +120,4 @@ async def create_sol_response(client, **kwargs):
             raise
         logger.warning("SOL_IMAGE_TRANSPORT_FALLBACK encoding=png attempt=2")
         await asyncio.sleep(1)
-        return await client.responses.create(**{**kwargs, "input": converted})
+        return await _create_response(client, **{**kwargs, "input": converted})

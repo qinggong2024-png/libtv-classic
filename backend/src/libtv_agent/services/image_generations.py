@@ -25,6 +25,7 @@ from libtv_agent.services.image_quota import settle_image_quota
 from PIL import Image
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 ACTIVE_ITEM_STATUSES = {"CREATED", "PROCESSING"}
 TERMINAL_ITEM_STATUSES = {
@@ -512,7 +513,8 @@ def _download_remote_image(url: str, destination: Path, limit: int) -> tuple[str
 
 
 async def _materialize_output(app: Any, output: ImageGenerationOutput) -> None:
-    destination = app.state.settings.runner_root / "wavespeed" / "outputs" / f"{output.id}.img"
+    destination = (app.state.settings.runner_root / "wavespeed" / "outputs"
+                   / f"{output.id}-{uuid.uuid4().hex}.img")
     content_type, size, digest = await asyncio.to_thread(
         _download_remote_image,
         output.remote_url,
@@ -525,7 +527,7 @@ async def _materialize_output(app: Any, output: ImageGenerationOutput) -> None:
             destination,
             (
                 f"users/{output.item.batch.user_id}/image-generations/"
-                f"{output.item.batch_id}/{output.id}{extension}"
+                f"{output.item.batch_id}/{output.id}-{digest}{extension}"
             ),
             content_type,
         )
@@ -581,20 +583,59 @@ async def refresh_batch(session: AsyncSession, *, app: Any, batch: ImageGenerati
                 for index, url in enumerate(urls, start=1):
                     if url not in known:
                         item.outputs.append(ImageGenerationOutput(order_no=index, remote_url=url))
-                await session.flush()
-                for output in item.outputs:
-                    if output.object_key is None:
+                # Persist remote URLs while the observation claim is held.
+                # Do not publish COMPLETED before all files have been verified.
+                pending = [output for output in item.outputs if not output.object_key]
+                if pending:
+                    item.status = "PROCESSING"
+                    await session.commit()  # release the SQLite writer before CDN/storage I/O
+                    download_error = None
+                    for output in pending:
+                        # The prior API may still finish a request after a route flip.
+                        # Upload to an immutable content key and commit only if the
+                        # original output is still unmaterialized. Do not let ORM
+                        # autoflush overwrite a winner from another session.
+                        fields = ("object_key", "content_type", "size_bytes", "sha256")
+                        original = {name: getattr(output, name) for name in fields}
+                        materialized = None
                         try:
                             await _materialize_output(app, output)
+                            materialized = {name: getattr(output, name) for name in fields}
                         except Exception as exc:
-                            output.content_type = None
-                            item.status = "PROCESSING"
-                            item.error_json = {
+                            download_error = {
                                 "code": "WAVESPEED_OUTPUT_DOWNLOAD_FAILED",
                                 "message": str(exc)[:4000],
                                 "retryable": True,
                                 "details": {"remoteUrlRetained": True},
                             }
+                        finally:
+                            for name, value in original.items():
+                                set_committed_value(output, name, value)
+                        if materialized and materialized["object_key"]:
+                            await session.execute(
+                                update(ImageGenerationOutput)
+                                .where(
+                                    ImageGenerationOutput.id == output.id,
+                                    ImageGenerationOutput.remote_url == output.remote_url,
+                                    ImageGenerationOutput.object_key.is_(None),
+                                )
+                                .values(**materialized)
+                                .execution_options(synchronize_session=False)
+                            )
+                        await session.refresh(output)
+                        # Each output is independently durable; no write lock
+                        # may cross the next network call.
+                        await session.commit()
+                    # Another observation may have taken over while downloading.
+                    # Recheck the original claim before changing item state.
+                    if not await _claim_image_observation(session, item):
+                        continue
+                    if all(output.object_key for output in item.outputs):
+                        item.status = "COMPLETED"
+                        item.error_json = None
+                    else:
+                        item.status = "PROCESSING"
+                        item.error_json = download_error
         except Exception as exc:
             if not session.is_active:
                 await session.rollback()

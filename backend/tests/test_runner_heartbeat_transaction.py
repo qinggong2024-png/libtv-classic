@@ -81,3 +81,79 @@ async def test_heartbeat_is_visible_and_other_writer_is_free_during_provider_wor
     monkeypatch.chdir(tmp_path)
     await service_runtime.run_service_loop(stopping, tmp_path)
     assert len(observed) == 1
+
+
+
+async def test_auto_confirmation_commits_before_provider_dispatch(tmp_path, monkeypatch):
+    """A provider loop must not inherit the auto-confirm SQLite write lock."""
+    settings = Settings(
+        _env_file=None, app_env="test",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'dispatch-boundary.db'}",
+        runner_root=tmp_path / "runner",
+    )
+    db = Database(settings.database_url)
+    async with db.engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    stopping = Event()
+    observed = []
+
+    async def fake_auto_confirm(session, *args, **kwargs):
+        host = await session.scalar(select(RunnerHost))
+        assert host is not None
+        host.protocol_version = 7
+        await session.flush()  # Hold an actual write lock pending commit.
+
+    async def fake_dispatch(session):
+        try:
+            assert not session.in_transaction(), (
+                "auto-confirm must commit before any remote provider dispatch"
+            )
+            async with db.session_factory() as other:
+                host = await other.scalar(select(RunnerHost))
+                assert host is not None and host.protocol_version == 7
+                await asyncio.wait_for(
+                    other.execute(
+                        update(RunnerHost)
+                        .where(RunnerHost.id == host.id)
+                        .values(protocol_version=8)
+                    ),
+                    1,
+                )
+                await other.commit()
+                observed.append(host.id)
+            return 0
+        finally:
+            stopping.set()
+
+    manager = SimpleNamespace(
+        ensure_layout=lambda: None,
+        find_orphan_processes=lambda: [],
+        disk_status=lambda *args: {"status": "OK", "freePercent": 90},
+    )
+    supervisor = SimpleNamespace(
+        run_ready=fake_dispatch,
+        recover_stale_launch_started_commands=AsyncMock(return_value=0),
+    )
+    monkeypatch.setattr(service_runtime, "Settings", lambda: settings)
+    monkeypatch.setattr(service_runtime, "Database", lambda _: db)
+    monkeypatch.setattr(service_runtime, "CommandHostManager", lambda *a, **k: manager)
+    monkeypatch.setattr(service_runtime, "RunnerSupervisor", lambda *a, **k: supervisor)
+    for name in ("create_libtv_adapter", "create_kling_adapter", "create_object_store"):
+        monkeypatch.setattr(service_runtime, name, lambda _: object())
+    for name in ("_load_video_provider_admin_configs", "_video_provider_admin_config_signatures"):
+        monkeypatch.setattr(service_runtime, name, lambda _: (None, None, None))
+    for name in (
+        "_refresh_libtv_auth_state",
+        "get_runtime_config",
+        "record_operational_sample",
+        "prune_operational_samples",
+    ):
+        monkeypatch.setattr(service_runtime, name, AsyncMock(return_value=None))
+    for name in ("operational_backlog_count", "release_stale_idempotency_claims"):
+        monkeypatch.setattr(service_runtime, name, AsyncMock(return_value=0))
+    for name in ("recover_stale_confirmation_claims", "recover_stale_batch_confirmation_claims"):
+        monkeypatch.setattr(service_runtime, name, AsyncMock(return_value={}))
+    monkeypatch.setattr(service_runtime, "auto_confirm_pass_tasks", fake_auto_confirm)
+    monkeypatch.chdir(tmp_path)
+    await service_runtime.run_service_loop(stopping, tmp_path)
+    assert len(observed) == 1

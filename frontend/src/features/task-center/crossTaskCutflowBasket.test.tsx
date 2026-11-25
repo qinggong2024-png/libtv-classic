@@ -39,9 +39,9 @@ const renderDetail = (task: Task) => renderToStaticMarkup(
 describe('经典版跨任务重新送剪', () => {
   it('已经生成并曾经自动送剪的任务不再隐藏重新选片入口', () => {
     const html = renderRecords()
-    expect(html).toContain('可跨任务合并原片')
-    expect(html).toContain('选择原片送剪')
-    expect(html.match(/task-center-card__bottom/g)).toHaveLength(2)
+    expect(html.match(/aria-label="选择原片送剪：/g)).toHaveLength(2)
+    expect(html).not.toContain('task-center-card__bottom')
+    expect(html).not.toContain('task-center-card__clips')
   })
 
   it('列表和不同任务详情使用同一账号剪辑篮并显示跨任务原片', () => {

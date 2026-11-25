@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 import subprocess
 import sqlite3
 from pathlib import Path
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, build_opener
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -150,7 +152,37 @@ def unsynced_files(active_root: Path, main_root: Path) -> list[str]:
     ]
 
 
+def valid_classic_user_url(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = urlsplit(value)
+        address = ipaddress.ip_address(parsed.hostname)
+        return (parsed.scheme == "http" and parsed.port == 5176 and address.version == 4
+                and address.is_private and not address.is_loopback and not address.is_unspecified
+                and not parsed.username and not parsed.password and parsed.path == "/"
+                and not parsed.query and not parsed.fragment)
+    except (ValueError, TypeError):
+        return False
+
+
+def site_user_url(root: Path) -> str | None:
+    runtime = root / "var" / "classic-lan" / "runtime"
+    stack = read_json_file(runtime / "stack.json") or {}
+    site = read_json_file(runtime / "site-lan.json")
+    if not stack or stack.get("root") != str(root) or stack.get("webPort") != 5176:
+        return None
+    ip = stack.get("lanIp")
+    if (runtime / "site-lan.json").exists() and (not site or site.get("version") != 1 or site.get("lanIp") != ip):
+        return None
+    url = f"http://{ip}:5176/"
+    return url if valid_classic_user_url(url) else None
+
+
 def report(root: Path = ROOT) -> dict:
+    user_url = site_user_url(root)
+    if user_url is None:
+        return {"ok": False, "error": "Classic local site identity unavailable"}
     route = get_json(URL + "/__classic_api_route/status")
     gate = get_json(URL + "/api/v1/system/classic-new-video-admission")
     if not route or route.get("activeApiPort") not in (8002, 8003):
@@ -247,7 +279,7 @@ def report(root: Path = ROOT) -> dict:
         "ok": strict_ok,
         "frontendReady": frontend_ok,
         "frontendWarnings": ["SQLITE_WRITE_PROBE_UNAVAILABLE_READ_PATH_VERIFIED"] if write_warning else [],
-        "userUrl": "http://192.168.30.126:5176/",
+        "userUrl": user_url,
         "activeApiPort": active_port,
         "standbyApiPort": standby_port,
         "admissionPaused": gate.get("newVideoAdmissionsPaused") if gate else None,
@@ -277,7 +309,7 @@ def verify_release(state: dict, *, expected_api_revision: str | None,
     issues = []
     if not state.get("ok"):
         issues.append("The active Classic API or readiness checks are not healthy")
-    if state.get("userUrl") != "http://192.168.30.126:5176/":
+    if not valid_classic_user_url(state.get("userUrl")):
         issues.append("Classic user-facing URL does not match the fixed 5176 entry")
     if state.get("activeApiPort") not in (8002, 8003):
         issues.append("Active API port is outside the Classic 8002/8003 pool")

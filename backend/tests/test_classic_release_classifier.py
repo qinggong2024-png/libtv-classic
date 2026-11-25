@@ -50,3 +50,11 @@ def test_committed_diff_rejects_equal_base_and_unrelated_commit(monkeypatch, tmp
         committed_changes(ROOT, head, head)
     with pytest.raises(ValueError, match="Invalid release"):
         committed_changes(ROOT, "this-is-not-a-commit")
+
+
+def test_admin_prevideo_exact_api_pair():
+    from classic_release_classifier import ADMIN_PREVIDEO_API_PAIR, reviewed_pair, reviewed_api_path
+    a, b = sorted(ADMIN_PREVIDEO_API_PAIR)
+    assert reviewed_pair(a, b) and reviewed_pair(b, a)
+    assert reviewed_api_path(a, b) == [a, b]
+    assert not reviewed_pair(a, "0" * 64)

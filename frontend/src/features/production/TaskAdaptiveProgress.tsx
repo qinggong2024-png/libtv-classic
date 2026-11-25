@@ -2,6 +2,7 @@ import { Check, LoaderCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { Task } from '../../types'
 import { taskStatus } from '../../domain/taskPresentation'
+import { deepVideoStageLabel, videoModelDisplayName } from '../../providerPresentation'
 import { stageElapsedSeconds, taskTimingStages } from '../../domain/taskTimingPresentation'
 import { formatDurationSeconds } from '../../taskTiming'
 import { TaskElapsed } from '../../shared/components/TaskTiming'
@@ -20,10 +21,19 @@ export function TaskAdaptiveProgress({ task }: { task: Task }) {
 
   const ready = task.variants.filter(variant => Boolean(variant.downloadArtifactId)).length
   const total = task.variants.length
+  const isDeepVideo = task.workflowKind === 'DEEP_VIDEO'
+  const deepVideoModel = task.settings?.model ?? task.compiledPlan?.model
+  const deepVideoDepthModel = task.settings?.depthModel
+  const isDepthOnly = isDeepVideo && task.settings?.deepVideoMode === 'depth'
+  const isDepthFirst = isDeepVideo && task.settings?.deepVideoPipeline === 'depth-first-v1'
   const isPreparing = ['DRAFT', 'ANALYZING', 'PREPARING', 'WAITING_FOR_SEAL'].includes(task.phase)
-  const currentStep = isPreparing ? 0 : 1
-  const labels = task.workflowKind === 'DEEP_VIDEO'
-    ? ['准备素材', '视频制作', '剪辑交付']
+  const currentStep = isPreparing ? 0 : isDepthFirst && task.settings?.deepVideoStage === 'replacement' ? 2 : 1
+  const labels = isDeepVideo
+    ? isDepthOnly
+      ? ['准备素材', deepVideoStageLabel('DEPTH_EXTRACTION', deepVideoModel, deepVideoDepthModel), '结果下载']
+      : isDepthFirst
+        ? ['准备素材', deepVideoStageLabel('DEPTH_EXTRACTION', deepVideoModel, deepVideoDepthModel), deepVideoStageLabel('REPLACEMENT', deepVideoModel), '剪辑交付']
+        : ['准备素材', (videoModelDisplayName(deepVideoModel) ?? '视频') + '替换', '剪辑交付']
     : ['素材与方案', '生成原片', '剪辑交付']
   const activeSeconds = activeTiming ? stageElapsedSeconds(activeTiming, now) : null
   return <section className="task-adaptive-progress" aria-label="当前制作进度">
@@ -39,7 +49,7 @@ export function TaskAdaptiveProgress({ task }: { task: Task }) {
         </p>
       </div>
     </div>
-    <ol className="task-adaptive-progress__steps" aria-label="三个制作阶段">
+    <ol className="task-adaptive-progress__steps" aria-label="制作阶段">
       {labels.map((label, index) => <li key={label} className={index < currentStep ? 'is-complete' : index === currentStep ? 'is-current' : 'is-pending'} aria-current={index === currentStep ? 'step' : undefined}>
         <span className="task-adaptive-progress__marker">{index < currentStep ? <Check size={13} /> : index + 1}</span>
         <span>{label}</span>

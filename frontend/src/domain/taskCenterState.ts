@@ -3,7 +3,7 @@ import type { Task } from '../types'
 import { ACTIVE_PHASES, AWAITING_USER_INPUT_PHASES, TASK_PHASE_META } from './workflowStates'
 import { activeTaskRecoveryPresentation } from './statusPresentation'
 import { multiCutflowPresentation, nasRecoveryMessage } from './cutflowPresentation'
-import { autoCutflowWaitDelayed } from './autoCutflowWaiting'
+import { autoCutflowWaitDelayed, autoCutflowWaitingCopy } from './autoCutflowWaiting'
 
 // This is a *user-facing* workflow state, not a mutation of backend generation phases.
 // The original video being ready does not mean the finished ad is ready.
@@ -30,7 +30,7 @@ export function taskCenterState(task: Task, batches: MultiCutflowTask[], status:
     return {
       group: intakeWarning ? 'attention' : 'active',
       label: multiCutflowPresentation(active).label,
-      detail: nas ? '原任务已保留，恢复连接后自动继续，无需重新送剪。' : intakeWarning ? (active.errorMessage || 'CUT 尚未确认接单；请核对共享目录扫描，不要重复送剪') : '已送剪，无需重复操作',
+      detail: nas ? '原任务已保留，恢复连接后自动继续，无需重新送剪。' : intakeWarning ? '剪辑接单尚未确认，原片已保留，无需重复送剪；若持续未推进请联系管理员。' : active.status === 'QUEUED' ? '正在准备送剪，无需操作' : '无需重复送剪',
       outputs, readyCount, manualSelection: false,
     } as const
   }
@@ -63,7 +63,7 @@ export function taskCenterState(task: Task, batches: MultiCutflowTask[], status:
   if (readyCount) {
     if (task.settings?.autoSubmitToCutflow === true && !matching.length) {
       const delayed = autoCutflowWaitDelayed(task, status.now ?? Date.now())
-      return { group: delayed ? 'attention' : 'active', label: delayed ? '送剪任务尚未建立' : '等待创建送剪任务', detail: delayed ? '原片已就绪超过3分钟，尚无本地剪辑记录；请检查自动调度' : '等待系统建立剪辑记录；尚未确认 CUT 接单', outputs, readyCount, manualSelection: false } as const
+      return { group: delayed ? 'attention' : 'active', ...autoCutflowWaitingCopy(delayed), outputs, readyCount, manualSelection: false } as const
     }
     return { group: 'attention', label: task.settings?.autoSubmitToCutflow === true ? '自动送剪未启动' : '原片待处理', detail: task.settings?.autoSubmitToCutflow === true ? '未查到剪辑任务；打开详情查看并刷新' : '查看详情选择送剪方式', outputs, readyCount, manualSelection: false } as const
   }

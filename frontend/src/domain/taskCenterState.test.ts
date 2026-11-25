@@ -19,7 +19,7 @@ const batch = (status: string, outputs: number) => ({
 describe('task center: finished means final cut, not just raw video', () => {
   it('distinguishes no auto-cut receipt from a running editing task', () => {
     expect(taskCenterState(base, [])).toMatchObject({
-      group: 'active', label: '等待创建送剪任务', manualSelection: false,
+      group: 'active', label: '等待自动送剪', manualSelection: false,
     })
   })
   it('shows a checking state until CUT history is read', () => {
@@ -42,7 +42,7 @@ describe('task center: finished means final cut, not just raw video', () => {
       errorMessage: 'CUT HTTP 接单通知被拒绝（413：请求体过大）。无需重复送剪。' }
     expect(taskCenterState(base, [rejected])).toMatchObject({
       group: 'attention', label: 'CUT 通知超限，等待 NAS 接单',
-      detail: 'CUT HTTP 接单通知被拒绝（413：请求体过大）。无需重复送剪。',
+      detail: '剪辑接单尚未确认，原片已保留，无需重复送剪；若持续未推进请联系管理员。',
       manualSelection: false,
     })
     expect(taskCenterState(base, [{ ...rejected, status: 'IMPORTING', errorCode: null, errorMessage: null }]))

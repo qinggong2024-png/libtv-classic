@@ -20,7 +20,6 @@ from libtv_agent.domain.models import (
     GenerationAttempt,
     GenerationCommand,
     GenerationVariant,
-    OutboxEvent,
     ParentTask,
     TaskConfirmationVersion,
     User,
@@ -444,12 +443,6 @@ async def confirm_task(
                 ),
                 correlation_id=correlation_id,
             ),
-            OutboxEvent(
-                aggregate_type="parent_task",
-                aggregate_id=str(task.id),
-                event_type="GENERATION_COMMANDS_READY",
-                payload_json={"taskId": str(task.id)},
-            ),
         ]
     )
     await session.commit()
@@ -463,7 +456,10 @@ async def auto_confirm_pass_tasks(
     *,
     kling_adapter: VideoProviderAdapter | None = None,
     limit: int,
+    stop_claiming: Callable[[], bool] | None = None,
 ) -> int:
+    if stop_claiming is not None and stop_claiming():
+        return 0
     runtime = await get_runtime_config(session, settings)
     if runtime is None or "PASS" not in runtime.config_json.get("autoConfirmLevels", []):
         return 0
@@ -491,6 +487,8 @@ async def auto_confirm_pass_tasks(
     task_refs = [(task.id, task.user_id) for task in tasks]
     confirmed = 0
     for task_id, owner_id in task_refs:
+        if stop_claiming is not None and stop_claiming():
+            break
         # A previous USD rejection may roll back and expire every ORM task.
         task = await session.scalar(
             select(ParentTask).where(ParentTask.id == task_id).options(
@@ -499,6 +497,8 @@ async def auto_confirm_pass_tasks(
         )
         if task is None:
             continue
+        if stop_claiming is not None and stop_claiming():
+            break
         try:
             await confirm_task(
                 session,

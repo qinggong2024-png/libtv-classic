@@ -46,6 +46,81 @@ export function providerPresentation(provider?: string | null): ProviderPresenta
   }
 }
 
+export function videoModelDisplayName(model: unknown): string | null {
+  if (typeof model !== 'string') return null
+  const normalized = model.trim().toLowerCase()
+  if (!normalized) return null
+  if (normalized.includes('depth-anything')) return 'Depth Anything'
+  if (normalized.includes('seedance-2.5-flash')) return 'Seedance 2.5 Flash'
+  if (normalized.includes('seedance-2.0')) return 'Seedance 2.0'
+  if (normalized.includes('kling-video-o3')) return 'Kling O3'
+  if (normalized.includes('kling')) return 'Kling'
+  return null
+}
+
+export function deepVideoStageLabel(
+  key: string,
+  model: unknown,
+  depthModel?: unknown,
+): string {
+  if (key === 'DEPTH_EXTRACTION') {
+    return (videoModelDisplayName(depthModel) ?? 'Depth Anything') + ' 深度提取'
+  }
+  if (key === 'REPLACEMENT' || key === 'GENERATION') {
+    return (videoModelDisplayName(model) ?? '深度视频') + ' 人物与商品替换'
+  }
+  return '深度视频'
+}
+
+export function deepVideoTaskDisplayLabel(
+  mode: unknown,
+  model: unknown,
+  depthModel?: unknown,
+): string {
+  return mode === 'depth'
+    ? deepVideoStageLabel('DEPTH_EXTRACTION', model, depthModel)
+    : deepVideoStageLabel('REPLACEMENT', model, depthModel)
+}
+
+export function deepVideoTaskBadgeLabel(mode: unknown, model: unknown): string {
+  return '深度视频 · ' + (videoModelDisplayName(model) ?? (mode === 'depth' ? 'Depth Anything' : '视频替换'))
+}
+
+export function providerTaskBadgeLabel(
+  provider: string,
+  workflowKind: unknown,
+  model: unknown,
+  mode?: unknown,
+): string {
+  const meta = providerPresentation(provider)
+  if (workflowKind === 'DEEP_VIDEO') return deepVideoTaskBadgeLabel(mode, model)
+  const modelName = videoModelDisplayName(model)
+  if (meta.kind === 'wavespeed' && modelName?.startsWith('Kling')) return '可灵 · ' + modelName
+  return meta.displayLabel
+}
+
+export function deepVideoProgressLabel(
+  phase: string,
+  mode: unknown,
+  model: unknown,
+  depthModel?: unknown,
+  deepVideoStage?: unknown,
+  deepVideoPipeline?: unknown,
+): string | null {
+  const isExtractingDepth = mode === 'depth'
+    || (deepVideoPipeline === 'depth-first-v1' && deepVideoStage !== 'replacement')
+  const stage = isExtractingDepth
+    ? deepVideoStageLabel('DEPTH_EXTRACTION', model, depthModel)
+    : deepVideoTaskDisplayLabel(mode, model, depthModel)
+  const labels: Record<string, string> = {
+    PREPARING: stage + '：准备参考视频与素材',
+    QUEUED: stage + '：等待提交',
+    GENERATING: stage + '：云端处理中',
+    PARTIALLY_DELIVERABLE: stage + '：部分结果已返回',
+  }
+  return labels[phase] ?? null
+}
+
 const PHASE_PROGRESS: Record<string, number> = {
   DRAFT: 8,
   ANALYZING: 28,
@@ -81,10 +156,10 @@ export function providerProgress(phase: string, provider?: string | null) {
   }
 }
 
-export function providerTimingStageLabel(key: string, provider?: string | null): string {
+export function providerTimingStageLabel(key: string, provider?: string | null, model?: unknown): string {
   const meta = providerPresentation(provider)
   if (key === 'DEPTH_EXTRACTION') return '深度提取'
-  if (key === 'REPLACEMENT') return '人物与商品替换 · Seedance 2.0'
+  if (key === 'REPLACEMENT') return (videoModelDisplayName(model) ?? '视频模型') + ' 人物与商品替换'
   if (key === 'SOURCE_UPLOAD') return '素材上传'
   if (key === 'ANALYSIS') return '内容分析'
   if (key === 'CONFIRMATION') return '方案确认'
@@ -134,6 +209,9 @@ export function variantExecutionMessage(
     return `${meta.displayName}已生成视频，但本地成品校验未通过；请先检查已有文件，不要重新提交生成。`
   }
   if (variant.downloadArtifactId) return '成品文件已就绪'
+  if (variant.providerStatus === 'waiting_balance' && variant.generationStatus === 'PENDING') {
+    return 'API 余额不足，请联系管理员充值。充值后后台会自动恢复未提交成功的片段。'
+  }
   if (variant.providerStatus === 'waiting_capacity' && variant.generationStatus === 'PENDING') {
     return '等待开始生成'
   }

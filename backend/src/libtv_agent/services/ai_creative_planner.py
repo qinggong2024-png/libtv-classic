@@ -264,6 +264,9 @@ def classify_planner_upstream_error(exc: Exception) -> CreativePlannerError:
     status = getattr(exc, "status_code", None)
     if isinstance(exc, APITimeoutError):
         code = "AI_CREATIVE_REQUEST_TIMEOUT"
+    elif isinstance(exc, TimeoutError):
+        # asyncio.wait_for wraps an expired Sol request in built-in TimeoutError.
+        code = "AI_CREATIVE_REQUEST_TIMEOUT"
     elif isinstance(exc, APIConnectionError):
         code = "AI_CREATIVE_CONNECTION_FAILED"
     elif status == 504:

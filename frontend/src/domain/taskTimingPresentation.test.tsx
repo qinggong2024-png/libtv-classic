@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { Task } from '../types'
 import type { CutflowHandoff, MultiCutflowTask } from '../api'
 import { TaskTimingTimeline } from '../shared/components/TaskTiming'
-import { stageElapsedSeconds, taskTimingStages, taskTimingStoppedAt } from './taskTimingPresentation'
+import { stageElapsedSeconds, taskTimingStages, taskTimingStoppedAt, type TaskTimingStage } from './taskTimingPresentation'
 
 const START = '2026-10-15T15:08:00Z'
 const STOP = '2026-10-15T15:08:06Z'
@@ -20,6 +20,93 @@ function task(phase = 'ACTION_REQUIRED'): Task {
     ] },
   } as Task
 }
+
+function deepVideoTask(
+  settings: Record<string, unknown>,
+  stages: TaskTimingStage[],
+): Task {
+  const source = task('GENERATING')
+  source.workflowKind = 'DEEP_VIDEO'
+  source.generationProvider = 'wavespeed_video'
+  source.settings = settings
+  source.compiledPlan = { model: settings.model }
+  source.timing = { stages }
+  source.variants[0].generationStatus = 'RUNNING'
+  return source
+}
+
+function timingStage(
+  key: TaskTimingStage['key'],
+  status: TaskTimingStage['status'],
+): TaskTimingStage {
+  return {
+    key,
+    status,
+    durationSeconds: status === 'COMPLETED' ? 2 : null,
+    activeStartedAt: status === 'ACTIVE' ? START : null,
+    startedAt: status === 'COMPLETED' ? START : undefined,
+    endedAt: status === 'COMPLETED' ? STOP : undefined,
+    attemptCount: 1,
+  }
+}
+
+describe('deep video timing presentation', () => {
+  it('shows depth extraction and Seedance replacement as separate stages', () => {
+    const source = deepVideoTask({
+      deepVideoMode: 'recreate',
+      deepVideoPipeline: 'depth-first-v1',
+      deepVideoStage: 'replacement',
+      model: 'bytedance/seedance-2.5-flash/video-edit',
+      depthModel: 'wavespeed-ai/depth-anything/video',
+    }, [
+      timingStage('SOURCE_UPLOAD', 'COMPLETED'),
+      timingStage('DEPTH_EXTRACTION', 'COMPLETED'),
+      timingStage('REPLACEMENT', 'ACTIVE'),
+      timingStage('DOWNLOAD', 'PENDING'),
+    ])
+    const html = renderToStaticMarkup(<TaskTimingTimeline task={source} />)
+    expect(html).toContain('Depth Anything 深度提取')
+    expect(html).toContain('Seedance 2.5 Flash 人物与商品替换')
+    expect(html).toContain('Seedance 2.5 Flash替换')
+    expect(html).not.toContain('素材分析')
+    expect(html).not.toContain('可灵')
+    expect(html).not.toContain('WaveSpeed 云端生成')
+  })
+
+  it('shows supplied depth input as replacement only', () => {
+    const source = deepVideoTask({
+      deepVideoMode: 'recreate',
+      deepVideoPipeline: 'depth-input-v1',
+      deepVideoStage: 'replacement',
+      model: 'bytedance/seedance-2.5-flash/video-edit',
+    }, [
+      timingStage('SOURCE_UPLOAD', 'COMPLETED'),
+      timingStage('REPLACEMENT', 'ACTIVE'),
+      timingStage('DOWNLOAD', 'PENDING'),
+    ])
+    const html = renderToStaticMarkup(<TaskTimingTimeline task={source} />)
+    expect(html).toContain('Seedance 2.5 Flash 人物与商品替换')
+    expect(html).not.toContain('Depth Anything 深度提取')
+    expect(html).not.toContain('可灵')
+  })
+
+  it('maps a depth-only generation record to Depth Anything extraction', () => {
+    const source = deepVideoTask({
+      deepVideoMode: 'depth',
+      model: 'wavespeed-ai/depth-anything/video',
+    }, [
+      timingStage('SOURCE_UPLOAD', 'COMPLETED'),
+      timingStage('GENERATION', 'ACTIVE'),
+      timingStage('DOWNLOAD', 'PENDING'),
+    ])
+    const stages = taskTimingStages(source)
+    expect(stages.find((stage) => stage.key === 'DEPTH_EXTRACTION')?.status).toBe('ACTIVE')
+    const html = renderToStaticMarkup(<TaskTimingTimeline task={source} />)
+    expect(html).toContain('Depth Anything 深度提取')
+    expect(html).not.toContain('WaveSpeed 云端生成')
+    expect(html).not.toContain('可灵')
+  })
+})
 
 describe('task timing at interruption', () => {
   it('freezes a legacy unknown snapshot at its interruption time', () => {
@@ -87,15 +174,16 @@ describe('task timing at interruption', () => {
 
 
 describe('compact task timing presentation', () => {
-  it('shows the real stage rail immediately, with only the breakdown collapsed', () => {
+  it('keeps all recorded stages inside one closed disclosure', () => {
     const markup = renderToStaticMarkup(<TaskTimingTimeline task={task('DELIVERABLE')} />)
     expect(markup).toContain('task-timing--condensed')
     expect(markup).toContain('task-timing-stages--rail')
     expect(markup).toContain('制作阶段与耗时')
-    expect(markup).toContain('耗时明细 · 处理与等待')
-    expect(markup.indexOf('task-timing-stages--rail')).toBeLessThan(markup.indexOf('<details class="task-timing-breakdown">'))
+    expect(markup).toContain('制作耗时')
+    expect(markup.indexOf('task-timing-stages--rail')).toBeGreaterThan(markup.indexOf('</summary>'))
     expect(markup).not.toContain('task-timing-compact__steps')
-    expect(markup).toMatch(/<details class="task-timing-breakdown">/)
+    expect(markup).toMatch(/<details class="task-timing task-timing--condensed task-timing-breakdown" aria-labelledby="task-timing-title">/)
+    expect(markup.match(/<details\b/g)).toHaveLength(1)
     expect(markup).toContain('实际总耗时')
     expect(markup).toContain('处理耗时')
     expect(markup.match(/id="task-timing-title"/g)).toHaveLength(1)
@@ -178,7 +266,7 @@ describe('editing in task progress', () => {
     expect(renderToStaticMarkup(<TaskTimingTimeline task={task()} />)).not.toContain('task-timing-stage--cutflow')
     const html = renderToStaticMarkup(<TaskTimingTimeline task={sourceTask()} />)
     expect(html).toContain('待送剪辑')
-    expect(html).toContain('可在下方送入剪辑')
+    expect(html).not.toContain('可在下方送入剪辑')
   })
   it.each([
     ['EDITING', false, '正在剪辑', 'active'],

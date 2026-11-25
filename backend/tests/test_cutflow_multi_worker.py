@@ -7,7 +7,7 @@ from urllib.error import URLError
 
 import pytest
 import test_cutflow_handoff as shared
-from libtv_agent.domain.models import MultiCutflowTask
+from libtv_agent.domain.models import AccountUsage, MultiCutflowTask
 from libtv_agent.runner import cutflow_worker
 from libtv_agent.services import cutflow_handoff
 from libtv_agent.services import cutflow_multi_worker as worker
@@ -441,6 +441,62 @@ async def test_publish_multi_package_copies_sources_then_publishes_ready_last(ha
     assert descriptor["sources"][0]["relative_path"] == "sources/01.mp4"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("damage", ["missing_ready", "wrong_ready", "changed_source"])
+async def test_existing_cut_package_repairs_only_a_missing_ready_after_media_check(
+    handoff_env, damage,
+):
+    _database, settings, store, ids = handoff_env
+    task_id = uuid.uuid4()
+    source_path = settings.artifact_root / "ready-recovery-source.mp4"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_bytes(b"recovery media fixture")
+    object_key = await store.put_file(
+        source_path, "multi/ready-recovery-source.mp4", "video/mp4",
+    )
+    source_digest = hashlib.sha256(b"recovery media fixture").hexdigest()
+    task = SimpleNamespace(
+        id=task_id, user_id=ids["user"], created_at=datetime.now(UTC),
+        sources_json=[{
+            "clipId": "clip-1", "order": 1, "relativePath": "sources/01.mp4",
+            "sha256": source_digest, "sizeBytes": len(b"recovery media fixture"),
+            "durationSeconds": 2.0, "userId": str(ids["user"]),
+            "taskId": "original-parent", "variantId": "original-variant",
+            "artifactId": "original-artifact", "attemptId": "original-attempt",
+            "objectKey": object_key,
+        }],
+    )
+    first, original_hash = await worker.publish_multi_package(task, settings, store)
+    final = settings.cutflow_handoff_root / "inbox" / f"multi-{task_id}"
+    original_manifest = (final / "manifest.json").read_bytes()
+    ready = final / "READY"
+    if damage == "missing_ready":
+        ready.unlink()
+        restored, restored_hash = await worker.publish_multi_package(
+            task, settings, store,
+        )
+        assert restored_hash == original_hash
+        assert restored == first
+        assert json.loads(ready.read_text(encoding="utf-8")) == {
+            "sha256": original_hash,
+        }
+    else:
+        if damage == "wrong_ready":
+            ready.write_text('{"sha256":"tampered"}', encoding="utf-8")
+        else:
+            ready.unlink()
+            (final / "sources" / "01.mp4").write_bytes(b"altered media")
+        with pytest.raises(CutflowHandoffError) as caught:
+            await worker.publish_multi_package(task, settings, store)
+        assert caught.value.code == (
+            "IMMUTABLE_RESULT_CHANGED" if damage == "wrong_ready"
+            else "CUTFLOW_SOURCE_INVALID"
+        )
+        if damage == "changed_source":
+            assert not ready.exists(), "never publish READY for corrupted media"
+    assert (final / "manifest.json").read_bytes() == original_manifest
+
+
 def test_post_endpoint_uses_existing_auth_and_multisource_route(handoff_env, monkeypatch):
     _database, settings, _store, _ids = handoff_env
     seen = {}
@@ -468,3 +524,147 @@ def test_post_endpoint_uses_existing_auth_and_multisource_route(handoff_env, mon
         "method": "POST", "auth": f"Bearer {settings.cutflow_service_token}",
         "timeout": settings.cutflow_request_timeout_seconds, "body": payload,
     }
+
+
+async def _reserve_test_cutflow_usage(env, task, *, user_id, amount=150_000):
+    database, _settings, _store, _ids = env
+    async with database.session_factory() as session:
+        session.add(AccountUsage(
+            user_id=user_id, kind="CUTFLOW", pricing_category="CUTFLOW",
+            operation_id=task.id, business_date=datetime.now(UTC).date(),
+            units=1, amount_microusd=amount, status="RESERVED",
+        ))
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_verified_cut_output_estimates_reservation_without_duplicate_charge(
+    handoff_env, monkeypatch,
+):
+    database, settings, store, ids = handoff_env
+    task = await create_multi_task(handoff_env)
+    await _reserve_test_cutflow_usage(handoff_env, task, user_id=ids["user"])
+    response = cut_response(task, status="completed", outputs=[output_payload(task)])
+    monkeypatch.setattr(worker, "cut_multi_status_request", lambda *_: response)
+
+    async def imported(*_args):
+        return [{"id": "output-1", "task_id": str(task.id), "review_status": "PENDING",
+                 "sha256": response["outputs"][0]["sha256"], "size_bytes": 7,
+                 "object_key": "verified/output.mp4", "manifest_sha256": MANIFEST_HASH}]
+
+    monkeypatch.setattr(worker, "import_multi_outputs", imported)
+    await worker.process_multi_task(database, settings, store, task, "lease-token")
+    async with database.session_factory() as session:
+        saved = await session.get(MultiCutflowTask, task.id)
+        row = await session.scalar(select(AccountUsage).where(
+            AccountUsage.kind == "CUTFLOW", AccountUsage.operation_id == task.id,
+        ))
+        assert saved.status == "PENDING_REVIEW"
+        assert row.status == "ESTIMATED"  # not an external invoice
+        assert row.units == 1 and row.amount_microusd == 150_000
+        assert len((await session.scalars(select(AccountUsage).where(
+            AccountUsage.operation_id == task.id,
+        ))).all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_authoritative_cut_failure_preserves_amount_as_uncertain(
+    handoff_env, monkeypatch,
+):
+    database, settings, store, ids = handoff_env
+    task = await create_multi_task(handoff_env)
+    await _reserve_test_cutflow_usage(handoff_env, task, user_id=ids["user"])
+    monkeypatch.setattr(worker, "cut_multi_status_request", lambda *_: cut_response(
+        task, status="failed",
+    ))
+    await worker.process_multi_task(database, settings, store, task, "lease-token")
+    async with database.session_factory() as session:
+        saved = await session.get(MultiCutflowTask, task.id)
+        row = await session.scalar(select(AccountUsage).where(
+            AccountUsage.operation_id == task.id, AccountUsage.kind == "CUTFLOW",
+        ))
+        assert saved.status == "FAILED"
+        assert row.status == "UNCERTAIN"  # never assume the receiver gave a refund
+        assert row.amount_microusd == 150_000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["completed", "editing", "stale", "conflict", "missing", "wrong_id", "bad_media"])
+async def test_failed_intake_reconciliation_never_resubmits(handoff_env, monkeypatch, case):
+    from libtv_agent.services.cutflow_protocol import JOB_CONTRACT, STATUS_SCHEMA, status_fingerprint
+
+    database, settings, store, ids = handoff_env
+    task = await create_multi_task(handoff_env, status="FAILED")
+    old = cut_response(task, status="failed")
+    old.update(schemaVersion=STATUS_SCHEMA, revision=3, error={"code": "INTAKE_IO_TIMEOUT"})
+    async with database.session_factory() as session:
+        saved = await session.get(MultiCutflowTask, task.id)
+        saved.manifest_json = {**saved.manifest_json, "contractVersion": JOB_CONTRACT,
+                               "_lastCutRevision": 3, "_lastCutSnapshotSha256": status_fingerprint(old)}
+        saved.error_code = "INTAKE_IO_TIMEOUT"
+        saved.error_message = "original failure"
+        saved.lease_token = None
+        await session.commit()
+    await _reserve_test_cutflow_usage(handoff_env, task, user_id=ids["user"])
+    settings.cutflow_transport = "lan"
+    settings.cutflow_multi_source_enabled = True
+    settings.cutflow_nas_status_enabled = True
+    response = cut_response(task, status="editing" if case == "editing" else "completed",
+                            outputs=[output_payload(task)])
+    response.update(schemaVersion=STATUS_SCHEMA, revision=2 if case == "stale" else 3 if case == "conflict" else 4)
+    if case == "wrong_id":
+        response["taskId"] = str(uuid.uuid4())
+    if case == "missing":
+        response = None
+    monkeypatch.setattr(worker, "read_multi_nas_status", lambda *_: response)
+    def forbidden(*_args):
+        pytest.fail("recovery must not submit or republish")
+    monkeypatch.setattr(worker, "cut_multi_submit_request", forbidden)
+    monkeypatch.setattr(worker, "publish_multi_package", forbidden)
+
+    async def imported(*_args):
+        if case == "bad_media":
+            raise CutflowHandoffError("INVALID_RESULT", "invalid video")
+        return [{"id": "verified"}]
+    monkeypatch.setattr(worker, "import_multi_outputs", imported)
+    assert await worker.tick_multi(database, settings, store, failed_reconciliation=True)
+    async with database.session_factory() as session:
+        saved = await session.get(MultiCutflowTask, task.id)
+        usage = await session.scalar(select(AccountUsage).where(AccountUsage.operation_id == task.id))
+        assert saved.lease_token is None
+        if case == "completed":
+            assert saved.status == "PENDING_REVIEW"
+            assert saved.output_json == [{"id": "verified"}]
+            assert saved.error_code is None
+            assert saved.manifest_json["_lastCutRevision"] == 4
+            assert usage.status == "ESTIMATED"
+        elif case == "editing":
+            assert saved.status == "EDITING"
+            assert saved.error_code is None
+            assert saved.manifest_json["_lastCutRevision"] == 4
+        else:
+            assert saved.status == "FAILED"
+            assert saved.error_code == "INTAKE_IO_TIMEOUT"
+            assert saved.manifest_json["_lastCutRevision"] == 3
+            assert saved.next_run_at is not None
+            assert saved.output_json == []
+        assert usage.units == 1
+
+
+@pytest.mark.asyncio
+async def test_transport_uncertainty_keeps_active_cut_reservation(
+    handoff_env, monkeypatch,
+):
+    database, settings, store, ids = handoff_env
+    task = await create_multi_task(handoff_env)
+    await _reserve_test_cutflow_usage(handoff_env, task, user_id=ids["user"])
+    monkeypatch.setattr(worker, "cut_multi_status_request", lambda *_: (_ for _ in ()).throw(
+        URLError("offline fixture"),
+    ))
+    await worker.process_multi_task(database, settings, store, task, "lease-token")
+    async with database.session_factory() as session:
+        row = await session.scalar(select(AccountUsage).where(
+            AccountUsage.operation_id == task.id, AccountUsage.kind == "CUTFLOW",
+        ))
+        assert row.status == "RESERVED"
+        assert (await session.get(MultiCutflowTask, task.id)).status == "EDITING"

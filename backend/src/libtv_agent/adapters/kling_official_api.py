@@ -24,6 +24,7 @@ from libtv_agent.adapters.kling_ootd_audit import (
     audit_without_blocking,
     submission_snapshot,
 )
+from libtv_agent.adapters.kling_submission_receipts import KlingSubmissionReceipt
 from libtv_agent.adapters.video_provider import (
     DownloadResult,
     ProviderAvailability,
@@ -122,6 +123,17 @@ def _retry_after(headers: dict[str, str]) -> float | None:
     return parse_retry_after(value)
 
 
+def is_kling_api_balance_message(message: str | None) -> bool:
+    """Recognize an explicit credit shortage without conflating account denial."""
+    lowered = (message or "").lower()
+    return (
+        any(word in lowered for word in ("balance", "credit", "余额", "灵感值"))
+        and any(word in lowered for word in (
+            "not enough", "insufficient", "exhausted", "too low", "不足", "用完",
+        ))
+    )
+
+
 def _classify_api_error(
     *,
     http_status: int,
@@ -133,6 +145,9 @@ def _classify_api_error(
     if http_status == 401 or service_code in {1000, 1001, 1002, 1003, 1004}:
         code = "KLING_API_AUTHENTICATION_FAILED"
         retryable = False
+    elif is_kling_api_balance_message(message):
+        code = "KLING_API_BALANCE_INSUFFICIENT"
+        retryable = False  # Requeue requires a verified rejected receipt.
     elif service_code in {1100, 1101, 1102, 1103}:
         code = "KLING_API_ACCOUNT_UNAVAILABLE"
         retryable = False
@@ -151,7 +166,8 @@ def _classify_api_error(
     rejected = http_status < 500 and (
         code in {
             "KLING_API_AUTHENTICATION_FAILED", "KLING_API_ACCOUNT_UNAVAILABLE",
-            "KLING_API_VALIDATION_FAILED", "KLING_API_RATE_LIMITED",
+            "KLING_API_BALANCE_INSUFFICIENT", "KLING_API_VALIDATION_FAILED",
+            "KLING_API_RATE_LIMITED",
         }
         or http_status in {400, 401, 402, 403, 422, 429}
     )
@@ -652,6 +668,55 @@ class KlingOfficialApiAdapter:
         }
 
     async def submit(self, request: VideoGenerationRequest) -> ProviderSubmissionResult:
+        # Production Runner supplies the durable operation identity. Keep the
+        # acceptance receipt outside SQLite so a DB outage cannot erase it.
+        if not request.submission_operation_key:
+            return await self._submit(request)
+        if (not request.submission_account_id or not request.submission_fingerprint
+                or request.external_task_id != request.submission_fingerprint
+                or request.submission_account_id != await self.submission_account_id()):
+            raise KlingApiError("KLING_RECEIPT_EVIDENCE_MISMATCH", "API receipt identity mismatch")
+        receipt = KlingSubmissionReceipt(
+            self.settings.runner_root, request.submission_operation_key,
+            self.get_provider_name(), request.submission_account_id,
+            request.submission_fingerprint,
+        )
+        try:
+            prior = await asyncio.to_thread(receipt.begin)
+        except (OSError, ValueError) as exc:
+            raise KlingApiError(
+                "KLING_SUBMISSION_RECORD_FAILED", "Cannot persist API submit boundary",
+            ) from exc
+        if prior is not None:
+            raise KlingApiError(
+                "KLING_SUBMISSION_RECOVERY_REQUIRED", "Existing API receipt; do not resubmit",
+                submitted=True, uncertain=True, provider_task_id=prior.get("providerTaskId"),
+            )
+        try:
+            result = await self._submit(request)
+        except KlingCliError as exc:
+            try:
+                await asyncio.to_thread(
+                    receipt.finish,
+                    "UNCERTAIN" if (exc.submitted or exc.uncertain or exc.provider_task_id)
+                    else "FAILED_BEFORE_SUBMIT", task_id=exc.provider_task_id, error_code=exc.code,
+                )
+            except (OSError, ValueError):
+                logger.error("API receipt finalization failed; durable STARTED remains")
+            raise
+        try:
+            await asyncio.to_thread(
+                receipt.finish, "ACCEPTED", task_id=result.provider_task_id,
+                model=result.provider_model, credits=result.credits_consumed,
+            )
+        except (OSError, ValueError) as exc:
+            raise KlingApiError(
+                "KLING_ACCEPTED_RECEIPT_WRITE_FAILED", "Cloud accepted; reconcile original ID",
+                submitted=True, uncertain=True, provider_task_id=result.provider_task_id,
+            ) from exc
+        return result
+
+    async def _submit(self, request: VideoGenerationRequest) -> ProviderSubmissionResult:
         model = await self.validate_request(request)
         payload = await self.build_request_payload(request)
         # Evidence only: a sidecar audit cannot alter a paid submission.

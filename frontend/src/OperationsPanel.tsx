@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { getOperations, setOperationalPause } from './api'
 import type { OperationsIssueCategory, OperationsSnapshot } from './types'
 import { OperationsIssuesBrowser } from './features/admin/OperationsIssuesBrowser'
+import { PerformanceDiagnostics } from './features/admin/PerformanceDiagnostics'
 
 const alertCodeLabels: Record<string, string> = {
   NAS_AUTH_FAILED: 'CUT 共享目录凭证失效',
@@ -107,6 +108,7 @@ export function OperationsPanel({ adminId, onShowTasks, onShowBilling }: {
         <button type="button" className="secondary-button ops-refresh-action" disabled={busy} onClick={() => void refresh()} aria-label="刷新运行数据"><RefreshCw size={16} />刷新</button>
       </div>
     </div>
+    <PerformanceDiagnostics key={adminId} adminId={adminId} />
     {error && <div className="service-alert" role="alert"><AlertTriangle size={18} /><span>{error}</span></div>}
     {notice && <div className="service-alert service-alert--success" role="status"><Play size={18} /><span>{notice}</span></div>}
     {health && issueCategories > 0 ? <section className="ops-band ops-issues" aria-label="待处理问题">

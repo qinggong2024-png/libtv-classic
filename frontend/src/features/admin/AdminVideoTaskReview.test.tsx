@@ -1,7 +1,7 @@
 import { act } from 'react'
 import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest'
 import {
-  fetchAdminCutObjectUrl, fetchAdminReferenceObjectUrl, fetchAdminVideoObjectUrl,
+  fetchAdminCutObjectUrl, fetchAdminReferenceObjectUrl, fetchAdminVideoObjectUrl, fetchAdminDeepVideoObjectUrl,
   getAdminVideoTasks, getAdminVideoTrace,
 } from '../../api'
 import type { AdminVideoRecord, AdminVideoTaskPage, AdminVideoTrace } from '../../types'
@@ -16,6 +16,7 @@ vi.mock('../../api', async original => ({
   fetchAdminCutObjectUrl: vi.fn(),
   fetchAdminReferenceObjectUrl: vi.fn(),
   fetchAdminVideoObjectUrl: vi.fn(),
+  fetchAdminDeepVideoObjectUrl: vi.fn(),
 }))
 const raw = (id: string, index: number): AdminVideoRecord => ({
   artifactId: id, attemptId: `attempt-${id}`, taskId: 'task-a',
@@ -273,4 +274,55 @@ it('opens details from metadata and previews the original authenticated referenc
   expect(document.body.querySelector('.admin-reference-preview')?.getAttribute('aria-label')).toContain('首帧图')
   await act(async () => { document.body.querySelector<HTMLButtonElement>('.admin-reference-preview button[aria-label="关闭图片预览"]')?.click() })
   expect(document.body.querySelector('.admin-reference-preview')).toBeNull()
+})
+
+it('shows a failed pre-video task and opens its detail without requesting an artifact', async () => {
+  vi.mocked(getAdminVideoTasks).mockResolvedValue({
+    ...data, healthSummary: { critical: 1, warning: 0, normal: 0 },
+    items: [{ ...data.items[0], clips: [], rawClipCount: 0, cut: null, cutStatus: null,
+      latestRawAt: null, phase: 'ACTION_REQUIRED', phaseReasonCode: 'AI_CREATIVE_WORKER_FAILED',
+      analysisStartedAt: '2026-11-23T04:01:00Z', severity: 'critical' }],
+  })
+  view = await mount(<AdminVideoTaskReview adminId="admin-id"/>)
+  await act(async () => { await Promise.resolve() })
+  const preview = view.host.querySelector<HTMLButtonElement>('.admin-video-preview')!
+  expect(preview.textContent).toContain('方案分析异常')
+  expect(preview.querySelector('img')).toBeNull()
+  expect(preview.querySelector('.admin-video-play')).toBeNull()
+  await act(async () => { preview.click(); await Promise.resolve(); await Promise.resolve() })
+  expect(view.host.querySelector('.admin-task-detail')).not.toBeNull()
+  expect(view.host.textContent).toContain('AI_CREATIVE_WORKER_FAILED')
+  expect(view.host.querySelector('.admin-review-step[data-tone="critical"]')?.textContent).toContain('最近分析')
+  expect(getAdminVideoTrace).not.toHaveBeenCalled()
+})
+
+
+it('shows uploaded depth and Seedance recreation without Kling labels', async () => {
+  const clip = { ...raw('clip-1', 1), provider: 'wavespeed_video', workflowKind: 'DEEP_VIDEO',
+    deepVideoMode: 'recreate', model: 'bytedance/seedance-2.0/video-edit' }
+  const trace = sampleTrace('clip-1')
+  trace.workflowKind = 'DEEP_VIDEO'
+  trace.deepVideo = { mode: 'recreate', pipeline: 'depth-input-v1', referenceVideoType: 'depth',
+    model: clip.model, depthModel: null, media: ['depth'] }
+  trace.direction = { ...trace.direction, provider: clip.provider, model: clip.model, generationMode: 'deep_video' }
+  vi.mocked(getAdminVideoTrace).mockResolvedValue(trace)
+  vi.mocked(getAdminVideoTasks).mockResolvedValue({ ...data, items: [{
+    ...data.items[0], workflowKind: 'DEEP_VIDEO', clips: [clip], rawClipCount: 1, cut: null, cutStatus: null,
+  }] })
+  vi.mocked(fetchAdminDeepVideoObjectUrl).mockRejectedValue(new Error('test-only video'))
+  view = await mount(<AdminVideoTaskReview adminId="admin-id"/>)
+  await act(async () => { await Promise.resolve() })
+  const open = [...view.host.querySelectorAll('button')].find(el => el.textContent?.includes('查看完整详情'))
+  await act(async () => { open?.click(); await Promise.resolve(); await Promise.resolve() })
+  expect(view.host.textContent).toContain('复刻原片')
+  expect(view.host.textContent).toContain('已有深度素材')
+  expect(view.host.textContent).toContain('Seedance 2.0 复刻提交')
+  expect(view.host.textContent).not.toContain('Kling')
+  expect(view.host.textContent).not.toContain('深度提取完成')
+  const depth = [...view.host.querySelectorAll<HTMLButtonElement>('.admin-task-media-strip button')].find(b => b.textContent?.includes('深度片段'))
+  await act(async () => { depth?.click() })
+  const play = view.host.querySelector<HTMLButtonElement>('button[aria-label="播放深度片段"]')
+  expect(play).not.toBeNull()
+  await act(async () => { play?.click(); await Promise.resolve() })
+  expect(fetchAdminDeepVideoObjectUrl).toHaveBeenCalledWith('admin-id', 'clip-1', 'depth')
 })

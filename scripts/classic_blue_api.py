@@ -130,6 +130,8 @@ def replace_blue(
     expected_active: str,
     baseline_unknown: int,
     apply: bool = False,
+    online_prepare: bool = False,
+    expected_standby: str | None = None,
 ):
     import classic_lan
     from classic_green_api import json_get, validated_release, web_route
@@ -137,8 +139,20 @@ def replace_blue(
 
     root, runtime = classic_lan.ROOT, classic_lan.STATE.parent
     release = validated_release(release, revision)
+
+    def guard():
+        if online_prepare:
+            from classic_online_standby import guard as guard_online
+
+            if not supervisor_supports_blue(runtime):
+                raise RuntimeError("running supervisor has not adopted the blue-slot contract")
+            kwargs = {"expected_standby": expected_standby} if expected_standby else {}
+            return guard_online(root, release, revision, expected_active, 8002,
+                                baseline_unknown, **kwargs)
+        return guard_replacement(runtime, root, expected_active, baseline_unknown)
+
     if not apply:
-        active, previous = guard_replacement(runtime, root, expected_active, baseline_unknown)
+        active, previous = guard()
         return {
             "action": "dry-run",
             "slot": 8002,
@@ -147,7 +161,7 @@ def replace_blue(
             "activeRevision": active["sourceRevision"],
         }
     with route_operator_lock(runtime), exclusive_classic_worker("api-blue", runtime):
-        active, previous = guard_replacement(runtime, root, expected_active, baseline_unknown)
+        active, previous = guard()
         state = json.loads(classic_lan.STATE.read_text(encoding="utf-8"))
         if state.get("apiPort") != 8002 or state.get("webPort") != 5176:
             raise RuntimeError("unexpected classic stack identity")
@@ -166,7 +180,7 @@ def replace_blue(
             raise RuntimeError("recorded process is not the 8002 API")
         # Validate exact immutable source and the drain boundary before touching the process.
         release = validated_release(release, revision)
-        guard_replacement(runtime, root, expected_active, baseline_unknown)
+        guard()
         write_pin(runtime, release, revision)
         process.terminate()
         process.wait(timeout=10)
@@ -188,6 +202,10 @@ def replace_blue(
                     and info.get("schemaRevision") == active["schemaRevision"]
                     and web_route().get("activeApiPort") == 8003
                 ):
+                    if online_prepare:
+                        from classic_online_standby import verify_prepared
+
+                        verify_prepared(8002, revision, active)
                     return {
                         "action": "standby-prepared",
                         "slot": 8002,
@@ -205,8 +223,11 @@ if __name__ == "__main__":
     parser.add_argument("--release-root", type=Path, required=True)
     parser.add_argument("--expected-source-revision", required=True)
     parser.add_argument("--expected-active-revision", required=True)
+    parser.add_argument("--expected-standby-revision")
     parser.add_argument("--baseline-unknown", type=int, default=15)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--online-prepare", action="store_true",
+                        help="Prepare proven-idle standby only; no route or worker changes")
     args = parser.parse_args()
     if args.baseline_unknown < 0:
         parser.error("baseline must be nonnegative")
@@ -218,6 +239,8 @@ if __name__ == "__main__":
                 expected_active=args.expected_active_revision,
                 baseline_unknown=args.baseline_unknown,
                 apply=args.apply,
+                online_prepare=args.online_prepare,
+                expected_standby=args.expected_standby_revision,
             ),
             indent=2,
         )

@@ -110,3 +110,10 @@
 .admin-reference-preview .image-preview-stage img{display:block;max-width:100%;max-height:calc(100dvh - 80px);width:auto;height:auto;object-fit:contain}
 .admin-review-milestone-time{font-size:10px;color:var(--text-secondary);font-variant-numeric:tabular-nums;line-height:1.35;overflow-wrap:anywhere}
 .admin-review-segment{grid-template-rows:7px auto auto auto}
+.admin-task-gallery .admin-task-no-media{display:grid;justify-items:center;align-content:center;gap:9px;width:100%;height:100%;padding:12px;background:var(--surface-soft);color:var(--text-secondary);text-align:center}
+.admin-task-no-media strong{color:var(--text);font-size:13px;overflow-wrap:anywhere}
+.admin-task-no-media small{font-size:11px}
+.admin-task-card[data-health="critical"] .admin-task-no-media svg{color:var(--danger)}
+.admin-deep-media-placeholder {display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;min-height:64px;width:100%;color:var(--text-secondary,#64748b);background:#eef2f7;}
+.admin-task-video-cover > .admin-deep-media-placeholder {height:100%;}
+.admin-task-video h3 small {font-weight:400;color:var(--text-secondary,#64748b);}

@@ -6,6 +6,9 @@ import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from classic_lan import configured_lan_ip
+from classic_active_release_status import site_user_url, workspace_source_revision
+
 import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,8 +19,11 @@ def main() -> None:
     parser.add_argument("--url", required=True)
     args = parser.parse_args()
     target = urlsplit(args.url)
-    if target.port == 5173 or target.hostname not in {"127.0.0.1", "192.168.30.126"}:
+    if (target.scheme != "http" or target.port != 5176 or target.hostname not in {"127.0.0.1", configured_lan_ip()}
+            or target.username or target.password or target.query or target.fragment):
         raise SystemExit("Verification is limited to the independent classic instance.")
+    if site_user_url(ROOT) is None:
+        raise SystemExit("No matching local classic site state; verification refused.")
     credentials = json.loads(
         (ROOT / "var" / "classic-lan" / "runtime" / "initial-admin.json").read_text(
             encoding="utf-8"
@@ -34,7 +40,10 @@ def main() -> None:
             client.get(asset).raise_for_status()
         checks.append("static production build and assets")
         status = client.get("/api/v1/system/status").json()
-        assert status["sourceRevision"] == "0e3d1c831efd4cd074654a03e36c472f15565cc3"
+        gate = client.get("/api/v1/system/classic-new-video-admission")
+        gate.raise_for_status()
+        assert gate.json()["deploymentId"] == "libtv-classic-lan-0e3d1c8"
+        assert status["sourceRevision"] == workspace_source_revision(ROOT)
         assert status["sharedAuthentication"] is True
         assert status["paidGenerationEnabled"] is False
         assert status["paidGenerationAuthorized"] is False

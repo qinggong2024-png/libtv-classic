@@ -77,7 +77,8 @@ export function useMultiCutBasket({ tasks, canWrite, enabled, storageKey = STORA
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout>
     setReading(ids.length > 0)
-    setMultiTasksLoaded(false)
+    // Keep the last confirmed global CUT snapshot while a new selection is checked.
+    // Invalidating it here made every task card briefly switch to an unknown status.
     const refresh = async () => {
       let nextIndex = 0
       let active = false
@@ -125,7 +126,7 @@ export function useMultiCutBasket({ tasks, canWrite, enabled, storageKey = STORA
       if (!controller.signal.aborted) {
         const checkedAt = Date.now()
         setMultiTasksCheckedAt(checkedAt)
-        setMultiTasksLoaded(multiReadOk)
+        setMultiTasksLoaded(previous => previous || multiReadOk)
         setReading(false)
         timer = setTimeout(() => void refresh(), autoCutflowPollDelay(autoCandidates, observedBatches, checkedAt, active, !multiReadOk))
       }
@@ -168,7 +169,7 @@ export function useMultiCutBasket({ tasks, canWrite, enabled, storageKey = STORA
   const brandConflict = cutflowBrandConflict(entries)
   // 缺品牌不再算冲突：只提示，不参与 canSubmit。服务端仍会核验。
   const unverifiedBrands = cutflowUnverifiedBrandCount(entries)
-  const pendingReads = entries.some(entry => !states[entry.variant.id]) || !multiTasksLoaded
+  const pendingReads = reading || entries.some(entry => !states[entry.variant.id]) || !multiTasksLoaded
   const add = (sourceId: string) => {
     if (!selection.includes(sourceId) && selection.length >= MAX_CUTFLOW_SOURCES) {
       setMessage(`每次最多选择 ${MAX_CUTFLOW_SOURCES} 条原片`)

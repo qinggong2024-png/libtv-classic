@@ -44,6 +44,7 @@ from libtv_agent.services.kling_config import (
 )
 from libtv_agent.services.libtv_login import LibTVLoginManager
 from libtv_agent.services.materialization_lifecycle import recover_stale_materializations
+from libtv_agent.services.performance_observation import PerformanceMiddleware
 from libtv_agent.services.subject_elements import recover_subject_element_jobs
 from libtv_agent.services.upload_diagnostics import (
     log_upload_failure,
@@ -636,5 +637,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers["X-Frame-Options"] = "DENY"
         return response
 
+    app.add_middleware(PerformanceMiddleware)
     app.include_router(api_router)
     return app

@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { type Task } from '../../types'
 import type { CutflowHandoff, MultiCutflowTask } from '../../api'
 import { formatDurationSeconds, formatElapsed, parseTaskTimestamp, visibleTaskTimingStageKeys } from '../../taskTiming'
-import { providerTimingStageLabel } from '../../providerPresentation'
+import { deepVideoStageLabel, providerTimingStageLabel, videoModelDisplayName } from '../../providerPresentation'
 import { COMPLETED_PHASES, SETTLED_PHASES } from '../../domain/workflowStates'
 import { taskStatus } from '../../domain/taskPresentation'
 import { stageElapsedSeconds, STOPPED_TIMING_STATUSES, taskTimingStages, type TaskTimingStage } from '../../domain/taskTimingPresentation'
@@ -64,7 +64,7 @@ function formatCompactDurationSeconds(value: number): string {
   return minutes ? `${hours}时${minutes}分` : `${hours}小时`
 }
 
-export function TaskTimingTimeline({ task, cutflowStates = {}, multiCutflows = [] }: { task: Task; cutflowStates?: Record<string, CutflowTimelineState>; multiCutflows?: MultiCutflowTask[] }) {
+export function TaskTimingTimeline({ task, cutflowStates = {}, multiCutflows = [], autoDispatchLabel }: { task: Task; cutflowStates?: Record<string, CutflowTimelineState>; multiCutflows?: MultiCutflowTask[]; autoDispatchLabel?: string }) {
   const timingStages = taskTimingStages(task)
   const stagesByKey = new Map(timingStages.map((stage) => [stage.key, stage]))
   const hasActiveStage = timingStages.some((stage) => stage.status === 'ACTIVE')
@@ -80,7 +80,13 @@ export function TaskTimingTimeline({ task, cutflowStates = {}, multiCutflows = [
     return () => window.clearInterval(timer)
   }, [hasActiveStage, hasActiveCutflow, hasPendingCutflow])
 
-  const visibleStageKeys = new Set(visibleTaskTimingStageKeys(task.workflowKind, task.settings?.deepVideoPipeline === 'depth-first-v1', task.settings?.deepVideoPipeline === 'depth-input-v1'))
+  const depthOnly = task.workflowKind === 'DEEP_VIDEO' && task.settings?.deepVideoMode === 'depth'
+  const visibleStageKeys = new Set(visibleTaskTimingStageKeys(
+    task.workflowKind,
+    task.settings?.deepVideoPipeline === 'depth-first-v1',
+    task.settings?.deepVideoPipeline === 'depth-input-v1',
+    depthOnly,
+  ))
   // Production timeline focuses on meaningful creative work. Upload remains recorded in backend, not shown here.
   if (task.workflowKind !== 'DEEP_VIDEO') visibleStageKeys.add('ANALYSIS')
   visibleStageKeys.delete('SOURCE_UPLOAD')
@@ -237,18 +243,34 @@ export function TaskTimingTimeline({ task, cutflowStates = {}, multiCutflows = [
   const confirmationStage = confirmationVisible ? stagesByKey.get('CONFIRMATION') : undefined
   const confirmationSeconds = confirmationStage ? stageElapsedSeconds(confirmationStage, now) ?? 0 : 0
 
+  const deepVideoModel = task.settings?.model ?? task.compiledPlan?.model
+  const deepVideoDepthModel = task.settings?.depthModel
+  const timelineStageLabel = (key: TaskTimingStage['key']) => {
+    if (task.workflowKind !== 'DEEP_VIDEO') {
+      return key === 'ANALYSIS' ? '素材分析' : providerTimingStageLabel(key, task.generationProvider)
+    }
+    if (key === 'DEPTH_EXTRACTION') return deepVideoStageLabel(key, deepVideoModel, deepVideoDepthModel)
+    if (key === 'REPLACEMENT' || key === 'GENERATION') {
+      return task.settings?.deepVideoMode === 'depth'
+        ? deepVideoStageLabel('DEPTH_EXTRACTION', deepVideoModel, deepVideoDepthModel)
+        : deepVideoStageLabel('REPLACEMENT', deepVideoModel)
+    }
+    return providerTimingStageLabel(key, task.generationProvider)
+  }
   const mainStatus = showCutflowHeading ? cutflowLabel
-    : currentStage ? providerTimingStageLabel(currentStage.key, task.generationProvider)
-      : taskStatus(task).label
-  return <section className="task-timing task-timing--condensed" aria-labelledby="task-timing-title">
-    <div className="task-timing-compact">
+    : currentStage ? timelineStageLabel(currentStage.key)
+      : autoDispatchLabel ?? taskStatus(task).label
+  return <details className="task-timing task-timing--condensed task-timing-breakdown" aria-labelledby="task-timing-title">
+    <summary className="task-timing-compact">
       <div className="task-timing-compact__status">
-        <span>制作进度</span>
+        <span>制作耗时</span>
         <strong id="task-timing-title">{mainStatus}</strong>
         <small>总历时 {totalSeconds !== null ? formatDurationSeconds(totalSeconds) : '未完整记录'}</small>
       </div>
       {stoppedStage && !activeStage ? <span className="task-timing-compact__warning" role="status">{stoppedLabel}</span> : null}
-    </div>
+      <ChevronDown className="task-timing-chevron" size={17} aria-hidden="true" />
+    </summary>
+    <div className="task-timing-breakdown__content">
     <ol
       className="task-timing-stages task-timing-stages--rail"
       aria-label="制作阶段与耗时"
@@ -265,36 +287,32 @@ export function TaskTimingTimeline({ task, cutflowStates = {}, multiCutflows = [
             : STOPPED_TIMING_STATUSES.has(stage.status)
               ? `${stage.status === 'UNKNOWN' ? '待核实' : stage.status === 'CANCELLED' ? '已取消' : stage.status === 'FAILED' ? '失败' : '已中断'}${elapsed === null ? '' : ` · ${formatCompactDurationSeconds(elapsed)}`}`
               : stoppedStage && !activeStage ? '未执行' : '待执行'
-        const fullLabel = key === 'ANALYSIS' ? '素材分析' : providerTimingStageLabel(key, task.generationProvider)
+        const fullLabel = timelineStageLabel(key)
         return <li key={key} className={`task-timing-stage is-${analysisUnrecorded ? 'unrecorded' : stage.status.toLowerCase()}`} aria-label={`${fullLabel}，${analysisUnrecorded ? '未单独记录' : category === 'user' ? '用户等待' : '系统处理'}，${statusText}`} aria-current={stage.status === 'ACTIVE' ? 'step' : undefined}>
           <span className="task-timing-marker" aria-hidden="true">
             {analysisUnrecorded ? <CircleHelp size={15} /> : stage.status === 'COMPLETED' ? <Check size={15} /> : stage.status === 'ACTIVE' ? <LoaderCircle className="spin" size={15} /> : stage.status === 'UNKNOWN' ? <CircleHelp size={15} /> : stage.status === 'INTERRUPTED' ? <Pause size={15} /> : stage.status === 'CANCELLED' ? <X size={15} /> : stage.status === 'FAILED' ? <AlertTriangle size={15} /> : index + 1}
           </span>
           <span className="task-timing-copy">
-            <strong><span className="task-timing-label-full">{fullLabel}</span><span className="task-timing-label-short">{taskTimingStageShortLabel(key)}</span></strong>
-            <small>{analysisUnrecorded ? '未单独记录' : category === 'user' ? '用户等待' : '系统处理'}{stage.attemptCount && stage.attemptCount > 1 ? ` · 共 ${stage.attemptCount} 次` : ''}{waitBeforeStage.has(key) ? ` · 前置间隔 ${formatCompactDurationSeconds(waitBeforeStage.get(key)!)}` : ''}</small>
+            <strong><span className="task-timing-label-full">{fullLabel}</span><span className="task-timing-label-short">{task.workflowKind === 'DEEP_VIDEO' && key === 'REPLACEMENT' ? (videoModelDisplayName(deepVideoModel) ?? '视频') + '替换' : taskTimingStageShortLabel(key)}</span></strong>
+            {(stage.attemptCount && stage.attemptCount > 1 || waitBeforeStage.has(key)) ? <small>{[stage.attemptCount && stage.attemptCount > 1 ? `共 ${stage.attemptCount} 次` : '', waitBeforeStage.has(key) ? `前置间隔 ${formatCompactDurationSeconds(waitBeforeStage.get(key)!)}` : ''].filter(Boolean).join(' · ')}</small> : null}
           </span>
           <span className="task-timing-duration">{statusText}</span>
         </li>
       })}
       {cutflowVariants.length || latestMultiCutflow ? <li className={`task-timing-stage task-timing-stage--cutflow is-${cutflowStatus.toLowerCase()}`} aria-label={`剪辑，${cutflowStatusText}`} aria-current={cutflowStatus === 'ACTIVE' ? 'step' : undefined}>
         <span className="task-timing-marker" aria-hidden="true">{cutflowStatus === 'COMPLETED' ? <Check size={15} /> : cutflowStatus === 'ACTIVE' ? <LoaderCircle className="spin" size={15} /> : cutflowStatus === 'FAILED' ? <AlertTriangle size={15} /> : cutflowStatus === 'CANCELLED' ? <X size={15} /> : cutflowStatus === 'UNKNOWN' ? <CircleHelp size={15} /> : stages.length + 1}</span>
-        <span className="task-timing-copy"><strong><span className="task-timing-label-full">{isMergedEdit ? '合并剪辑' : '剪辑'}</span><span className="task-timing-label-short">剪辑</span></strong><small>{latestMultiCutflow ? isMergedEdit ? `${latestMultiCutflow.sources.length} 条原片合并` : '单片剪辑' : cutflowVariants.length > 1 ? `${completedEdits}/${cutflowVariants.length} 个原片已剪辑` : latestCutflow ? '剪辑任务' : '可在下方送入剪辑'}{cutflowWait && cutflowWait > 0 ? ` · 前置间隔 ${formatCompactDurationSeconds(cutflowWait)}` : ''}</small></span>
+        <span className="task-timing-copy"><strong><span className="task-timing-label-full">{isMergedEdit ? '合并剪辑' : '剪辑'}</span><span className="task-timing-label-short">剪辑</span></strong>{(latestMultiCutflow || cutflowVariants.length > 1 || (cutflowWait && cutflowWait > 0)) ? <small>{latestMultiCutflow ? isMergedEdit ? `${latestMultiCutflow.sources.length} 条原片合并` : '单片剪辑' : cutflowVariants.length > 1 ? `${completedEdits}/${cutflowVariants.length} 个原片已剪辑` : ''}{cutflowWait && cutflowWait > 0 ? ` · 前置间隔 ${formatCompactDurationSeconds(cutflowWait)}` : ''}</small> : null}</span>
         <span className="task-timing-duration">{cutflowLabel}{editingHasTiming ? ` · ${formatCompactDurationSeconds(editingSeconds)}` : ''}</span>
       </li> : null}
     </ol>
-    <details className="task-timing-breakdown">
-      <summary><span>耗时明细 · 处理与等待</span><ChevronDown size={15} aria-hidden="true" /></summary>
-      <div className="task-timing-breakdown__content">
       <dl className="task-timing-summary" aria-label="任务耗时汇总">
         <div title="从任务提交到当前阶段或最后成片的真实经过时间；不重复累计并行任务"><dt>实际总耗时</dt><dd>{totalSeconds !== null ? formatDurationSeconds(totalSeconds) : '暂无记录'}</dd></div>
         <div title="已记录的阶段占用时间（含后台准备过程，以及尚无法拆分的云端或 CUT 内部排队）；对并行阶段去重"><dt>{stoppedStage && !activeStage ? '停止前处理耗时' : '累计处理耗时'}</dt><dd>{processingSeconds > 0 ? formatDurationSeconds(processingSeconds) : '暂无记录'}</dd></div>
-        <div title="各处理阶段之外的等待及衔接间隔，包括本地排队、人工确认；可灵或 CUT 内部排队暂包含在阶段耗时中"><dt>累计等待耗时</dt><dd>{waitingSeconds !== null ? formatDurationSeconds(waitingSeconds) : '待独立记录'}</dd></div>
+        <div title="各处理阶段之外的等待及衔接间隔，包括本地排队、人工确认；视频服务或 CUT 内部排队暂包含在阶段耗时中"><dt>累计等待耗时</dt><dd>{waitingSeconds !== null ? formatDurationSeconds(waitingSeconds) : '待独立记录'}</dd></div>
 
 
         {confirmationVisible ? <div title="等待确认视频动作方案的累计时长"><dt>等待方案确认</dt><dd>{formatDurationSeconds(confirmationSeconds)}</dd></div> : null}
       </dl>
-      </div>
-    </details>
-  </section>
+    </div>
+  </details>
 }

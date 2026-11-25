@@ -4,11 +4,11 @@ import { cutflowDispatchPresentation } from './cutflowDispatchPresentation'
 describe('simple CUT status on completed video tasks', () => {
   it('distinguishes enabled auto-send from an actual queued job', () => {
     const result = cutflowDispatchPresentation({ autoSubmitToCutflow: true }, false, false, false)
-    expect(result.headline).toBe('等待创建送剪任务')
+    expect(result.headline).toBe('等待自动送剪')
     expect(result.tone).toBe('neutral')
     expect(result.waiting).toBe(true)
     expect(result.modeLabel).toBe('自动送剪')
-    expect(result.action).toBe('refresh')
+    expect(result.action).toBeNull()
     expect(result.detail).not.toContain('已送剪成功')
   })
 

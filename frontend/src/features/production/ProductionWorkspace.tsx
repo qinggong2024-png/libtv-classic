@@ -3,9 +3,9 @@ import { errorMessage } from '../../errorPresentation'
 // 代码为逐字搬运，未经逻辑改写。
 import { AlertTriangle, ArrowLeft, Check, ChevronRight, LoaderCircle, MoreHorizontal, Play, RefreshCw, RotateCcw, Scissors, X, ZoomIn } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { analyzeTask, cancelTask, confirmTask, runPromptAssistant, saveTaskPrompts, getAutoCutflowDispatchStatus, type AutoCutflowDispatchStatus } from '../../api'
+import { analyzeTask, cancelTask, confirmTask, runPromptAssistant, saveTaskPrompts, getAutoCutflowDispatchStatus, type AutoCutflowDispatchStatus, type MultiCutflowTask } from '../../api'
 import { type Asset, type Task, type Variant, type VariantKind } from '../../types'
-import { providerPresentation, variantExecutionMessage } from '../../providerPresentation'
+import { deepVideoStageLabel, deepVideoTaskDisplayLabel, providerPresentation, variantExecutionMessage, videoModelDisplayName } from '../../providerPresentation'
 import { ACTIVE_PHASES, RESULT_PHASES } from '../../domain/workflowStates'
 import { taskHasActionableReason } from '../../domain/statusPresentation'
 import { formatTime, isAnalysisFailure, isWaveSpeedBalanceFailure, taskFailureMessage, taskRecoveryHeadline, taskStatus, variantDisplayName, variantKindDisplayName, variantKindShortLabel } from '../../domain/taskPresentation'
@@ -14,6 +14,7 @@ import { DepthVideoResult } from './DepthVideoResult'
 import { CutflowControl } from './CutflowControl'
 import { TaskCutflowActivity, TaskCutflowDeliveries } from './TaskCutflowSections'
 import { TaskAdaptiveProgress } from './TaskAdaptiveProgress'
+import { TaskMediaOverview } from './TaskMediaOverview'
 import { CutflowSourceToggle } from './CutflowSourceToggle'
 import { MultiCutBasket } from './MultiCutBasket'
 import { useMultiCutBasket, type MultiCutBasketController } from './useMultiCutBasket'
@@ -33,6 +34,7 @@ import { TaskDetailDisclosure } from './TaskDetailDisclosure'
 import './taskDetailLayout.css'
 import './taskTimingRail.css'
 import './taskDetailA.css'
+import './taskMediaOverview.css'
 
 const motionAwareScroll = (): ScrollBehavior => window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
 
@@ -100,7 +102,14 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
   const singleSourceCutflows = task.variants.flatMap(variant => cutflowBasket.singleSourceVersionsFor(variant.id))
   const editingBatches = [...new Map([...multiSourceCutflows, ...singleSourceCutflows].map(batch => [batch.id, batch])).values()]
   const finishedBatches = editingBatches.filter(batch => batch.outputs.length > 0)
-  const legacyOutputCount = Object.values(cutflowStates).flatMap(state => state.handoffs).reduce((sum, handoff) => sum + handoff.outputs.length, 0)
+  const legacyOutputs = Object.values(cutflowStates).flatMap(state => state.handoffs).filter(handoff => handoff.outputs.length > 0)
+  const legacyOutputCount = legacyOutputs.reduce((sum, handoff) => sum + handoff.outputs.length, 0)
+  const legacyDisplayBatches: MultiCutflowTask[] = legacyOutputs.map(handoff => ({
+    id: handoff.id, status: handoff.status, errorCode: handoff.errorCode ?? null,
+    errorMessage: handoff.errorMessage, createdAt: handoff.createdAt ?? task.createdAt,
+    updatedAt: handoff.updatedAt ?? task.updatedAt, sources: [],
+    outputs: handoff.outputs.map(output => ({ ...output, width: 9, height: 16 })),
+  }))
   const hasOlderVersions = finishedBatches.length > 1 || legacyOutputCount > 0
   const activeHistoryTab = hasOlderVersions ? historyTab : 'records'
   const deliveredOutputCount = finishedBatches.reduce((sum, batch) => sum + batch.outputs.length, 0) + legacyOutputCount
@@ -165,7 +174,8 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
   const selectClipsForCut = () => {
     const available = task.variants.filter(variant => variant.downloadArtifactId)
     const section = document.getElementById('task-original-clips')
-    if (section instanceof HTMLDetailsElement) section.open = true
+    const sectionDetails = section?.closest('details')
+    if (sectionDetails instanceof HTMLDetailsElement) sectionDetails.open = true
     if (available.length === 1 && multiCutReady) {
       cutflowBasket.add(available[0].id)
     } else {
@@ -200,6 +210,13 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
   const provider = providerPresentation(task.generationProvider)
   const isFixedWorkflow = task.workflowKind === 'FIXED_TEMPLATE'
   const isDeepWorkflow = task.workflowKind === 'DEEP_VIDEO'
+  const deepVideoModel = task.settings?.model ?? task.compiledPlan?.model
+  const deepVideoDepthModel = task.settings?.depthModel
+  const deepVideoTaskLabel = deepVideoTaskDisplayLabel(task.settings?.deepVideoMode, deepVideoModel, deepVideoDepthModel)
+  const deepVideoCurrentStageLabel = task.settings?.deepVideoMode === 'depth'
+    || (task.settings?.deepVideoPipeline === 'depth-first-v1' && task.settings?.deepVideoStage !== 'replacement')
+    ? deepVideoStageLabel('DEPTH_EXTRACTION', deepVideoModel, deepVideoDepthModel)
+    : deepVideoTaskLabel
   const isCustomWorkflow = isFixedWorkflow && task.settings?.generationMode === 'custom'
   const directorModeLabel = recordedDirectorMode(task)
   const stable = task.variants.find((variant) => variant.kind === 'STABLE')
@@ -276,8 +293,9 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
   const isConfirmation = !isFixedWorkflow && !isDeepWorkflow && task.phase === 'AWAITING_CONFIRMATION'
   const isGenerating = ACTIVE_PHASES.has(task.phase) && task.phase !== 'DRAFT' && task.phase !== 'ANALYZING'
   const isCompleted = RESULT_PHASES.has(task.phase)
+  const showFocus = isFixedWorkflow && (isGenerating || isCompleted || task.phase === 'ACTION_REQUIRED' || task.phase === 'CANCELLED')
   const showProductionProgress = ACTIVE_PHASES.has(task.phase)
-  const showCutStatus = isCompleted && (!finishedBatches.length || cutflowInProgress || latestEditFailed)
+  const showCutStatus = !showFocus && isCompleted && (!finishedBatches.length || cutflowInProgress || latestEditFailed)
   const canReuse = canGenerate && !isFixedWorkflow && !isDeepWorkflow && isCompleted && task.actionCapabilities.canRegenerate && reusableVariants.length > 0
   const analysisFailure = isAnalysisFailure(task)
   const needsRecovery = task.phase === 'ACTION_REQUIRED'
@@ -302,7 +320,7 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
             <span className="source-asset-preview-icon" aria-hidden="true">{isVideo ? <Play size={14} /> : <ZoomIn size={14} />}</span>
             <span className="source-asset-label">{label}</span>
           </button></figure>
-        })}</div><div className="garment-summary"><span>{isDeepWorkflow ? '本次深度视频设置' : isCustomWorkflow ? '本次自定义设置' : isFixedWorkflow ? '本次自动生成设置' : '服装识别摘要'}</span><strong>{isDeepWorkflow ? (task.settings?.deepVideoMode === 'depth' ? '提取深度视频' : '人物与商品替换 · Seedance 2.0') : isCustomWorkflow ? '自定义提示词 · 默认生产规格' : isFixedWorkflow ? '按所选站点风格制作' : [analysis?.garmentFacts?.category, analysis?.garmentFacts?.mainColor, analysis?.garmentFacts?.fit].filter(Boolean).join(' · ') || '正在整理服装信息'}</strong><p>{isDeepWorkflow ? `${task.settings?.deepVideoPipeline === 'depth-input-v1' ? '已有深度视频 → 人物与商品替换' : task.settings?.deepVideoPipeline === 'depth-first-v1' ? (isCompleted ? '深度提取 → 人物与商品替换' : task.settings?.deepVideoStage === 'replacement' ? '第 2 步：使用深度视频替换人物与商品' : '第 1 步：提取深度视频') : '参考视频驱动'} · ${String(task.settings?.durationSeconds ?? '')} 秒 · ${task.settings?.deepVideoPipeline === 'depth-first-v1' ? '深度视频 + 替换结果' : '1 个结果'}` : isCustomWorkflow ? `提示词原文直达 · ${task.variants.length} 个结果` : isFixedWorkflow ? `动作 ${({ low: '轻柔', standard: '标准', high: '明显' } as Record<string, string>)[String(task.settings?.actionIntensity ?? 'standard')] ?? '按所选设置'} · ${task.variants.length} 个结果` : analysis?.consistencyObservations?.summary ?? '系统将优先保持服装结构、颜色、印花和文字准确。'}</p></div></section>
+        })}</div><div className="garment-summary"><span>{isDeepWorkflow ? '本次深度视频设置' : isCustomWorkflow ? '本次自定义设置' : isFixedWorkflow ? '本次自动生成设置' : '服装识别摘要'}</span><strong>{isDeepWorkflow ? deepVideoTaskLabel : isCustomWorkflow ? '自定义提示词 · 默认生产规格' : isFixedWorkflow ? '按所选站点风格制作' : [analysis?.garmentFacts?.category, analysis?.garmentFacts?.mainColor, analysis?.garmentFacts?.fit].filter(Boolean).join(' · ') || '正在整理服装信息'}</strong><p>{isDeepWorkflow ? `${task.settings?.deepVideoPipeline === 'depth-input-v1' ? '已有深度视频 → 人物与商品替换' : task.settings?.deepVideoPipeline === 'depth-first-v1' ? (isCompleted ? '深度提取 → 人物与商品替换' : task.settings?.deepVideoStage === 'replacement' ? '第 2 步：使用深度视频替换人物与商品' : '第 1 步：提取深度视频') : '参考视频驱动'} · ${String(task.settings?.durationSeconds ?? '')} 秒 · ${task.settings?.deepVideoPipeline === 'depth-first-v1' ? '深度视频 + 替换结果' : '1 个结果'}` : isCustomWorkflow ? `提示词原文直达 · ${task.variants.length} 个结果` : isFixedWorkflow ? `动作 ${({ low: '轻柔', standard: '标准', high: '明显' } as Record<string, string>)[String(task.settings?.actionIntensity ?? 'standard')] ?? '按所选设置'} · ${task.variants.length} 个结果` : analysis?.consistencyObservations?.summary ?? '系统将优先保持服装结构、颜色、印花和文字准确。'}</p></div></section>
   )
   const taskTechnicalContent = (
     <div><p>联系管理员时，可提供任务编号，帮助查找这次任务。</p><dl>
@@ -311,27 +329,28 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
             {stoppedAt ? <><dt>停止时间</dt><dd>{formatTime(stoppedAt)}</dd></> : null}
             {directorModeLabel ? <><dt>编排模式</dt><dd>{directorModeLabel}</dd></> : null}
             <dt>生成服务</dt><dd>{provider.displayLabel}</dd>
+            {isDeepWorkflow ? <><dt>任务类型</dt><dd>深度视频</dd>{task.settings?.deepVideoMode === 'depth' ? <><dt>实际模型</dt><dd>{videoModelDisplayName(deepVideoModel) ?? 'Depth Anything'}</dd></> : <><dt>替换模型</dt><dd>{videoModelDisplayName(deepVideoModel) ?? '未记录'}</dd>{deepVideoDepthModel ? <><dt>深度模型</dt><dd>{videoModelDisplayName(deepVideoDepthModel) ?? 'Depth Anything'}</dd></> : null}</>}</> : null}
             <dt>视频生成状态</dt><dd>{taskStatus(task).label}</dd>
             {taskHasActionableReason(task) ? <><dt>情况说明</dt><dd>{taskFailureMessage(task)}</dd></> : null}
           </dl><div className="prompt-hashes">{task.variants.map((variant) => <span key={variant.id}>
-            <strong>{variantDisplayName(variant)} · {providerPresentation(variant.provider || task.generationProvider).displayLabel}</strong>
+            <strong>{variantDisplayName(variant)} · {isDeepWorkflow ? videoModelDisplayName(deepVideoModel) ?? '深度视频' : providerPresentation(variant.provider || task.generationProvider).displayLabel}</strong>
             <small>{variantExecutionMessage(variant, task.generationProvider, task.phase)}</small>
             {variant.providerTaskId ? <small>生成服务查询编号：{variant.providerTaskId}</small> : null}
           </span>)}</div></div>
   )
   return <div className="workspace-view">
-    <section className={isCompleted ? "production-workspace task-flow-completed task-layout-a" : "production-workspace task-layout-a"} aria-labelledby="detail-title">
+    <section className={(isCompleted ? "production-workspace task-flow-completed task-layout-a" : "production-workspace task-layout-a") + (showFocus ? ' allwe-focus-enabled' : '')} aria-labelledby="detail-title">
       <header className="drawer-header">
         <button className="icon-button" onClick={onClose} aria-label="关闭任务详情"><ArrowLeft size={19} /></button>
         <div className="drawer-header-main"><span>任务 / {isConfirmation ? '方案确认' : RESULT_PHASES.has(task.phase) ? '视频结果' : task.phase === 'CANCELLED' ? '已取消' : analysisFailure ? '分析恢复' : needsRecovery ? '异常处理' : '生产进度'}</span><h1 id="detail-title">{task.title}</h1></div>
-        <div className="drawer-header-actions"><ProviderBadge provider={task.generationProvider} />{!isCompleted && !showProductionProgress && !needsRecovery && !isConfirmation ? <TaskStatusBadge task={task} /> : null}</div>
+        <div className="drawer-header-actions"><ProviderBadge provider={task.generationProvider} workflowKind={task.workflowKind} model={deepVideoModel} mode={task.settings?.deepVideoMode} />{!isCompleted && !showProductionProgress && !needsRecovery && !isConfirmation ? <TaskStatusBadge task={task} /> : null}</div>
       </header>
-      {showProductionProgress ? <TaskAdaptiveProgress task={task} /> : null}
+      {showProductionProgress && !showFocus ? <TaskAdaptiveProgress task={task} /> : null}
       {showCutStatus ? <section className={`task-adaptive-cut task-adaptive-cut--${cutflowDispatch.tone}${cutflowDispatch.action === 'select' ? ' task-adaptive-cut--ready' : ''}`} aria-label="当前剪辑状态" role={cutflowDispatch.tone === 'attention' && cutflowDispatch.action !== 'select' ? 'alert' : 'status'}>
         <span className="task-adaptive-cut__icon" aria-hidden="true">{(cutflowInProgress && cutflowDispatch.tone !== 'attention') || cutflowDispatch.waiting ? <LoaderCircle className="spin" size={20} /> : cutflowDispatch.action === 'select' ? <Scissors size={20} /> : cutflowDispatch.tone === 'attention' ? <AlertTriangle size={20} /> : <Scissors size={20} />}</span>
         <div className="task-adaptive-cut__body">
           <h2>{cutflowDispatch.headline}</h2>
-          <p>{activeEditBatch ? (activeEditBatch.errorMessage || `${multiCutflowPresentation(activeEditBatch).label}，系统会自动更新进度。`) : latestEditFailed && latestEditBatch?.errorMessage ? latestEditBatch.errorMessage : partialSalvage ? cutflowDispatch.detail : cutflowDispatch.action === 'select' && task.variants.filter(variant => variant.downloadArtifactId).length === 1 && multiCutReady && !cutflowBasket.selection.length ? '原片已就绪，点击下方按钮即可直接送剪。' : cutflowDispatch.detail}</p>
+          <p>{activeEditBatch || latestEditFailed || partialSalvage ? cutflowDispatch.detail : cutflowDispatch.action === 'select' && task.variants.filter(variant => variant.downloadArtifactId).length === 1 && multiCutReady && !cutflowBasket.selection.length ? '原片已就绪，点击下方按钮即可直接送剪。' : cutflowDispatch.detail}</p>
           <small>原片已就绪 {task.variants.filter(variant => variant.downloadArtifactId).length}/{task.variants.length} · {cutflowDispatch.modeLabel}</small>
         </div>
         {cutflowDispatch.actionLabel && (cutflowDispatch.action !== 'select' || partialSalvage)
@@ -339,6 +358,7 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
           : null}
       </section> : null}
       <div className="drawer-content">
+        {showFocus ? <TaskMediaOverview task={task} batches={[...editingBatches, ...legacyDisplayBatches]} onPlayOriginal={onPlay} cutflowActive={cutflowInProgress} cutflowStatus={cutflowDispatch} canOperateCutflow={canGenerate} onCutflowAction={cutflowNextAction} onViewed={() => cutflowBasket.refreshMultiTasks()} /> : null}
         {analysisFailure ? <section className="analysis-recovery" role="alert">
           <span className="analysis-recovery-icon"><AlertTriangle size={22} /></span>
           <div><span>方案尚未生成</span><h2>{taskStatus(task).label}</h2><p>{taskFailureMessage(task)} 重新分析会继续使用当前素材，并按素材数量重新计算等待时间。</p></div>
@@ -346,10 +366,10 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
         </section> : null}
         {needsRecovery && !analysisFailure ? <section className="analysis-recovery" role="alert">
           <span className="analysis-recovery-icon"><AlertTriangle size={22} /></span>
-          <div><span>{isWaveSpeedBalanceFailure(task) ? '账户余额不足' : '任务需要处理'}</span><h2>{task.variants.some(variant => variant.generationStatus === 'SUCCEEDED' && variant.downloadStatus === 'READY' && variant.validationStatus === 'FAILED') ? '生成已完成，成品校验未通过' : task.variants.some(variant => variant.generationStatus === 'SUCCEEDED' && variant.downloadStatus === 'FAILED') ? '生成已完成，成品下载失败' : taskRecoveryHeadline(task)}</h2><p>{taskFailureMessage(task)}</p></div>
-          {canGenerate && task.actionCapabilities.canRegenerate && !isWaveSpeedBalanceFailure(task) ? <button className="primary-button" type="button" onClick={onRemix}>使用原素材重新制作</button> : null}
+          <div><span>{isWaveSpeedBalanceFailure(task) ? '账户余额不足' : '任务需要处理'}</span><h2>{task.variants.some(variant => variant.generationStatus === 'SUCCEEDED' && variant.downloadStatus === 'READY' && variant.validationStatus === 'FAILED') ? '生成已完成，成品校验未通过' : task.variants.some(variant => variant.generationStatus === 'SUCCEEDED' && variant.downloadStatus === 'FAILED') ? '生成已完成，成品下载失败' : taskRecoveryHeadline(task)}</h2><p>{taskFailureMessage(task)}</p>{reusableVariants.length > 0 ? <button type="button" className="text-button" onClick={() => { const details = document.getElementById("task-generation-parameters"); if (details instanceof HTMLDetailsElement) details.open = true; details?.scrollIntoView({ behavior: motionAwareScroll(), block: "start" }) }}>查看已保存的 {reusableVariants.length} 条提示词</button> : null}</div>
+          {canGenerate && task.actionCapabilities.canRegenerate && task.phaseReasonCode !== 'KLING_PRIOR_RISK_CONTROL_REJECTED' && !isWaveSpeedBalanceFailure(task) ? <button className="primary-button" type="button" onClick={onRemix}>使用原素材重新制作</button> : null}
         </section> : null}
-        {isCompleted && finishedBatches.length ? <section className="task-detail-section task-detail-primary-output" id="task-final-video" aria-label="最新成片">
+        {isCompleted && finishedBatches.length && !showFocus ? <section className="task-detail-section task-detail-primary-output" id="task-final-video" aria-label="最新成片">
           <TaskCutflowDeliveries batches={finishedBatches} sourceLabel={source => {
             const sourceVariant = task.variants.find(variant => variant.id === source.variantId)
             return sourceVariant ? variantDisplayName(sourceVariant) + " · " + source.title : source.title
@@ -363,10 +383,11 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
           </div>
         </> : null}
         {isGenerating || RESULT_PHASES.has(task.phase) || task.phase === 'CANCELLED' || (task.phase === 'ACTION_REQUIRED' && !analysisFailure) ? <>
-          {!showProductionProgress && !needsRecovery && !isCompleted ? <div className="drawer-section-title"><div><span>{task.settings?.deepVideoPipeline === 'depth-first-v1' ? '深度提取 → Seedance 2.0 替换' : '生成详情'} · {provider.displayLabel}</span><h2>{RESULT_PHASES.has(task.phase) ? '视频制作与成片' : task.phase === 'CANCELLED' ? '任务已取消' : needsRecovery ? `${provider.displayLabel} 任务需要处理` : `${provider.displayLabel} 生成进度`}</h2></div></div> : null}
+          {!showProductionProgress && !needsRecovery && !isCompleted ? <div className="drawer-section-title"><div><span>{isDeepWorkflow ? '深度视频独立链路' : '生成详情 · ' + provider.displayLabel}</span><h2>{RESULT_PHASES.has(task.phase) ? '视频制作与成片' : task.phase === 'CANCELLED' ? '任务已取消' : needsRecovery ? (isDeepWorkflow ? deepVideoCurrentStageLabel : provider.displayLabel) + ' 任务需要处理' : (isDeepWorkflow ? deepVideoCurrentStageLabel : provider.displayLabel) + ' 进度'}</h2></div></div> : null}
           {task.settings?.deepVideoPipeline === 'depth-input-v1' ? <p className="video-recreation-note">深度视频已就绪 · 本次直接替换，不重复提取深度。</p> : null}
           {!task.depthVideoResult && task.settings?.deepVideoMode === 'depth' && canGenerate && task.variants.some((variant) => variant.downloadArtifactId) && onDepthReuse ? <button className="secondary-button" onClick={onDepthReuse}><RotateCcw size={16} />用于人物与商品替换</button> : null}
           {task.depthVideoResult ? <DepthVideoResult result={task.depthVideoResult} title={task.title} onReuse={canGenerate ? onDepthReuse : undefined} /> : null}
+          <details className="allwe-detail-advanced" open={!showFocus || (canGenerate && allowManualCut && readyOriginals.length > 0 && !finishedBatches.length && !cutflowInProgress && !awaitingAutoDispatch)}><summary>原片送剪与详细状态</summary>
           <section className="task-detail-section task-a-originals" id="task-original-clips">
             <div className="task-detail-section__heading"><h2>原片与送剪</h2><p>已就绪 {readyOriginals.length}/{task.variants.length} · {finishedBatches.length ? '可再次选择原片送剪' : allowManualCut ? '预览原片后选择送剪' : '查看原片与制作状态'}</p></div>
           <div className={hasMultipleResults ? 'task-original-gallery' : 'task-original-standard'}>
@@ -423,11 +444,12 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
             {selectedOriginalsHere > 0 && cutflowBasket.submitHint ? <small className="task-original-gallery__warning" role="status">{cutflowBasket.submitHint}</small> : null}
           </aside> : null}
           </div></section>
+          </details>
         </> : null}
-        <TaskTimingTimeline task={task} cutflowStates={cutflowStates} multiCutflows={editingBatches} />
-        <TaskDetailDisclosure title="生成参数" hint="参考素材与生成设置 · 提示词">
+        <TaskTimingTimeline task={task} cutflowStates={cutflowStates} multiCutflows={editingBatches} autoDispatchLabel={task.settings?.autoSubmitToCutflow === true && readyOriginals.length > 0 && !hasCutflowRecord ? cutflowDispatch.headline : undefined} />
+        <TaskDetailDisclosure id="task-generation-parameters" title="生成参数" hint={reusableVariants.length ? `参考素材与生成设置 · ${reusableVariants.length} 条提示词已保存` : "参考素材与生成设置 · 提示词"}>
           {sourceContent}
-          {isCompleted ? <section className="task-a-prompts" aria-label="本次提示词与历史方案"><h3>本次提示词与历史方案</h3>
+          {!isConfirmation && (reusableVariants.length > 0 || isCompleted) ? <section className="task-a-prompts" aria-label="本次提示词与历史方案"><h3>本次提示词与历史方案</h3>
                 {reusableVariants.length ? <div className={`history-prompts${reusableVariants.length === 1 ? ' history-prompts--single' : ''}`}>
                   {reusableVariants.map((variant) => <HistoricalPrompt key={variant.id} task={task} variant={variant} selected={reuseKinds.includes(variant.kind)} />)}
                 </div> : <p className="task-materials__empty">本次任务没有已保存的提示词。</p>}
@@ -479,7 +501,7 @@ function ProductionWorkspaceBody({ task, cutflowBasket, onClose, onChanged, onRe
       {(canGenerate && task.actionCapabilities.canRegenerate) || task.actionCapabilities.canCancel || (canGenerate && isConfirmation) ? <footer className={`drawer-footer${canReuse ? ' drawer-footer--reuse' : ''}${isConfirmation ? ' drawer-footer--confirmation' : ''}`}>
         <div className="drawer-footer-actions">
           {task.actionCapabilities.canCancel ? <button className="secondary-button secondary-button--danger" disabled={busy} onClick={() => void cancel()}><X size={16} />取消任务</button> : null}
-          {canGenerate && task.actionCapabilities.canRegenerate && !canReuse && !needsRecovery ? <button className="secondary-button" onClick={onRemix}><RotateCcw size={16} />使用相同素材再制作</button> : null}
+          {canGenerate && task.actionCapabilities.canRegenerate && task.phaseReasonCode !== 'KLING_PRIOR_RISK_CONTROL_REJECTED' && !canReuse && !needsRecovery ? <button className="secondary-button" onClick={onRemix}><RotateCcw size={16} />使用相同素材再制作</button> : null}
         </div>
         {canReuse ? <div className="reuse-controls">
           <fieldset>

@@ -435,9 +435,11 @@ async def _worker_pulse(settings: Settings) -> None:
 async def _nas_monitor(settings: Settings) -> None:
     previous = None
     while True:
+        started = monotonic()
         code = await asyncio.to_thread(cutflow_observation.nas_probe, settings)
+        duration_ms = round((monotonic() - started) * 1000)
         try:
-            await asyncio.to_thread(cutflow_observation.save_nas_health, settings, code, datetime.now(UTC))
+            await asyncio.to_thread(cutflow_observation.save_nas_health, settings, code, datetime.now(UTC), duration_ms)
         except OSError:
             logging.getLogger(__name__).warning("CUTFLOW_NAS_HEALTH_SAVE_FAILED")
         if code != previous:
@@ -462,6 +464,7 @@ async def run(once: bool, stopping=None) -> None:
         last_receipt_sweep = 0.0
         last_coord_sweep = 0.0
         last_auto_sweep = 0.0
+        last_failed_reconcile = 0.0
         while stopping is None or not stopping.is_set():
             failed = False
             for operation_name, operation in (
@@ -499,6 +502,17 @@ async def run(once: bool, stopping=None) -> None:
                     failed = True
             if stopping is not None and stopping.is_set():
                 break
+            # One historical job at most per sweep, after active operations.
+            if once or monotonic() - last_failed_reconcile >= 30:
+                try:
+                    await tick_multi(database, settings, store, failed_reconciliation=True)
+                except Exception as exc:
+                    if once:
+                        raise
+                    logging.getLogger(__name__).warning(
+                        "CUTFLOW_FAILED_RECONCILE_SWEEP_FAILED code=%s", storage_failure_code(exc),
+                    )
+                last_failed_reconcile = monotonic()
             if once or monotonic() - last_receipt_sweep >= 30:
                 try:
                     await ensure_receipts(database, settings)

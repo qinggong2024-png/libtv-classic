@@ -158,9 +158,64 @@ RUNNER_COMPAT_API_PAIR = frozenset({
 })
 
 
+# Reviewed upload transaction-only pair; no provider, Runner, schema or route contract changes.
+UPLOAD_TX_API_PAIR = frozenset({
+    "9fa2b54595dbb067ebd9c3bc691454e1d9ed9ec072d7527bb7a557e66554f7aa",
+    "ad6d7b8ed034520060f8f9df71ae9dde35e1e018c037a7ed05215a198d4a8edb",
+})
+
+
+# Exact reliability API pair: short admission transactions and conditional
+# receipt cleanup. No schema, startup, execution protocol or provider adapter
+# change. The running worker and all standby/drain checks remain authoritative.
+RELIABILITY_ADMISSION_API_PAIR = frozenset({
+    "ad6d7b8ed034520060f8f9df71ae9dde35e1e018c037a7ed05215a198d4a8edb",
+    "9daa74dc429b49c18f26bdda720ccccaec00641deb2c79d42f8bf46e858e31e6",
+})
+
+
+# Exact Sol error-classification change already loaded by the reviewed Runner.
+# API startup, durable ownership, provider adapters, dependencies and schema unchanged.
+SOL400_API_PAIR = frozenset({
+    "68333d6b064d48c62c995a449fa53cd2620ebfdde85b552c143ea1dfc9a8bd61",
+    "d3d5116d28d051c72dfe749643cd793981bc757bf07e288a0e8146a0b9b1ffbc",
+})
+
+
+# Shared planner transport only, activated independently in the Runner first.
+# API startup, paid adapters, durable ownership, schema and prompts are unchanged.
+SOL_JPEG_API_PAIR = frozenset({
+    "68333d6b064d48c62c995a449fa53cd2620ebfdde85b552c143ea1dfc9a8bd61",
+    "3ea8fb51840e8a1356e276afabe1841b9aa3fc6c423e247e8872a999d703e206",
+})
+
+
+# Only the shared Sol response transport changes; API contract and schema unchanged.
+SOL_STREAM_API_PAIR = frozenset({
+    "3ea8fb51840e8a1356e276afabe1841b9aa3fc6c423e247e8872a999d703e206",
+    "1fe56175794093db64d0c734e29aae2eed576f26315b489655b2c23e7768ce95",
+})
+
+
+# Exact admin gallery read-only projection: include tasks before artifacts.
+# No API startup, schema, Worker, provider, billing, or request contract changes.
+ADMIN_PREVIDEO_API_PAIR = frozenset({
+    "1fe56175794093db64d0c734e29aae2eed576f26315b489655b2c23e7768ce95",
+    "ff20528ca7f82e6695962460bea9f5fe96bd35e1814ee6dfe4937e85cd1ab19e",
+})
+
+
+# Exact additive administrator-only saved-media/trace projection; no paid execution,
+# schema, startup, worker, or provider change.
+ADMIN_DEEP_TRACE_API_PAIR = frozenset({
+    "ff20528ca7f82e6695962460bea9f5fe96bd35e1814ee6dfe4937e85cd1ab19e",
+    "c97c2e7b73546abd3adc57c9d72548522102ce8af712257e1c71a3a3fec64393",
+})
+
+
 def reviewed_pair(first, second):
     return frozenset((first, second)) in (
-        API_ONLY_PAIR, ACTIVITY_API_ONLY_PAIR, IMAGE_API_ONLY_PAIR, RUNNER_COMPAT_API_PAIR,
+        API_ONLY_PAIR, ACTIVITY_API_ONLY_PAIR, IMAGE_API_ONLY_PAIR, RUNNER_COMPAT_API_PAIR, UPLOAD_TX_API_PAIR, RELIABILITY_ADMISSION_API_PAIR, SOL400_API_PAIR, SOL_JPEG_API_PAIR, SOL_STREAM_API_PAIR, ADMIN_PREVIDEO_API_PAIR, ADMIN_DEEP_TRACE_API_PAIR,
     )
 
 
@@ -171,7 +226,7 @@ def reviewed_api_path(first, second):
         return None
     pending = [[first]]
     seen = {first}
-    pairs = (API_ONLY_PAIR, ACTIVITY_API_ONLY_PAIR, IMAGE_API_ONLY_PAIR, RUNNER_COMPAT_API_PAIR)
+    pairs = (API_ONLY_PAIR, ACTIVITY_API_ONLY_PAIR, IMAGE_API_ONLY_PAIR, RUNNER_COMPAT_API_PAIR, UPLOAD_TX_API_PAIR, RELIABILITY_ADMISSION_API_PAIR, SOL400_API_PAIR, SOL_JPEG_API_PAIR, SOL_STREAM_API_PAIR, ADMIN_PREVIDEO_API_PAIR, ADMIN_DEEP_TRACE_API_PAIR)
     while pending:
         chain = pending.pop(0)
         if chain[-1] == second:

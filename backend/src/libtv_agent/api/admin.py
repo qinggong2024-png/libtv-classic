@@ -27,7 +27,7 @@ from libtv_agent.domain.schemas import ReconcileRequest
 from libtv_agent.runner.supervisor import RunnerSupervisor
 from libtv_agent.services.admin_video_review import get_admin_video_artifact, list_admin_videos
 from libtv_agent.services.admin_video_tasks import admin_cut_media_output, list_admin_video_tasks
-from libtv_agent.services.admin_video_trace import get_admin_video_reference, get_admin_video_trace
+from libtv_agent.services.admin_video_trace import get_admin_video_reference, get_admin_video_trace, get_admin_deep_media
 from libtv_agent.services.bach_config import (
     bach_admin_config_signature,
     bach_admin_config_status,
@@ -918,6 +918,14 @@ def _runtime_response(version: RuntimeConfigVersion) -> dict[str, Any]:
     }
 
 
+@router.get("/performance")
+async def get_performance(actor: Actor) -> dict[str, Any]:
+    require_admin(actor.role)
+    from libtv_agent.services.performance_observation import observation
+
+    return observation.snapshot()
+
+
 @router.get("/operations")
 async def get_operations(actor: Actor, session: Session, request: Request) -> dict[str, Any]:
     require_admin(actor.role)
@@ -1049,6 +1057,23 @@ async def admin_video_reference_content(
         media_type=asset.mime_type,
         headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
     )
+
+
+@router.get("/videos/{artifact_id}/deep-media/{kind}")
+async def admin_deep_video_media(
+    artifact_id: uuid.UUID, kind: str, actor: Actor, session: Session, request: Request,
+) -> FileResponse:
+    _require_management_admin(actor)
+    key, mime = await get_admin_deep_media(session, artifact_id, kind)
+    try:
+        local = await request.app.state.object_store.localize(
+            key, request.app.state.settings.artifact_root / "cache" / "admin-deep-media"
+            / str(artifact_id) / (kind + (".mov" if mime == "video/quicktime" else ".mp4")),
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status.HTTP_410_GONE, "saved deep video media unavailable") from exc
+    return FileResponse(local, media_type=mime,
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
 
 @router.get("/videos/{artifact_id}/play")

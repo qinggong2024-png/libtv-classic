@@ -36,6 +36,15 @@ const render = async (actorId = 'user-1') => {
 const click = async (label: string) => { await act(async () => Array.from(document.querySelectorAll('button')).find(button => button.textContent === label)!.click()) }
 const panel = () => document.querySelector('.personal-usage')!
 describe('one-stop personal settings', () => {
+  it('does not expose a redundant personal auto-confirmation control', async () => {
+    vi.mocked(getPersonalPromptAutoConfirmation).mockClear()
+    await render()
+    expect(document.body.textContent).not.toContain('分析后自动生成')
+    expect(getPersonalPromptAutoConfirmation).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('浏览器通知')
+    expect(document.body.textContent).toContain('智能学习')
+  })
+
   it('shows used amount, actual remaining quota, categories and recent transactions directly', async () => {
     await render()
     expect(panel().textContent).toContain('今日已用')

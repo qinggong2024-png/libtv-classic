@@ -69,8 +69,11 @@ async def enqueue_completed_v2(database, settings: Settings, _object_store) -> i
             # usable siblings. Unknown and in-progress results still block.
             selected = eligible_auto_variants(variants, parent.phase)
             if parent.phase == ParentTaskPhase.CANCELLED or selected == []:
-                if await release_unused_auto_cutflow(session, parent):
-                    await session.commit()
+                released = await release_unused_auto_cutflow(session, parent)
+                # Even a zero-row UPDATE reserves SQLite's sole writer.
+                # End this candidate's transaction before scanning any more rows.
+                await session.commit()
+                if released:
                     return 1
                 continue
             if selected is None:
@@ -82,8 +85,11 @@ async def enqueue_completed_v2(database, settings: Settings, _object_store) -> i
                 .where(CutflowHandoff.variant_id.in_(variant_ids))
                 .limit(1)
             )) is not None:
-                if await release_unused_auto_cutflow(session, parent):
-                    await session.commit()
+                released = await release_unused_auto_cutflow(session, parent)
+                # Even a zero-row UPDATE reserves SQLite's sole writer.
+                # End this candidate's transaction before scanning any more rows.
+                await session.commit()
+                if released:
                     return 1
                 continue
             # Completed as well as in-flight edits count as existing work.
@@ -96,8 +102,11 @@ async def enqueue_completed_v2(database, settings: Settings, _object_store) -> i
                 str(source.get("variantId")) in {str(x) for x in variant_ids}
                 for prior in existing for source in prior.sources_json
             ):
-                if await release_unused_auto_cutflow(session, parent):
-                    await session.commit()
+                released = await release_unused_auto_cutflow(session, parent)
+                # Even a zero-row UPDATE reserves SQLite's sole writer.
+                # End this candidate's transaction before scanning any more rows.
+                await session.commit()
+                if released:
                     return 1
                 continue
 
@@ -116,6 +125,10 @@ async def enqueue_completed_v2(database, settings: Settings, _object_store) -> i
             except (MultiCutflowError, HTTPException):
                 # Invalid inputs, exhausted/unknown USD budget, or no real
                 # product reference are non-permissions: skip, never bypass.
+                # The failed nested transaction is already rolled back. End
+                # the outer transaction too: a SAVEPOINT rollback alone
+                # does not release SQLite's write reservation.
+                await session.commit()
                 continue
             await session.commit()
             return 1

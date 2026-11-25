@@ -546,6 +546,20 @@ export const runPromptAssistant = (
   }),
 }, { timeoutMs: LONG_RUNNING_TIMEOUT_MS })
 
+export type TaskAttentionAcknowledgement = { taskId: string; signature: string }
+
+export const listTaskAttentionAcknowledgements = () =>
+  request<TaskAttentionAcknowledgement[]>('/api/v1/tasks/attention-acknowledgements')
+
+export const acknowledgeTaskAttention = (taskId: string, signature: string) =>
+  request<void>(`/api/v1/tasks/${taskId}/attention-acknowledgement`, {
+    method: 'PUT',
+    body: JSON.stringify({ signature }),
+  })
+
+export const clearTaskAttentionAcknowledgement = (taskId: string) =>
+  request<void>(`/api/v1/tasks/${taskId}/attention-acknowledgement`, { method: 'DELETE' })
+
 export const cancelTask = (taskId: string) => request<void>(`/api/v1/tasks/${taskId}/cancel`, {
   method: 'POST',
   headers: { 'Idempotency-Key': key() },
@@ -680,6 +694,11 @@ export async function fetchAdminReferenceObjectUrl(
 
 export function adminVideoReferenceUrl(artifactId: string, assetId: string): string {
   return `/api/v1/admin/videos/${encodeURIComponent(artifactId)}/references/${encodeURIComponent(assetId)}/content`
+}
+
+export async function fetchAdminDeepVideoObjectUrl(adminId: string, artifactId: string, kind: 'source' | 'depth'): Promise<string> {
+  const path = `/api/v1/admin/videos/${encodeURIComponent(artifactId)}/deep-media/${kind}`
+  return URL.createObjectURL(await requestBlob(path, { actorId: adminId, timeoutMs: DOWNLOAD_TIMEOUT_MS }))
 }
 
 export function adminVideoThumbnailUrl(artifactId: string): string {

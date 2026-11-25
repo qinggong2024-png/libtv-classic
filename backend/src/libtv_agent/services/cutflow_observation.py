@@ -89,15 +89,21 @@ def nas_health(settings: Settings, now: datetime) -> dict:
         if code not in {"OK", "NOT_CONFIGURED", "NAS_PROBE_TIMEOUT", "NAS_UNAVAILABLE", *ERROR_CODES.values()}:
             raise ValueError("invalid health code")
         if checked and 0 <= (now - checked).total_seconds() <= 150:
-            return {"code": code, "checkedAt": checked.isoformat()}
+            result = {"code": code, "checkedAt": checked.isoformat()}
+            duration = value.get("probeDurationMs")
+            if type(duration) is int and 0 <= duration <= 60000:
+                result["probeDurationMs"] = duration
+            return result
         return {"code": "STALE", "checkedAt": checked.isoformat() if checked else None}
     except (OSError, ValueError, TypeError, AttributeError):
         return {"code": "UNKNOWN", "checkedAt": None}
 
 
-def save_nas_health(settings: Settings, code: str, now: datetime) -> None:
-    _save(settings.artifact_root / "cutflow-observations" / "nas.json",
-          {"code": code, "checkedAt": now.isoformat()})
+def save_nas_health(settings: Settings, code: str, now: datetime, duration_ms: int | None = None) -> None:
+    value = {"code": code, "checkedAt": now.isoformat()}
+    if duration_ms is not None:
+        value["probeDurationMs"] = duration_ms
+    _save(settings.artifact_root / "cutflow-observations" / "nas.json", value)
 
 
 def worker_pulse(settings: Settings, now: datetime) -> None:

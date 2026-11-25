@@ -2,6 +2,10 @@
 
 面向 Windows 桌面浏览器的服装图片与视频制作工作台，包含图片中心、视频制作、任务管理、素材管理和管理中心。前端使用 React 和 TypeScript，后端使用 FastAPI 和 SQLAlchemy。
 
+## Windows 服务器部署
+
+全新服务器安装、首次启动、配置和验收边界见 [DEPLOYMENT.md](DEPLOYMENT.md)。现有服务器不要重复执行首次安装工具。
+
 ## 本机预览
 
 准备 Python 3.11、uv、Node.js，以及视频处理所需的 FFmpeg 和 ffprobe。然后在仓库根目录运行：

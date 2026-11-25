@@ -671,7 +671,7 @@ export function ProductionComposer({ seed, onCreated, system, actorId }: {
         {uncertainSubmission.checking ? <LoaderCircle className="spin" size={15} /> : <CheckCircle2 size={15} />}
         核对任务状态
       </button>
-      {uncertainSubmission.result?.state === 'not_found' && submissionGroupsRef.current.some((entry) => entry.identity.clientTaskId === uncertainSubmission.clientTaskId && Boolean(entry.request)) ? <button type="button" className="secondary-button" disabled={uncertainSubmission.checking || busy} onClick={() => void retryOriginalSubmission()}>
+      {uncertainSubmission.result?.state === 'not_found' && groupProgress.some((entry) => entry.identity.clientTaskId === uncertainSubmission.clientTaskId && Boolean(entry.request)) ? <button type="button" className="secondary-button" disabled={uncertainSubmission.checking || busy} onClick={() => void retryOriginalSubmission()}>
         使用原提交编号安全重试
       </button> : null}
       {!batchMode ? <button type="button" className="secondary-button" disabled={uncertainSubmission.checking || busy} onClick={startIndependentTask}>

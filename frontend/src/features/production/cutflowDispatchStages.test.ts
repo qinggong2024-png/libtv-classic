@@ -45,7 +45,7 @@ describe('CUT stage proof and safe user-facing labels', () => {
 
   it('does not convert a missing local receipt into proof of remote rejection', () => {
     const result = cutflowDispatchPresentation(settings, false, false, false, false, true, false, true)
-    expect(result).toMatchObject({ headline: '自动送剪任务尚未建立', stageLabel: '待调度核查' })
+    expect(result).toMatchObject({ headline: '自动送剪等待较久', stageLabel: '等待自动送剪', waiting: true, tone: 'neutral' })
     expect(result.detail).not.toContain('CUT 已拒绝')
   })
 })

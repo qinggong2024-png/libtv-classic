@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 import subprocess
@@ -29,6 +30,7 @@ from libtv_agent.config import Settings
 from libtv_agent.db import Database
 from libtv_agent.domain.models import MultiCutflowTask
 from libtv_agent.services import cutflow_observation
+from libtv_agent.services.account_access import settle_usd
 from libtv_agent.services.cutflow_handoff import (
     CutflowHandoffError,
     configured,
@@ -62,6 +64,9 @@ ACCEPTANCE_WARNING_SECONDS = 90
 NOTIFICATION_REPEAT_SECONDS = 120
 NOTIFICATION_ERROR_REPEAT_SECONDS = 60
 NOTIFICATION_REJECT_REPEAT_SECONDS = 300
+FAILED_RECONCILE_INTERVAL_SECONDS = 300
+# Only failures with an established CUT identity and a known recoverable cause.
+FAILED_RECONCILE_CODES = ("INTAKE_IO_TIMEOUT",)
 TASK_PACKAGE_SAFE_ID = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
 )
@@ -100,7 +105,9 @@ def _http_detail(exc: HTTPError) -> str:
     if not isinstance(payload, dict):
         return ""
     reason = payload.get("reason") or payload.get("error")
-    return reason if isinstance(reason, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,79}", reason) else ""
+    if isinstance(reason, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,79}", reason):
+        return reason
+    return ""
 
 
 def multi_worker_ready(settings: Settings) -> bool:
@@ -178,8 +185,11 @@ def cut_multi_submit_request(settings: Settings, payload: dict) -> dict:
             request,
             # V2 POST is a wake-up, not acceptance. A slow CUT must not
             # monopolize the serial status worker or delay other READY jobs.
-            timeout=(min(settings.cutflow_request_timeout_seconds, NOTIFICATION_WAKE_TIMEOUT_SECONDS)
-                     if payload.get("notificationOnly") is True else settings.cutflow_request_timeout_seconds),
+            timeout=(
+                min(settings.cutflow_request_timeout_seconds, NOTIFICATION_WAKE_TIMEOUT_SECONDS)
+                if payload.get("notificationOnly") is True
+                else settings.cutflow_request_timeout_seconds
+            ),
         ) as response:
             body = response.read(MAX_RESPONSE_BYTES + 1)
     except HTTPError as exc:
@@ -354,6 +364,31 @@ async def publish_multi_package(
                         "CUTFLOW_SOURCE_INVALID",
                         "已发布多源素材包缺少文件或校验不匹配",
                     )
+            # The immutable manifest and every source have been verified.
+            # Recreate only a LOST READY marker, never the existing package.
+            # Without READY, CUT's durable scanner cannot discover this task.
+            existing_ready = safe_path(final, "READY")
+            if existing_ready.is_file():
+                try:
+                    ready_marker = json.loads(existing_ready.read_text(encoding="utf-8"))
+                except (OSError, ValueError) as exc:
+                    raise CutflowHandoffError(
+                        "IMMUTABLE_RESULT_CHANGED",
+                        "已发布的 READY 标记损坏，不能猜测其内容",
+                    ) from exc
+                if not isinstance(ready_marker, dict) or ready_marker.get("sha256") != digest:
+                    raise CutflowHandoffError(
+                        "IMMUTABLE_RESULT_CHANGED",
+                        "已发布的 READY 标记与原始任务清单不符",
+                    )
+            elif existing_ready.exists():
+                raise CutflowHandoffError(
+                    "IMMUTABLE_RESULT_CHANGED", "已发布的 READY 路径不是文件",
+                )
+            else:
+                # Same task ID + exact manifest hash + verified media => safe
+                # atomic repair, not a new CUT task or provider submission.
+                write_json_atomic(existing_ready, {"sha256": digest})
             # The exact immutable package was published by an earlier attempt.
             return (
                 {
@@ -511,6 +546,22 @@ def read_multi_nas_status(
     return result
 
 
+async def _reconcile_terminal_cutflow_usage(session, task: MultiCutflowTask, values: dict) -> None:
+    """Transition only this CUT operation's reservation after a terminal result.
+
+    A verified and imported video is estimated consumption, not a final invoice.
+    Failed tasks need a billing verdict, so do not silently release their funds.
+    In-flight, missing-receipt and transport errors retain their reservation.
+    The caller MUST run this only after successfully fencing the same task lease,
+    inside the same database transaction as the task status update.
+    """
+    state = values.get("status")
+    if state == "PENDING_REVIEW" and values.get("output_json"):
+        await settle_usd(session, kind="CUTFLOW", operation_id=task.id, status="ESTIMATED")
+    elif state == "FAILED":
+        await settle_usd(session, kind="CUTFLOW", operation_id=task.id, status="UNCERTAIN")
+
+
 async def _write_claimed(
     database: Database,
     task: MultiCutflowTask,
@@ -528,6 +579,8 @@ async def _write_claimed(
             .values(**values, lease_token=None, lease_until=None)
             .execution_options(synchronize_session=False)
         )
+        if written.rowcount == 1:
+            await _reconcile_terminal_cutflow_usage(session, task, values)
         await session.commit()
         return written.rowcount == 1
 
@@ -584,7 +637,7 @@ def _notification_repeat_seconds(notification: dict | None) -> int:
     return NOTIFICATION_REPEAT_SECONDS
 
 
-async def _heartbeat(database: Database, task_id: uuid.UUID, token: str) -> None:
+async def _heartbeat(database: Database, task_id: uuid.UUID, token: str, *, preserve_updated_at: bool = False) -> None:
     while True:
         await asyncio.sleep(20)
         async with database.session_factory() as session:
@@ -594,7 +647,8 @@ async def _heartbeat(database: Database, task_id: uuid.UUID, token: str) -> None
                     MultiCutflowTask.id == task_id,
                     MultiCutflowTask.lease_token == token,
                 )
-                .values(lease_until=datetime.now(UTC) + timedelta(minutes=5))
+                .values(lease_until=datetime.now(UTC) + timedelta(minutes=5),
+                        **({"updated_at": MultiCutflowTask.updated_at} if preserve_updated_at else {}))
                 .execution_options(synchronize_session=False)
             )
             await session.commit()
@@ -777,7 +831,8 @@ async def process_multi_task(
                     "CUT HTTP 接单通知被拒绝（413：请求体过大）。NAS 素材包已发布，"
                     "等待 CUT 扫描接单；请检查 CUT 接口大小限制，无需重新生成或重复送剪。"
                     if notification_too_large else
-                    f"CUT 拒绝接单（{rejected_reason}）；原始任务包已保留，请检查商品图绑定或 CUT 接单规则"
+                    f"CUT 拒绝接单（{rejected_reason}）；原始任务包已保留，"
+                    "请检查商品图绑定或 CUT 接单规则"
                     if permanently_rejected and rejected_reason
                     else "CUT 拒绝当前任务包（HTTP 409）；原始素材未被删除，请检查 CUT 接单日志"
                     if permanently_rejected
@@ -949,12 +1004,77 @@ async def process_multi_task(
             .values(**values, lease_token=None, lease_until=None)
             .execution_options(synchronize_session=False)
         )
+        if written.rowcount == 1:
+            await _reconcile_terminal_cutflow_usage(session, task, values)
         await session.commit()
         if written.rowcount != 1:
             return
 
 
-async def tick_multi(database: Database, settings: Settings, object_store: ObjectStore) -> bool:
+async def reconcile_failed_multi_task(
+    database: Database, settings: Settings, object_store: ObjectStore,
+    task: MultiCutflowTask, token: str,
+) -> None:
+    """Read-only remote reconciliation: never publish READY or submit to CUT."""
+    manifest = task.manifest_json or {}
+    failures = max(task.failure_count or 0, 0)
+    delay = min(900, FAILED_RECONCILE_INTERVAL_SECONDS * 2 ** min(failures, 2))
+    values = {
+        "next_run_at": datetime.now(UTC) + timedelta(seconds=delay),
+        "failure_count": min(failures + 1, 3),
+        "updated_at": MultiCutflowTask.updated_at,
+    }
+    try:
+        previous = manifest.get("_lastCutRevision")
+        if (
+            task.status != "FAILED" or task.error_code not in FAILED_RECONCILE_CODES
+            or task.manifest_path != f"inbox/multi-{task.id}/manifest.json"
+            or manifest.get("contractVersion") != JOB_CONTRACT
+            or manifest.get("taskId") != str(task.id)
+            or not isinstance(manifest.get("manifestSha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", manifest["manifestSha256"])
+            or type(previous) is not int or previous < 1
+        ):
+            # An unverified identity may not be reactivated automatically.
+            await _write_claimed(database, task, token, values)
+            return
+        response = await asyncio.to_thread(read_multi_nas_status, task, settings)
+        if response is not None:
+            result = normalize_multi_status(task, response)
+            revision = check_status_revision(manifest, response, required=True)
+            if not revision.stale and revision.revision > previous:
+                state = result["status"]
+                if state == "PENDING_REVIEW":
+                    saved = await import_multi_outputs(task, result, settings, object_store)
+                    if not saved:
+                        raise CutflowHandoffError("CUTFLOW_OUTPUT_MISSING", "CUT 待审核回执没有可导入成片")
+                    values.update(status=state, output_json=saved, next_run_at=None)
+                elif state in {"ACCEPTED", "IMPORTING", "EDITING", "UNKNOWN"}:
+                    values.update(status=state, next_run_at=_next_retry(0))
+                # An unchanged/failed/canceled snapshot is not evidence of recovery.
+                if "status" in values:
+                    values.pop("updated_at", None)
+                    updated = remember_status_revision(manifest, revision)
+                    updated["_lastRecovery"] = {
+                        "previousErrorCode": task.error_code,
+                        "previousRevision": previous,
+                        "observedRecoveredRevision": revision.revision,
+                    }
+                    if result.get("cutflowBatchId"):
+                        updated["_cutBatchId"] = result["cutflowBatchId"]
+                    values.update(manifest_json=updated, error_code=None,
+                                  error_message=None, failure_count=0)
+    except Exception as exc:
+        # Keep original error, manifest and identity; log only a safe classification.
+        logging.getLogger(__name__).warning(
+            "CUTFLOW_FAILED_RECONCILE_DEFERRED task=%s code=%s delay=%s",
+            task.id, exc.code if isinstance(exc, CutflowHandoffError) else type(exc).__name__, delay,
+        )
+    await _write_claimed(database, task, token, values)
+
+
+async def tick_multi(database: Database, settings: Settings, object_store: ObjectStore, *,
+                     failed_reconciliation: bool = False) -> bool:
     """Claim one task for status-only polling; disabled until release evidence exists."""
     if not multi_worker_ready(settings):
         return False
@@ -965,11 +1085,22 @@ async def tick_multi(database: Database, settings: Settings, object_store: Objec
     # POSTing it is this worker's first job, so `manifest_path` must NOT be an
     # eligibility requirement. Gating on it made every new task unclaimable and
     # left the publish/submit branch below unreachable.
-    eligible = (
-        MultiCutflowTask.status.not_in(["FAILED", "CANCELED", "PENDING_REVIEW"]),
+    due = (
         or_(MultiCutflowTask.lease_until.is_(None), MultiCutflowTask.lease_until < now),
         or_(MultiCutflowTask.next_run_at.is_(None), MultiCutflowTask.next_run_at <= now),
     )
+    active = MultiCutflowTask.status.not_in(["FAILED", "CANCELED", "PENDING_REVIEW"])
+    recovery = (
+        MultiCutflowTask.status == "FAILED",
+        MultiCutflowTask.error_code.in_(FAILED_RECONCILE_CODES),
+        MultiCutflowTask.manifest_path.is_not(None),
+    )
+    if failed_reconciliation:
+        # A fresh failed NAS probe suppresses background recovery only, never active jobs.
+        health = cutflow_observation.nas_health(settings, now)["code"]
+        if health not in {"OK", "UNKNOWN", "STALE"}:
+            return False
+    eligible = (*recovery, *due) if failed_reconciliation else (active, *due)
     async with database.session_factory() as session:
         task = await session.scalar(
             select(MultiCutflowTask)
@@ -985,16 +1116,20 @@ async def tick_multi(database: Database, settings: Settings, object_store: Objec
                 MultiCutflowTask.id == task.id,
                 *eligible,
             )
-            .values(lease_token=token, lease_until=now + timedelta(minutes=5))
+            .values(lease_token=token, lease_until=now + timedelta(minutes=5),
+                    **({"updated_at": MultiCutflowTask.updated_at} if task.status == "FAILED" else {}))
             .execution_options(synchronize_session=False)
         )
         await session.commit()
         if claimed.rowcount != 1:
             return False
         await session.refresh(task)
-    heartbeat = asyncio.create_task(_heartbeat(database, task.id, token))
+    heartbeat = asyncio.create_task(_heartbeat(database, task.id, token, preserve_updated_at=task.status == "FAILED"))
     try:
-        await process_multi_task(database, settings, object_store, task, token)
+        if task.status == "FAILED":
+            await reconcile_failed_multi_task(database, settings, object_store, task, token)
+        else:
+            await process_multi_task(database, settings, object_store, task, token)
     finally:
         heartbeat.cancel()
         with suppress(asyncio.CancelledError):

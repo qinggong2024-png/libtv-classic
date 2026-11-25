@@ -14,6 +14,12 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import classic_green_api as manager  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def independent_test_context(monkeypatch):
+    import classic_green_operator as operator
+    monkeypatch.setattr(operator, "needs_independent", lambda: False)
+
+
 def test_auto_restart_reuses_pinned_source_and_never_moves_proxy_route(monkeypatch):
     release = ROOT
     expected = "a" * 64

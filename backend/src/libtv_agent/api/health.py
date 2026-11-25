@@ -16,6 +16,12 @@ async def live() -> dict[str, str]:
 @router.get("/ready")
 async def ready(request: Request) -> JSONResponse:
     try:
+        write_ready = await request.app.state.database.sqlite_write_ready()
+        if write_ready is False:
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"status": "degraded", "checks": {"sqliteWrite": "unavailable"}},
+            )
         async with request.app.state.database.session_factory() as session:
             await session.execute(text("SELECT 1"))
             connection = await session.connection()
@@ -53,6 +59,9 @@ async def ready(request: Request) -> JSONResponse:
     return JSONResponse(
         content={
             "status": "ok",
-            "checks": {"postgresql": "ok", "databaseSchema": "ok"},
+            "checks": {
+                "postgresql": "ok", "databaseSchema": "ok",
+                **({"sqliteWrite": "ok"} if write_ready is True else {}),
+            },
         }
     )

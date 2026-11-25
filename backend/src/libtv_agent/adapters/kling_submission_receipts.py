@@ -1,4 +1,4 @@
-"""Minimal, credential-free CLI receipts independent of the business database."""
+"""Minimal, credential-free Kling receipts independent of the business database."""
 
 from __future__ import annotations
 

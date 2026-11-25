@@ -210,3 +210,55 @@ test('operator requires matching source revision, explicit apply, compare-and-sw
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+
+test('reviewed API-only route switch holds lock and fails closed without compatibility proof', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'classic-online-api-only-'))
+  const routeFile = join(dir, 'routing.json')
+  const ports = [8002, 8003]
+  const originalRevision = 'a'.repeat(64)
+  const candidateRevision = 'b'.repeat(64)
+  let proofCalls = 0
+  let allowed = false
+  const fetchJson = async url => {
+    if (url.endsWith('/__classic_api_route/status')) return {
+      hotRouteVersion: 1, configured: true, allowedApiPorts: ports,
+      activeApiPort: await activeClassicApiPort({
+        routeFile, primaryPort: 8002, alternatePort: 8003,
+      }), inFlightByPort: {'8002': 0, '8003': 1},
+    }
+    if (url.endsWith('/api/v1/health/ready')) return {status: 'ok'}
+    if (url.endsWith('/api/v1/system/classic-new-video-admission')) return {
+      gateVersion: 1, configured: true, deploymentId: 'libtv-classic-lan-0e3d1c8',
+      newVideoAdmissionsPaused: false,
+    }
+    if (url.endsWith('/api/v1/system/status')) return {
+      sourceRevision: url.includes(':8003/') ? originalRevision : candidateRevision,
+      configRevision: 'same-config', schemaRevision: 'same-schema',
+    }
+    throw new Error('unexpected URL')
+  }
+  const options = {
+    routeFile, expectedCurrent: 8003, targetPort: 8002,
+    expectedCurrentRevision: originalRevision, expectedSourceRevision: candidateRevision,
+    onlineApiOnly: true, apply: true, fetchJson,
+    verifyOnline: async () => {
+      proofCalls++
+      await readFile(join(dir, 'api-routing.lock'))
+      if (!allowed) throw new Error('compatibility refused')
+    },
+  }
+  try {
+    await atomicallySetClassicApiPort({ routeFile, targetPort: 8003 })
+    await assert.rejects(switchClassicApiRoute(options), /compatibility refused/)
+    assert.equal(JSON.parse(await readFile(routeFile, 'utf8')).activeApiPort, 8003)
+    assert.equal(proofCalls, 1)
+    allowed = true
+    const result = await switchClassicApiRoute(options)
+    assert.equal(result.action, 'switched')
+    assert.equal(result.inFlightByPort['8003'], 1)
+    assert.equal(JSON.parse(await readFile(routeFile, 'utf8')).activeApiPort, 8002)
+  } finally {
+    await rm(dir, {recursive: true, force: true})
+  }
+})
