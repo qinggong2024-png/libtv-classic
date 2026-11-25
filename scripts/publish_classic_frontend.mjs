@@ -5,10 +5,27 @@
  */
 import { cp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+
+// Production writes must be children of the existing Python release manager.
+// The release lock records its owner PID. --apply alone is not authorization.
+async function requireReleaseOwner(destination) {
+  if (basename(destination).toLowerCase() !== 'dist' || basename(dirname(destination)).toLowerCase() !== 'frontend') return
+  const runtime = join(dirname(dirname(destination)), 'var', 'classic-lan', 'runtime')
+  let owner, route
+  try {
+    owner = await readFile(join(runtime, 'classic-release.lock'), 'utf8')
+    route = await readFile(join(runtime, 'api-routing.lock'), 'utf8')
+  } catch {
+    throw new Error('Production frontend publishing requires the existing release manager locks; use python scripts/classic_release.py deploy')
+  }
+  if (Number(/^pid=(\d+)(?:\s|$)/.exec(owner)?.[1]) !== process.ppid || !route.trim()) {
+    throw new Error('Production frontend publishing requires the owning release manager; use python scripts/classic_release.py deploy')
+  }
+}
 
 export async function publishClassicFrontend({
   stageDir = join(projectRoot, 'frontend', 'dist-stage'),
@@ -16,6 +33,7 @@ export async function publishClassicFrontend({
 } = {}) {
   const stage = resolve(stageDir)
   const destination = resolve(distDir)
+  await requireReleaseOwner(destination)
   if (stage === destination || destination.startsWith(stage + '\\') || destination.startsWith(stage + '/')) {
     throw new Error('Staging and live directories must be separate')
   }
