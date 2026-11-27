@@ -480,7 +480,7 @@ async def create_fixed_video_task(
         role_prompt, source_site["brandReference"] if source_site else None,
     )
     from libtv_agent.services.ootd_simple import (
-        PROFILE as OOTD_PROFILE,
+        active_ootd_profile,
     )
     from libtv_agent.services.ootd_simple import (
         eligible as ootd_eligible,
@@ -496,6 +496,10 @@ async def create_fixed_video_task(
         video_type=payload.video_type, product_count=len(ordered_subject_inputs),
     ):
         analyze_products = True  # Sol sees the original garment, not only Kling.
+    OOTD_PROFILE = active_ootd_profile(
+        settings, video_type=payload.video_type, director_mode=payload.director_mode,
+        product_count=len(ordered_subject_inputs), analyze_product_images=analyze_products,
+    )
     ootd_controls = creative_controls(
         focus=payload.display_focus, analyze_products=analyze_products,
         brand_tone=site_profile.tone if site_profile else "",

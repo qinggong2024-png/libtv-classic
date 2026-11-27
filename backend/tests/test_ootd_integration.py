@@ -540,3 +540,37 @@ async def test_unavailable_ootd_provider_or_model_does_not_switch_routes(harness
     assert caught.value.code == "OOTD_ROUTE_UNAVAILABLE"
     h.planner.assert_not_called()
     h.queue.assert_not_called()
+
+async def test_native_direct_persisted_provider_request(harness, monkeypatch):
+    from libtv_agent.services.ootd_native_direct import NATIVE_DIRECT_PROFILE
+    from libtv_agent.adapters.kling_api_ootd import api_ootd_prompt
+
+    h = harness
+    monkeypatch.setenv("ALLWE_OOTD_DYNAMIC_ENABLED", "1")
+    monkeypatch.setenv("ALLWE_OOTD_CROSS_SCENE_ENABLED", "1")
+    monkeypatch.setenv("ALLWE_OOTD_NATIVE_DIRECT_ENABLED", "1")
+    h.settings.kling_provider_backend = "api"
+    h.settings.kling_api_model = "kling-3.0-omni"
+    h.settings.kling_api_enabled = True
+    h.settings.kling_api_key = "offline-only"
+    h.settings.openai_model = "gpt-6.2-sol"
+    h.adapter.get_provider_name = lambda: h.settings.kling_api_provider_name
+    h.adapter.validate_request.return_value = "kling-3.0-omni"
+    prompt = (
+        "shot 1, 3, Start exactly from @image_1. Same garment from @image_2;"
+        "shot 2, 7, Cut to the clear garment print from @image_2. Same wearer;"
+    )
+    h.planner.return_value = (replace(_variant(), prompt=prompt,
+                                      planner_version=NATIVE_DIRECT_PROFILE),)
+    task = await h.create(h.payload(durationSeconds=10))
+    assert task.settings_json["directorNativeProfile"] == NATIVE_DIRECT_PROFILE
+    variant = task.variants[0]
+    assert variant.prompt_template_version == NATIVE_DIRECT_PROFILE
+    assert variant.generation_config_json["directorNativeProfile"] == NATIVE_DIRECT_PROFILE
+    assert variant.prompt_text == prompt
+    assert h.planner.call_args.kwargs["analyze_product_images"] is True
+    await prepare_kling_task(h.session, h.adapter, h.store, task, h.settings)
+    request = h.adapter.validate_request.call_args.args[0]
+    assert request.director_native_profile == NATIVE_DIRECT_PROFILE
+    assert request.prompt == api_ootd_prompt(request) == prompt
+    h.adapter.submit.assert_not_called()

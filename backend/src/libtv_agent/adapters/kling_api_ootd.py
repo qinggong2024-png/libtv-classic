@@ -274,6 +274,22 @@ def api_ootd_prompt(request: VideoGenerationRequest) -> str:
     prior valid stage output and never block submission merely for formatting.
     """
     original = request.prompt
+    from libtv_agent.services.ootd_native_direct import (
+        NATIVE_DIRECT_PROFILE, validate_native_direct,
+    )
+    if request.director_native_profile == NATIVE_DIRECT_PROFILE:
+        if request.multi_shot is False or request.duration is None:
+            raise ValueError("Native direct requires multi-shot and an explicit duration")
+        normalized, issue = validate_native_direct(
+            original, duration=request.duration,
+            image_count=_image_inputs_count(request),
+            storyboard_count=_image_inputs_count(request) - len(request.product_reference_paths),
+        )
+        if issue is not None or normalized != original:
+            raise ValueError(issue or "OOTD_NATIVE_NOT_CANONICAL")
+        # This is the only wire path for the new profile: no role preamble,
+        # memory hint, alias rewriting or legacy translator.
+        return original
     is_ootd = request.director_native_profile in _OOTD_PROFILES
     try:
         prompt = (

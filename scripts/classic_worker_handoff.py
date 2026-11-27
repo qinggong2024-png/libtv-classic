@@ -33,7 +33,56 @@ def restart_held(kind: str) -> bool:
         return True
 
 
-def preflight(*, uncertain_baseline: int) -> dict:
+# Active work in an independent component is informational only when its
+# original process and immutable source are verified. Unknowns remain blockers.
+_SCOPE_UNRELATED = {
+    "runner": frozenset({"CUT_JOBS_IN_FLIGHT"}),
+    "cutflow": frozenset({
+        "PREPAID_PLANNING_IN_FLIGHT", "DURABLE_CONFIRMATION_IN_FLIGHT",
+        "CLOUD_ATTEMPTS_IN_FLIGHT", "PAID_COMMANDS_IN_FLIGHT",
+    }),
+}
+
+
+def independent_worker_verified(kind: str) -> bool:
+    from classic_worker_checkpoint import read_identity, owned_record, process_matches
+    from classic_worker_source import worker_source
+    from classic_lan import ROOT
+
+    other = "cutflow" if kind == "runner" else "runner"
+    try:
+        identity, state = read_identity(STORAGE / "runtime", other)
+        _, pinned = worker_source(other, STORAGE / "runtime", ROOT)
+        return (state == "RUNNING" and identity["sourceRevision"] == pinned
+                and not restart_held(other)
+                and process_matches(owned_record(other), identity))
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError):
+        return False
+
+
+def scoped_task_gate(report: dict, kind: str | None = None) -> dict:
+    """Scope only explicitly selected workers; whole-stack gates stay strict."""
+    if kind is None:
+        return report
+    if kind not in KINDS:
+        raise ValueError("unsupported classic worker kind")
+    blockers = report.get("blockers")
+    if not isinstance(blockers, list):
+        return dict(report, quiescentForVersionSwitch=False,
+                    blockers=["TASK_REPORT_UNVERIFIED"], informationalActiveWork=[])
+    unrelated = _SCOPE_UNRELATED[kind]
+    ignored = [b for b in blockers if b in unrelated]
+    if ignored and not independent_worker_verified(kind):
+        return dict(report, quiescentForVersionSwitch=False,
+                    blockers=[*blockers, "INDEPENDENT_WORKER_UNVERIFIED"],
+                    informationalActiveWork=[])
+    remaining = [b for b in blockers if b not in unrelated]
+    return dict(report, blockers=remaining, informationalActiveWork=ignored,
+                quiescentForVersionSwitch=not remaining,
+                scope=kind)
+
+
+def preflight(*, uncertain_baseline: int, kind: str | None = None) -> dict:
     if not STATE.exists():
         raise RuntimeError("Classic instance state is missing")
     from classic_green_api import json_get, web_route
@@ -44,7 +93,7 @@ def preflight(*, uncertain_baseline: int) -> dict:
             blue_gate.get("newVideoAdmissionsPaused") is not True or
             blue_gate.get("deploymentId") != "libtv-classic-lan-0e3d1c8"):
         raise RuntimeError("Pause classic intake and verify the running gate first")
-    report = check(STORAGE / "classic.db", baseline_uncertain=uncertain_baseline)
+    report = scoped_task_gate(check(STORAGE / "classic.db", baseline_uncertain=uncertain_baseline), kind)
     if not report["quiescentForVersionSwitch"]:
         raise RuntimeError("Worker handoff blocked: original task/payment/CUT leases still active")
     return report
@@ -59,7 +108,7 @@ def _selected_kinds(kind: str | None) -> tuple[str, ...]:
 
 
 def arm_handoff(*, uncertain_baseline: int, kind: str | None = None) -> dict:
-    report = preflight(uncertain_baseline=uncertain_baseline)
+    report = preflight(uncertain_baseline=uncertain_baseline, kind=kind)
     created = []
     try:
         for selected in _selected_kinds(kind):
@@ -73,7 +122,7 @@ def arm_handoff(*, uncertain_baseline: int, kind: str | None = None) -> dict:
             created.append(path)
         # A second read-only preflight catches tasks created concurrently
         # between the original test and writing the stop/restart hold.
-        report = preflight(uncertain_baseline=uncertain_baseline)
+        report = preflight(uncertain_baseline=uncertain_baseline, kind=kind)
         return report
     except Exception:
         for path in created:
@@ -90,7 +139,7 @@ def disarm_handoff(kind: str | None = None) -> None:
         hold_file(selected).unlink(missing_ok=True)
 
 
-def plan_handoff(*, uncertain_baseline: int) -> dict:
+def plan_handoff(*, uncertain_baseline: int, kind: str | None = None) -> dict:
     """Read-only handoff decision; never pauses admissions or starts workers."""
     from classic_stack import owned_process
 
@@ -104,6 +153,7 @@ def plan_handoff(*, uncertain_baseline: int) -> dict:
         }
     except (OSError, ValueError, TypeError):
         processes = {}
+    report = scoped_task_gate(report, kind)
     blockers = list(report["blockers"])
     if set(processes) != set(KINDS) or not all(processes.values()):
         blockers.append("WORKER_IDENTITY_UNVERIFIED")
@@ -112,6 +162,8 @@ def plan_handoff(*, uncertain_baseline: int) -> dict:
         "workerProcessesAlive": processes,
         "restartHolds": {kind: restart_held(kind) for kind in KINDS},
         "taskCounts": report["counts"],
+        "scope": kind or "whole-stack",
+        "informationalActiveWork": report.get("informationalActiveWork", []),
         "blockers": sorted(set(blockers)),
         "readyForShortIntakeFreezeAndExclusiveHandoff": not blockers,
         "nextAction": (
@@ -132,14 +184,14 @@ def main() -> None:
     if args.baseline_unknown < 0:
         parser.error("baseline must be nonnegative")
     if args.action == "plan":
-        decision = plan_handoff(uncertain_baseline=args.baseline_unknown)
+        decision = plan_handoff(uncertain_baseline=args.baseline_unknown, **({"kind": args.kind} if args.kind else {}))
         print(json.dumps(decision, indent=2))
         if not decision["readyForShortIntakeFreezeAndExclusiveHandoff"]:
             raise SystemExit(2)
     elif args.action == "status":
         print(json.dumps({kind: restart_held(kind) for kind in KINDS}))
     elif args.action == "check":
-        print(json.dumps(preflight(uncertain_baseline=args.baseline_unknown), indent=2))
+        print(json.dumps(preflight(uncertain_baseline=args.baseline_unknown, kind=args.kind), indent=2))
     elif args.action == "arm":
         if not args.apply:
             raise SystemExit("arm requires --apply (check is read-only)")

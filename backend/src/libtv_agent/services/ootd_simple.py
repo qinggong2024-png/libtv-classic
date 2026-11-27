@@ -35,6 +35,13 @@ from libtv_agent.services.ootd_dynamic import (
     dynamic_ootd_enabled,
     dynamic_ootd_prompt,
 )
+from libtv_agent.services.ootd_native_direct import (
+    NATIVE_DIRECT_BRIEF,
+    NATIVE_DIRECT_PROFILE,
+    NATIVE_DIRECT_SYSTEM,
+    native_direct_enabled,
+    validate_native_direct,
+)
 from libtv_agent.services.sol_image_transport import create_sol_response
 
 
@@ -57,7 +64,26 @@ from libtv_agent.services.ootd_reference_guided import (
 REFERENCE_PROFILE = "allwe-ootd-sol-simple-v1"
 UNBOXING_PROFILE = "allwe-unboxing-sol-simple-v1"
 HISTORY_PROFILES = ("allwe-ootd-sol-simple-v1", "allwe-ootd-sol-motion-v2.1",
-                    "allwe-ootd-sol-motion-v2.2", CROSS_SCENE_PROFILE, DYNAMIC_OOTD_PROFILE)
+                    "allwe-ootd-sol-motion-v2.2", CROSS_SCENE_PROFILE, DYNAMIC_OOTD_PROFILE,
+                    NATIVE_DIRECT_PROFILE)
+
+
+def active_ootd_profile(
+    settings: Settings, *, video_type: str, director_mode: str,
+    product_count: int, analyze_product_images: bool,
+) -> str:
+    # Native direct is validated only for the official v3 API with visible
+    # product evidence and GPT-6.2 Sol. Preserve the other director routes.
+    if (
+        video_type == "ootd" and director_mode == "cross_scene_v2"
+        and dynamic_ootd_enabled() and cross_scene_enabled() and native_direct_enabled()
+        and settings.kling_provider_backend == "api"
+        and settings.active_kling_model == "kling-3.0-omni"
+        and settings.openai_model.strip().casefold() == "gpt-6.2-sol"
+        and product_count > 0 and analyze_product_images
+    ):
+        return NATIVE_DIRECT_PROFILE
+    return PROFILE
 logger = logging.getLogger(__name__)
 
 
@@ -302,6 +328,11 @@ async def plan_simple_ootd(
     analyze_product_images = use_product_evidence(
         display_focus, analyze_product_images, len(product_images),
     )
+    director_profile = active_ootd_profile(
+        settings, video_type=video_type, director_mode=director_mode,
+        product_count=len(product_images), analyze_product_images=analyze_product_images,
+    )
+    native_direct = director_profile == NATIVE_DIRECT_PROFILE
     sol_products = product_images if analyze_product_images else []
     sol_image_count = len(storyboard_images) + len(sol_products)
     if client is None:
@@ -318,14 +349,18 @@ async def plan_simple_ootd(
         "text": (
             f"Produce a {duration_seconds}-second vertical 9:16 SILENT "
             f"{'UGC unboxing/product-reveal' if video_type == 'unboxing' else 'OOTD'} video. "
-            "The shot start/end timestamps MUST total the requested duration. "
-            "A shorter clip can have fewer useful shots; longer clips can have "
+            + ("The native shot durations MUST total the requested duration. "
+               "Do not repeat time ranges in the shot descriptions. "
+               if native_direct else
+               "The shot start/end timestamps MUST total the requested duration. ")
+            + "A shorter clip can have fewer useful shots; longer clips can have "
             "more natural display moments without padding. User instructions: "
             + (creative_brief.strip() or (
                 "Naturally open the visible packaging and reveal the product; "
                 "do not invent a box if none is shown."
                 if video_type == "unboxing" else (
-                    (dynamic_ootd_brief() if dynamic_ootd_enabled() else default_cross_scene_brief())
+                    (NATIVE_DIRECT_BRIEF if native_direct else
+                     dynamic_ootd_brief() if dynamic_ootd_enabled() else default_cross_scene_brief())
                     if director_mode == "cross_scene_v2" and cross_scene_enabled()
                     else "Natural outfit display with clear cuts."
                 )
@@ -398,6 +433,8 @@ async def plan_simple_ootd(
             )
         else:
             system_prompt = cross_scene_director_prompt(system_prompt)
+    if native_direct:
+        system_prompt = NATIVE_DIRECT_SYSTEM
     # Restore the baseline's default request, not only its system text. Keep
     # explicit non-default UI selections usable without automatic brand or
     # standard-motion direction. brand_tone remains in the call contract only.
@@ -428,8 +465,8 @@ async def plan_simple_ootd(
                     + " | ".join(text[:max(1, 1000 // len(previous))] for text in previous)
                 ),
             })
-        try:
-            response = await _timed_sol_response(
+        async def request_draft(stage: str):
+            return await _timed_sol_response(
                 create_sol_response(
                     client,
                     model=settings.openai_model,
@@ -445,8 +482,11 @@ async def plan_simple_ootd(
                 timeout_seconds=settings.analysis_timeout_for_image_count(
                     sol_image_count
                 ),
-                stage="first_request", variant=index + 1,
+                stage=stage, variant=index + 1,
             )
+        prompt_attempts = 1
+        try:
+            response = await request_draft("first_request")
         except Exception as exc:
             raise CreativePlannerError(
                 "Sol OOTD request failed; no Kling task submitted",
@@ -454,16 +494,57 @@ async def plan_simple_ootd(
                 request_attempts=index + 1,
             ) from exc
         prompt = (getattr(response, "output_text", "") or "").strip()
-        if not 80 <= len(prompt) <= 3072 or (
-            duration_seconds >= 8 and "切镜" not in prompt
-            and "CUT TO" not in prompt.upper()
-        ):
+        def normalize_draft(text: str) -> str:
+            if native_direct:
+                normalized, issue = validate_native_direct(
+                    text, duration=duration_seconds, image_count=sol_image_count,
+                    storyboard_count=len(storyboard_images),
+                    allow_final_separator_repair=True,
+                    allow_redundant_timestamp_repair=True,
+                )
+                if issue is None and normalized != text:
+                    _sol_telemetry("SOL_NATIVE_FORMAT_REPAIRED", variant=index + 1)
+                    return normalized
+            return text
+
+        prompt = normalize_draft(prompt)
+
+        def draft_issue(text: str) -> str | None:
+            if native_direct:
+                return validate_native_direct(
+                    text, duration=duration_seconds, image_count=sol_image_count,
+                    storyboard_count=len(storyboard_images),
+                )[1]
+            if len(text) < 80:
+                return "OOTD_PROMPT_TOO_SHORT"
+            if len(text) > 3072:
+                return "OOTD_PROMPT_TOO_LONG"
+            if duration_seconds >= 8 and "切镜" not in text and "CUT TO" not in text.upper():
+                return "OOTD_CUT_MARKER_MISSING"
+            return None
+
+        issue = draft_issue(prompt)
+        if issue and native_direct:
+            _sol_telemetry("SOL_DRAFT_VALIDATION", variant=index + 1,
+                           attempt=prompt_attempts, validation_rule=issue, prompt_chars=len(prompt))
+            prompt_attempts += 1
+            try:
+                recovered = await request_draft("validation_retry")
+                prompt = normalize_draft((getattr(recovered, "output_text", "") or "").strip())
+                issue = draft_issue(prompt)
+            except Exception as exc:
+                raise CreativePlannerError(
+                    "Sol OOTD validation retry failed; no Kling task submitted",
+                    code="AI_CREATIVE_PROVIDER_ERROR", request_attempts=prompt_attempts,
+                    validation_rule=issue,
+                ) from exc
+        if issue:
             raise CreativePlannerError(
                 "Sol OOTD prompt is incomplete; no Kling task submitted",
                 code="OOTD_PROMPT_INVALID",
-                request_attempts=index + 1,
+                request_attempts=prompt_attempts if native_direct else index + 1,
+                validation_rule=issue,
             )
-        prompt_attempts = 1
         review_result = "skipped"
         rewrite_result = "not_needed"
         # Compare meaning of physical motions, never use an action library.
@@ -488,7 +569,7 @@ async def plan_simple_ootd(
                 repeated = False
             if repeated:
                 rewrite_result = "attempted"
-                prompt_attempts = 2
+                prompt_attempts += 1
                 retry_content = list(message_content)
                 retry_content.insert(1, {
                     "type": "input_text",
@@ -520,11 +601,8 @@ async def plan_simple_ootd(
                         timeout_seconds=settings.analysis_timeout_for_image_count(sol_image_count),
                         stage="rewrite", variant=index + 1,
                     )
-                    candidate = (getattr(revised, "output_text", "") or "").strip()
-                    if 80 <= len(candidate) <= 3072 and (
-                        duration_seconds < 8 or "切镜" in candidate or
-                        "CUT TO" in candidate.upper()
-                    ):
+                    candidate = normalize_draft((getattr(revised, "output_text", "") or "").strip())
+                    if draft_issue(candidate) is None:
                         prompt = candidate
                         rewrite_result = "used"
                     else:
@@ -604,7 +682,7 @@ async def plan_simple_ootd(
             facts=({"person_count_verified": False,
                     "source": "first_frame_unverified"},),
             planner_version=(UNBOXING_PROFILE if video_type == "unboxing" else
-                             REFERENCE_PROFILE if director_mode == "reference_guided" else PROFILE),
+                             REFERENCE_PROFILE if director_mode == "reference_guided" else director_profile),
             request_attempts=prompt_attempts,
         ))
     return tuple(results)

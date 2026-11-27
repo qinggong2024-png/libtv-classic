@@ -85,7 +85,7 @@ def request_checkpoint(
     def validate():
         if not supervisor_supports_blue(runtime):
             raise RuntimeError("running supervisor has no compatible handoff lock")
-        preflight(uncertain_baseline=baseline_unknown)
+        preflight(uncertain_baseline=baseline_unknown, kind=kind)
         identity, state = read_identity(runtime, kind)
         if (
             state != "RUNNING"
@@ -129,6 +129,42 @@ def verify_worker_compatibility(root: Path, release: Path) -> None:
         raise RuntimeError("worker-only replacement requires identical migrations")
 
 
+# The strict single-component fallback permits unrelated work only for
+# narrowly scoped code changes. The existing exact-pair online handoffs handle
+# more complex reviewed changes and preserve original receipts/manifests.
+_SCOPED_RUNNER_PATHS = frozenset({
+    "backend/src/libtv_agent/services/ootd_native_direct.py",
+    "backend/src/libtv_agent/services/ootd_simple.py",
+    "backend/src/libtv_agent/services/ootd_dynamic.py",
+    "backend/src/libtv_agent/services/ootd_cross_scene.py",
+    "backend/src/libtv_agent/services/ootd_reference_guided.py",
+    "backend/src/libtv_agent/services/ootd_direction.py",
+    "backend/src/libtv_agent/adapters/kling_api_ootd.py",
+    "backend/src/libtv_agent/adapters/kling_prompt_translator_lite.py",
+})
+# Only CUT read-only status helpers, not submission or billing changes.
+_SCOPED_CUT_PATHS = frozenset({
+    "backend/src/libtv_agent/services/cutflow_status_reader.py",
+    "backend/src/libtv_agent/services/cutflow_observation.py",
+})
+
+
+def verify_scoped_worker_source(previous: Path, release: Path, kind: str) -> None:
+    if kind not in ("runner", "cutflow"):
+        raise ValueError("unknown worker scope")
+    verify_worker_compatibility(previous, release)
+    def files(root):
+        return {p.relative_to(root).as_posix(): p
+                for p in (root / "backend/src").rglob("*.py")}
+    old, new = files(previous), files(release)
+    changed = {key for key in old.keys() | new.keys()
+               if key not in old or key not in new or
+               old[key].read_bytes() != new[key].read_bytes()}
+    allowed = _SCOPED_RUNNER_PATHS if kind == "runner" else _SCOPED_CUT_PATHS
+    if not changed <= allowed:
+        raise RuntimeError("Scoped handoff requires unchanged shared runtime contracts")
+
+
 def install_pin(
     kind: str,
     release: Path,
@@ -145,13 +181,19 @@ def install_pin(
     def validate():
         if not supervisor_supports_blue(runtime) or not restart_held(kind):
             raise RuntimeError("supervisor/worker restart hold unavailable")
-        preflight(uncertain_baseline=baseline_unknown)
+        report = preflight(uncertain_baseline=baseline_unknown, kind=kind)
         identity, state = read_identity(runtime, kind)
         request = json.loads(
             (runtime / f"checkpoint-{kind}-request.json").read_text(encoding="utf-8")
         )
         if state != "DRAINED" or request != identity or identity["sourceRevision"] != expected_old:
             raise RuntimeError("matching old-worker checkpoint receipt is missing")
+        if report.get("informationalActiveWork"):
+            from classic_worker_source import worker_source
+            previous, pinned = worker_source(kind, runtime, classic_lan.ROOT)
+            if pinned != expected_old:
+                raise RuntimeError("original scoped worker source changed")
+            verify_scoped_worker_source(previous, release, kind)
         if classic_lan.owned_process(owned_record(kind)) is not None:
             raise RuntimeError("old worker has not exited")
 
